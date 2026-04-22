@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/ui/markdown";
 import { OptipeopleLogo } from "@/components/logo";
+import { LoginScreen } from "@/components/LoginScreen";
+import { AccountSelectScreen } from "@/components/AccountSelectScreen";
+import { UserMenu } from "@/components/UserMenu";
+import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 type Role = "user" | "assistant";
@@ -19,6 +23,23 @@ const SAMPLE_QUESTIONS = [
 ];
 
 export default function App() {
+  const { user, isInitializing, currentAccount } = useAuth();
+
+  if (isInitializing) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
+        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+      </div>
+    );
+  }
+
+  if (!user) return <LoginScreen />;
+  if (!currentAccount) return <AccountSelectScreen />;
+
+  return <ChatApp />;
+}
+
+function ChatApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -176,8 +197,9 @@ export default function App() {
         className="relative z-20 shrink-0"
         style={{ backgroundColor: "var(--color-brand)" }}
       >
-        <div className="mx-auto flex h-16 max-w-3xl items-center px-6">
+        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-6">
           <OptipeopleLogo className="h-7 w-auto text-white" aria-label="Optipeople" />
+          <UserMenu />
         </div>
       </header>
 
