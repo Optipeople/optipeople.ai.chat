@@ -6,6 +6,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { OptipeopleLogo } from "@/components/logo";
 import { LoginScreen } from "@/components/LoginScreen";
 import { AccountSelectScreen } from "@/components/AccountSelectScreen";
+import { MachineSelectScreen } from "@/components/MachineSelectScreen";
 import { UserMenu } from "@/components/UserMenu";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,14 @@ const SAMPLE_QUESTIONS = [
 ];
 
 export default function App() {
-  const { user, isInitializing, currentAccount } = useAuth();
+  const {
+    user,
+    isInitializing,
+    currentAccount,
+    accountsForbidden,
+    currentMachine,
+    machinesForbidden,
+  } = useAuth();
 
   if (isInitializing) {
     return (
@@ -34,12 +42,18 @@ export default function App() {
   }
 
   if (!user) return <LoginScreen />;
-  if (!currentAccount) return <AccountSelectScreen />;
+  if (!currentAccount && !accountsForbidden) return <AccountSelectScreen />;
+  // Operator-role users (accountsForbidden) have no account context and
+  // therefore can't pick a machine either — skip straight to chat.
+  if (currentAccount && !currentMachine && !machinesForbidden) {
+    return <MachineSelectScreen />;
+  }
 
   return <ChatApp />;
 }
 
 function ChatApp() {
+  const { currentAccount, currentMachine } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -120,6 +134,8 @@ function ChatApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accountId: currentAccount?.id ?? null,
+          machineId: currentMachine?.id ?? null,
           messages: next
             .slice(0, -1)
             .map(({ role, content }) => ({ role, content })),

@@ -1,13 +1,18 @@
 import { fetchWithAuth } from "./authApi";
-import { getAuthScope } from "./storage";
 
-const PORTAL_ACCOUNTS_URL = "/auth-api/Account/GetAll";
-const MOBILE_ACCOUNTS_URL = "/auth-api/IncomacApp/GetAccounts";
+const ACCOUNTS_URL = "/auth-api/Account/GetAll";
 
 export type Account = {
   id: string;
   name: string;
 };
+
+export class AccountsForbiddenError extends Error {
+  constructor() {
+    super("Forbidden");
+    this.name = "AccountsForbiddenError";
+  }
+}
 
 // Field naming varies across the spec's account view models (id vs accountId,
 // name vs accountName), and the inner data type isn't pinned in the response
@@ -27,11 +32,16 @@ type ApiEnvelope = {
 type AccountsResponse = ApiEnvelope | RawAccount[];
 
 export async function getAccounts(): Promise<Account[]> {
-  const scope = getAuthScope();
-  const url =
-    scope === "mobile" ? MOBILE_ACCOUNTS_URL : PORTAL_ACCOUNTS_URL;
+  const res = await fetchWithAuth(ACCOUNTS_URL);
 
-  const res = await fetchWithAuth(url);
+  // Operator-role users can authenticate but cannot list accounts. The
+  // backend uses 401 (not 403) for insufficient role here, so we treat both
+  // as "forbidden" — the token has already been refreshed by fetchWithAuth
+  // if it was stale, so a 401 here is a permission issue, not a session one.
+  // The caller is expected to catch this and route them straight to the chat.
+  if (res.status === 401 || res.status === 403) {
+    throw new AccountsForbiddenError();
+  }
 
   if (!res.ok) {
     throw new Error(`Kunne ikke hente konti (${res.status})`);

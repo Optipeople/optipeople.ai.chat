@@ -5,11 +5,12 @@ const KEYS = {
   expiresIn: "expires_in",
   accountId: "account_id",
   accountName: "account_name",
-  authScope: "auth_scope",
+  machineId: "machine_id",
+  machineName: "machine_name",
 } as const;
 
 export type StoredAccount = { id: string; name: string };
-export type AuthScope = "portal" | "mobile";
+export type StoredMachine = { id: string; name: string };
 
 export function getAccessToken(): string | null {
   return localStorage.getItem(KEYS.token);
@@ -48,17 +49,7 @@ export function clearSession(): void {
   localStorage.removeItem(KEYS.refreshToken);
   localStorage.removeItem(KEYS.email);
   localStorage.removeItem(KEYS.expiresIn);
-  localStorage.removeItem(KEYS.authScope);
   clearCurrentAccount();
-}
-
-export function getAuthScope(): AuthScope | null {
-  const v = localStorage.getItem(KEYS.authScope);
-  return v === "portal" || v === "mobile" ? v : null;
-}
-
-export function saveAuthScope(scope: AuthScope): void {
-  localStorage.setItem(KEYS.authScope, scope);
 }
 
 export function getCurrentAccount(): StoredAccount | null {
@@ -76,4 +67,22 @@ export function saveCurrentAccount(account: StoredAccount): void {
 export function clearCurrentAccount(): void {
   localStorage.removeItem(KEYS.accountId);
   localStorage.removeItem(KEYS.accountName);
+  clearCurrentMachine();
+}
+
+export function getCurrentMachine(): StoredMachine | null {
+  const id = localStorage.getItem(KEYS.machineId);
+  const name = localStorage.getItem(KEYS.machineName);
+  if (!id || !name) return null;
+  return { id, name };
+}
+
+export function saveCurrentMachine(machine: StoredMachine): void {
+  localStorage.setItem(KEYS.machineId, machine.id);
+  localStorage.setItem(KEYS.machineName, machine.name);
+}
+
+export function clearCurrentMachine(): void {
+  localStorage.removeItem(KEYS.machineId);
+  localStorage.removeItem(KEYS.machineName);
 }

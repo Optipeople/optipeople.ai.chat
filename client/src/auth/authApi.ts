@@ -1,20 +1,12 @@
 import {
   clearSession,
   getAccessToken,
-  getAuthScope,
   getRefreshToken,
   getUserName,
-  saveAuthScope,
   saveSession,
-  type AuthScope,
 } from "./storage";
 
-const PORTAL_LOGIN_URL = "/auth-api/Authentication/login";
-const MOBILE_LOGIN_URL = "/auth-api/IncomacAuthentication/Login";
-
-function loginUrlFor(scope: AuthScope): string {
-  return scope === "portal" ? PORTAL_LOGIN_URL : MOBILE_LOGIN_URL;
-}
+const LOGIN_URL = "/auth-api/Authentication/login";
 
 export type LoginResponse = {
   access_token: string;
@@ -23,11 +15,8 @@ export type LoginResponse = {
   expires_in?: number;
 };
 
-async function postLogin(
-  url: string,
-  body: Record<string, string>,
-): Promise<Response> {
-  return fetch(url, {
+async function postLogin(body: Record<string, string>): Promise<Response> {
+  return fetch(LOGIN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -40,17 +29,11 @@ export async function login(
 ): Promise<LoginResponse> {
   clearSession();
 
-  const body = { grant_type: "password", username: email, password };
-
-  // Try the portal endpoint first (admins, account admins, account users).
-  // Fall back to the mobile endpoint for operator-role users, who only exist
-  // on the Incomac side.
-  let scope: AuthScope = "portal";
-  let res = await postLogin(PORTAL_LOGIN_URL, body);
-  if (res.status === 400 || res.status === 401) {
-    res = await postLogin(MOBILE_LOGIN_URL, body);
-    scope = "mobile";
-  }
+  const res = await postLogin({
+    grant_type: "password",
+    username: email,
+    password,
+  });
 
   if (!res.ok) {
     if (res.status === 400 || res.status === 401) {
@@ -65,7 +48,6 @@ export async function login(
   }
 
   saveSession({ ...data, user_name: data.user_name ?? email });
-  saveAuthScope(scope);
   return data;
 }
 
@@ -74,10 +56,9 @@ let refreshInFlight: Promise<string | null> | null = null;
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   const email = getUserName();
-  const scope = getAuthScope();
-  if (!refreshToken || !email || !scope) return null;
+  if (!refreshToken || !email) return null;
 
-  const res = await postLogin(loginUrlFor(scope), {
+  const res = await postLogin({
     grant_type: "refresh_token",
     username: email,
     refresh_token: refreshToken,
@@ -100,6 +81,12 @@ function withAuthHeader(init: RequestInit, token: string): RequestInit {
 // Authenticated fetch with one transparent refresh-and-retry on 401.
 // Concurrent callers share a single in-flight refresh, so a token that's
 // expired at app-load doesn't trigger N parallel refreshes.
+//
+// Only throws "Session expired" when the refresh itself fails (i.e. the
+// refresh token is also dead). A 401 on the *retry* is returned to the
+// caller unchanged — the caller is in a better position to decide whether
+// that means "forbidden for this role" or "genuinely expired", since this
+// backend uses 401 for both authentication and authorization failures.
 export async function fetchWithAuth(
   url: string,
   init: RequestInit = {},
@@ -118,7 +105,5 @@ export async function fetchWithAuth(
   const newToken = await refreshInFlight;
   if (!newToken) throw new Error("Session expired");
 
-  res = await fetch(url, withAuthHeader(init, newToken));
-  if (res.status === 401) throw new Error("Session expired");
-  return res;
+  return fetch(url, withAuthHeader(init, newToken));
 }

@@ -8,15 +8,28 @@ import {
   type ReactNode,
 } from "react";
 import { login as apiLogin } from "./authApi";
-import { getAccounts, type Account } from "./accountsApi";
+import {
+  AccountsForbiddenError,
+  getAccounts,
+  type Account,
+} from "./accountsApi";
+import {
+  MachinesForbiddenError,
+  getMachinesForAccount,
+  type Machine,
+} from "./machinesApi";
 import {
   clearCurrentAccount,
+  clearCurrentMachine,
   clearSession,
   getAccessToken,
   getCurrentAccount,
+  getCurrentMachine,
   getUserName,
   saveCurrentAccount,
+  saveCurrentMachine,
   type StoredAccount,
+  type StoredMachine,
 } from "./storage";
 
 export type User = { email: string };
@@ -25,16 +38,27 @@ export type AuthContextValue = {
   user: User | null;
   accounts: Account[];
   currentAccount: StoredAccount | null;
+  // True when the backend refused to list accounts for this user (operator
+  // role). Such users skip the picker and go straight to chat.
+  accountsForbidden: boolean;
+  machines: Machine[];
+  currentMachine: StoredMachine | null;
+  machinesForbidden: boolean;
   isInitializing: boolean;
   isLoggingIn: boolean;
   isLoadingAccounts: boolean;
+  isLoadingMachines: boolean;
   loginError: string | null;
   accountsError: string | null;
+  machinesError: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   selectAccount: (accountId: string) => void;
   clearSelectedAccount: () => void;
   reloadAccounts: () => Promise<void>;
+  selectMachine: (machineId: string) => void;
+  clearSelectedMachine: () => void;
+  reloadMachines: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -51,20 +75,90 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentAccount, setCurrentAccount] = useState<StoredAccount | null>(
     null,
   );
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [currentMachine, setCurrentMachine] = useState<StoredMachine | null>(
+    null,
+  );
   const [isInitializing, setIsInitializing] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
+  const [isLoadingMachines, setIsLoadingMachines] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [machinesError, setMachinesError] = useState<string | null>(null);
+  const [accountsForbidden, setAccountsForbidden] = useState(false);
+  const [machinesForbidden, setMachinesForbidden] = useState(false);
 
   const logout = useCallback(() => {
     clearSession();
     setUser(null);
     setAccounts([]);
     setCurrentAccount(null);
+    setMachines([]);
+    setCurrentMachine(null);
+    setAccountsForbidden(false);
+    setMachinesForbidden(false);
     setLoginError(null);
     setAccountsError(null);
+    setMachinesError(null);
   }, []);
+
+  const reloadMachines = useCallback(async () => {
+    const account = getCurrentAccount();
+    if (!account) {
+      setMachines([]);
+      setCurrentMachine(null);
+      setMachinesForbidden(false);
+      return;
+    }
+
+    setIsLoadingMachines(true);
+    setMachinesError(null);
+    try {
+      const list = await getMachinesForAccount(account.id);
+      setMachines(list);
+      setMachinesForbidden(false);
+
+      if (list.length === 1) {
+        const only: StoredMachine = { id: list[0].id, name: list[0].name };
+        saveCurrentMachine(only);
+        setCurrentMachine(only);
+        return;
+      }
+
+      if (list.length === 0) {
+        clearCurrentMachine();
+        setCurrentMachine(null);
+        return;
+      }
+
+      const stored = getCurrentMachine();
+      if (stored && list.some((m) => m.id === stored.id)) {
+        setCurrentMachine(stored);
+      } else {
+        clearCurrentMachine();
+        setCurrentMachine(null);
+      }
+    } catch (err) {
+      if (err instanceof MachinesForbiddenError) {
+        setMachinesForbidden(true);
+        setMachines([]);
+        clearCurrentMachine();
+        setCurrentMachine(null);
+        return;
+      }
+      const message =
+        err instanceof Error ? err.message : "Kunne ikke hente maskiner";
+      if (message === "Session expired") {
+        logout();
+        return;
+      }
+      setMachinesError(message);
+      setMachines([]);
+    } finally {
+      setIsLoadingMachines(false);
+    }
+  }, [logout]);
 
   const reloadAccounts = useCallback(async () => {
     setIsLoadingAccounts(true);
@@ -72,28 +166,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const list = await getAccounts();
       setAccounts(list);
+      setAccountsForbidden(false);
 
       if (list.length === 1) {
         const only: StoredAccount = { id: list[0].id, name: list[0].name };
         saveCurrentAccount(only);
         setCurrentAccount(only);
+        await reloadMachines();
         return;
       }
 
       if (list.length === 0) {
         clearCurrentAccount();
         setCurrentAccount(null);
+        setMachines([]);
+        setCurrentMachine(null);
         return;
       }
 
       const stored = getCurrentAccount();
       if (stored && list.some((a) => a.id === stored.id)) {
         setCurrentAccount(stored);
+        await reloadMachines();
       } else {
         clearCurrentAccount();
         setCurrentAccount(null);
+        setMachines([]);
+        setCurrentMachine(null);
       }
     } catch (err) {
+      if (err instanceof AccountsForbiddenError) {
+        setAccountsForbidden(true);
+        setAccounts([]);
+        clearCurrentAccount();
+        setCurrentAccount(null);
+        setMachines([]);
+        setCurrentMachine(null);
+        return;
+      }
       const message =
         err instanceof Error ? err.message : "Kunne ikke hente konti";
       // Treat an expired/invalid session as a logout so the user lands back
@@ -107,15 +217,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoadingAccounts(false);
     }
-  }, [logout]);
+  }, [logout, reloadMachines]);
 
   useEffect(() => {
     const token = getAccessToken();
     const email = getUserName();
     if (token && email) {
       setUser({ email });
-      const stored = getCurrentAccount();
-      if (stored) setCurrentAccount(stored);
+      const storedAccount = getCurrentAccount();
+      if (storedAccount) setCurrentAccount(storedAccount);
+      const storedMachine = getCurrentMachine();
+      if (storedMachine) setCurrentMachine(storedMachine);
       void reloadAccounts();
     }
     setIsInitializing(false);
@@ -146,13 +258,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const sel: StoredAccount = { id: found.id, name: found.name };
       saveCurrentAccount(sel);
       setCurrentAccount(sel);
+      setMachines([]);
+      setCurrentMachine(null);
+      setMachinesForbidden(false);
+      setMachinesError(null);
+      void reloadMachines();
     },
-    [accounts],
+    [accounts, reloadMachines],
   );
 
   const clearSelectedAccount = useCallback(() => {
     clearCurrentAccount();
     setCurrentAccount(null);
+    setMachines([]);
+    setCurrentMachine(null);
+    setMachinesForbidden(false);
+    setMachinesError(null);
+  }, []);
+
+  const selectMachine = useCallback(
+    (machineId: string) => {
+      const found = machines.find((m) => m.id === machineId);
+      if (!found) return;
+      const sel: StoredMachine = { id: found.id, name: found.name };
+      saveCurrentMachine(sel);
+      setCurrentMachine(sel);
+    },
+    [machines],
+  );
+
+  const clearSelectedMachine = useCallback(() => {
+    clearCurrentMachine();
+    setCurrentMachine(null);
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -160,31 +297,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       accounts,
       currentAccount,
+      accountsForbidden,
+      machines,
+      currentMachine,
+      machinesForbidden,
       isInitializing,
       isLoggingIn,
       isLoadingAccounts,
+      isLoadingMachines,
       loginError,
       accountsError,
+      machinesError,
       login,
       logout,
       selectAccount,
       clearSelectedAccount,
       reloadAccounts,
+      selectMachine,
+      clearSelectedMachine,
+      reloadMachines,
     }),
     [
       user,
       accounts,
       currentAccount,
+      accountsForbidden,
+      machines,
+      currentMachine,
+      machinesForbidden,
       isInitializing,
       isLoggingIn,
       isLoadingAccounts,
+      isLoadingMachines,
       loginError,
       accountsError,
+      machinesError,
       login,
       logout,
       selectAccount,
       clearSelectedAccount,
       reloadAccounts,
+      selectMachine,
+      clearSelectedMachine,
+      reloadMachines,
     ],
   );
 

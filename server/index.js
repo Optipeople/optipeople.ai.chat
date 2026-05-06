@@ -70,10 +70,16 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { messages } = req.body ?? {};
+  const { messages, accountId, machineId } = req.body ?? {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "messages must be a non-empty array" });
   }
+  // accountId/machineId are informational for now (logged for observability).
+  // They don't change the prompt yet — once the knowledge base is partitioned
+  // per machine, use machineId to pick the right slice of knowledgeText.
+  console.log(
+    `chat: account=${accountId ?? "-"} machine=${machineId ?? "-"} turns=${messages.length}`,
+  );
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

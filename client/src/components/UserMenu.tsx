@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { LogOut, Repeat } from "lucide-react";
+import { LogOut, Repeat, Wrench } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function UserMenu() {
-  const { user, logout, currentAccount, accounts, clearSelectedAccount } =
-    useAuth();
+  const {
+    user,
+    logout,
+    currentAccount,
+    accounts,
+    clearSelectedAccount,
+    currentMachine,
+    machines,
+    clearSelectedMachine,
+  } = useAuth();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -72,8 +80,38 @@ export function UserMenu() {
                 </p>
               </>
             )}
+            {currentMachine && (
+              <>
+                <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                  Maskine
+                </p>
+                <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
+                  {currentMachine.name}
+                </p>
+              </>
+            )}
           </div>
           <div className="h-px bg-[var(--color-hairline)]" />
+          {machines.length > 1 && (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  clearSelectedMachine();
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
+                  "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+                )}
+              >
+                <Wrench className="h-4 w-4" />
+                Skift maskine
+              </button>
+              <div className="h-px bg-[var(--color-hairline)]" />
+            </>
+          )}
           {accounts.length > 1 && (
             <>
               <button
