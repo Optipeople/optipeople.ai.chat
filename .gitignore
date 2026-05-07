@@ -6,3 +6,10 @@ dist/
 .DS_Store
 *.tsbuildinfo
 server/knowledge.json
+
+# Claude Code local state (per-developer, not shared)
+.claude/
+
+# Supabase CLI local state (do NOT ignore migrations/ — those are tracked)
+supabase/.temp/
+supabase/.branches/
