@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +25,7 @@ const SAMPLE_QUESTIONS = [
   "Hvad står der på vedligeholdelses-tjeklisten?",
 ];
 
-export default function App() {
+export default function Home() {
   const {
     user,
     isInitializing,

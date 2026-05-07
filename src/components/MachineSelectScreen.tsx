@@ -1,18 +1,23 @@
+"use client";
+
 import { useMemo, useState } from "react";
-import { Loader2, LogOut, ChevronRight, Search, X } from "lucide-react";
+import { Loader2, LogOut, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OptipeopleLogo } from "@/components/logo";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
-export function AccountSelectScreen() {
+export function MachineSelectScreen() {
   const {
     user,
     accounts,
-    isLoadingAccounts,
-    accountsError,
-    selectAccount,
-    reloadAccounts,
+    currentAccount,
+    machines,
+    isLoadingMachines,
+    machinesError,
+    selectMachine,
+    reloadMachines,
+    clearSelectedAccount,
     logout,
   } = useAuth();
 
@@ -20,11 +25,12 @@ export function AccountSelectScreen() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return accounts;
-    return accounts.filter((a) => a.name.toLowerCase().includes(q));
-  }, [accounts, query]);
+    if (!q) return machines;
+    return machines.filter((m) => m.name.toLowerCase().includes(q));
+  }, [machines, query]);
 
-  const showSearch = accounts.length > 5;
+  const showSearch = machines.length > 5;
+  const canGoBack = accounts.length > 1;
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
@@ -62,29 +68,31 @@ export function AccountSelectScreen() {
           )}
         >
           <h1 className="mb-1 text-[22px] font-semibold text-[var(--color-foreground)]">
-            Vælg konto
+            Vælg maskine
           </h1>
           <p className="mb-6 text-[15px] text-[var(--color-muted-foreground)]">
-            Du har adgang til flere konti. Vælg den du vil arbejde i.
+            {currentAccount
+              ? `Maskiner i ${currentAccount.name}. Vælg den du arbejder ved.`
+              : "Vælg den maskine du arbejder ved."}
           </p>
 
-          {isLoadingAccounts && accounts.length === 0 && (
+          {isLoadingMachines && machines.length === 0 && (
             <div className="flex items-center gap-2 py-6 text-[15px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-5 w-5 animate-spin" />
-              Indlæser konti…
+              Indlæser maskiner…
             </div>
           )}
 
-          {accountsError && (
+          {machinesError && (
             <div className="mb-4 rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-muted)] p-4">
-              <p className="mb-3 text-[14px] text-[#b00020]">{accountsError}</p>
+              <p className="mb-3 text-[14px] text-[#b00020]">{machinesError}</p>
               <Button
                 type="button"
-                onClick={() => void reloadAccounts()}
-                disabled={isLoadingAccounts}
+                onClick={() => void reloadMachines()}
+                disabled={isLoadingMachines}
                 className="h-9 rounded-[var(--radius-sm)]"
               >
-                {isLoadingAccounts ? (
+                {isLoadingMachines ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   "Prøv igen"
@@ -93,13 +101,13 @@ export function AccountSelectScreen() {
             </div>
           )}
 
-          {!isLoadingAccounts && !accountsError && accounts.length === 0 && (
+          {!isLoadingMachines && !machinesError && machines.length === 0 && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-              Du har ikke adgang til nogen konti. Kontakt din administrator.
+              Der er ingen maskiner på denne konto. Kontakt din administrator.
             </p>
           )}
 
-          {accounts.length > 0 && (
+          {machines.length > 0 && (
             <>
               {showSearch && (
                 <div
@@ -114,7 +122,7 @@ export function AccountSelectScreen() {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Søg efter konti…"
+                    placeholder="Søg efter maskiner…"
                     className="h-11 flex-1 bg-transparent text-[15px] text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-muted-foreground)]"
                   />
                   {query && (
@@ -136,11 +144,11 @@ export function AccountSelectScreen() {
                 </p>
               ) : (
                 <ul className="flex max-h-[min(60vh,480px)] flex-col gap-2 overflow-y-auto pr-1">
-                  {filtered.map((account) => (
-                    <li key={account.id}>
+                  {filtered.map((machine) => (
+                    <li key={machine.id}>
                       <button
                         type="button"
-                        onClick={() => selectAccount(account.id)}
+                        onClick={() => selectMachine(machine.id)}
                         className={cn(
                           "group flex w-full items-center justify-between gap-3 rounded-[var(--radius-sm)] px-4 py-3 text-left",
                           "border border-[var(--color-hairline)] bg-[var(--color-surface)]",
@@ -151,7 +159,7 @@ export function AccountSelectScreen() {
                       >
                         <div className="min-w-0">
                           <p className="truncate text-[16px] font-medium text-[var(--color-foreground)]">
-                            {account.name}
+                            {machine.name}
                           </p>
                         </div>
                         <ChevronRight className="h-5 w-5 shrink-0 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5" />
@@ -161,6 +169,21 @@ export function AccountSelectScreen() {
                 </ul>
               )}
             </>
+          )}
+
+          {canGoBack && (
+            <button
+              type="button"
+              onClick={clearSelectedAccount}
+              className={cn(
+                "mt-6 flex items-center gap-1.5 text-[14px] font-medium",
+                "text-[var(--color-muted-foreground)] transition-colors hover:text-[var(--color-foreground)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] rounded-sm",
+              )}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Skift konto
+            </button>
           )}
         </div>
       </div>

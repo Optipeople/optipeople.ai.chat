@@ -1,32 +1,32 @@
 @import "tailwindcss";
 
 @theme {
-  /* Opticloud brand */
-  --color-brand: #134343;
-  --color-brand-2: #0f3636;
-  --color-brand-soft: oklch(0.93 0.02 190);
-  --color-accent: #134343;
-  --color-accent-soft: oklch(0.93 0.02 190);
+  /* Opticloud brand — aligned with backoffice */
+  --color-brand: #243535;            /* header background */
+  --color-brand-2: #1a2828;          /* darker for hover / brand-stripe */
+  --color-brand-soft: #e8edec;
+  --color-accent: #243535;           /* in-content brand (user bubble) */
+  --color-accent-soft: #e8edec;
   --color-success: #37c245;
   --color-success-soft: #e7f7e9;
   --color-amber: #dbab3b;
   --color-amber-soft: #faf0d8;
 
-  /* Surfaces — warm Scandinavian whites with subtle teal tint */
-  --color-background: oklch(0.985 0.005 190);
+  /* Surfaces — neutral gray to match backoffice */
+  --color-background: #f7f7f7;
   --color-surface: #ffffff;
-  --color-foreground: #0e1f1f;
+  --color-foreground: #212529;
 
-  --color-muted: oklch(0.965 0.006 190);
-  --color-muted-foreground: oklch(0.46 0.012 200);
-  --color-subtle: oklch(0.95 0.008 190);
+  --color-muted: #f1f1f2;
+  --color-muted-foreground: #6c757d;
+  --color-subtle: #ececec;
 
-  --color-border: oklch(0.9 0.008 200);
-  --color-hairline: oklch(0.88 0.008 200 / 70%);
-  --color-input: oklch(0.92 0.008 200);
-  --color-ring: oklch(0.5 0.08 190 / 35%);
+  --color-border: #dee2e6;
+  --color-hairline: oklch(0.88 0 0 / 70%);
+  --color-input: #ced4da;
+  --color-ring: oklch(0.3 0.005 240 / 25%);
 
-  --color-primary: #134343;
+  --color-primary: #212529;
   --color-primary-foreground: #ffffff;
 
   /* Radii — soft, generous */
@@ -47,41 +47,8 @@
   --ease-apple: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-background: #0b1d1d;
-    --color-surface: #122a2a;
-    --color-foreground: #eaf4f2;
-
-    /* Accent is the in-content version of brand — lifts in dark mode
-       so list markers, inline code, links, and bubbles stay readable.
-       The header keeps the deep brand color as identity. */
-    --color-accent: oklch(0.78 0.07 190);
-    --color-accent-soft: oklch(0.32 0.04 190);
-    --color-brand-2: oklch(0.7 0.07 190);
-
-    --color-muted: #1a3535;
-    --color-muted-foreground: oklch(0.78 0.015 190);
-    --color-subtle: #1e3a3a;
-
-    --color-border: oklch(1 0 0 / 12%);
-    --color-hairline: oklch(1 0 0 / 8%);
-    --color-input: oklch(1 0 0 / 14%);
-    --color-ring: oklch(0.75 0.12 150 / 40%);
-
-    --color-primary: oklch(0.78 0.07 190);
-    --color-primary-foreground: #0b1d1d;
-
-    --shadow-hairline: 0 0 0 1px oklch(1 0 0 / 6%);
-    --shadow-sm: 0 1px 2px oklch(0 0 0 / 30%);
-    --shadow-md: 0 6px 22px -8px oklch(0 0 0 / 45%), 0 1px 2px oklch(0 0 0 / 30%);
-    --shadow-lg: 0 18px 52px -14px oklch(0 0 0 / 60%), 0 2px 6px oklch(0 0 0 / 30%);
-  }
-}
-
 html,
-body,
-#root {
+body {
   height: 100%;
 }
 

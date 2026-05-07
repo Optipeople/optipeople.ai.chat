@@ -1,15 +1,20 @@
-import { readdir, readFile, writeFile, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+// Pre-Phase-1 knowledge extraction: walks knowledgebase/ for PDFs, extracts
+// text via pdf-parse, writes data/knowledge.json. The chat route reads from
+// that file at startup. This script is a placeholder — Phase 1's per-machine
+// Supabase ingestion will replace it.
+
+import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
+import { join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const KNOWLEDGEBASE_DIR = join(__dirname, "..", "knowledgebase");
-const OUTPUT_FILE = join(__dirname, "knowledge.json");
+const ROOT = join(__dirname, "..");
+const KNOWLEDGEBASE_DIR = join(ROOT, "knowledgebase");
+const OUTPUT_FILE = join(ROOT, "data", "knowledge.json");
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -47,6 +52,7 @@ async function main() {
   }
 
   const totalChars = documents.reduce((n, d) => n + d.text.length, 0);
+  await mkdir(dirname(OUTPUT_FILE), { recursive: true });
   await writeFile(OUTPUT_FILE, JSON.stringify({ documents }, null, 2));
   console.log(
     `\nWrote ${OUTPUT_FILE}: ${documents.length} docs, ${totalChars.toLocaleString()} total chars (~${Math.round(totalChars / 4).toLocaleString()} tokens)`,
