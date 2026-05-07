@@ -12,8 +12,14 @@ export const dynamic = "force-dynamic";
 const TARGET =
   process.env.OPTIPEOPLE_API_TARGET ?? "https://api-staging.optipeople.dk";
 
-// Headers we should not forward upstream — they're connection/transport
-// concerns the runtime sets for us, and forwarding them confuses fetch.
+// Headers we should not forward in either direction — they're
+// connection/transport concerns the runtime sets for us, and forwarding
+// them confuses fetch (or, on the response side, the browser).
+//
+// content-encoding + content-length are critical on the *response* path:
+// undici's fetch transparently gunzips the upstream body, so forwarding
+// the original gzip headers makes the browser try to decode plaintext as
+// gzip → ERR_CONTENT_DECODING_FAILED.
 const HOP_BY_HOP = new Set([
   "host",
   "connection",
@@ -25,6 +31,7 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
   "content-length",
+  "content-encoding",
 ]);
 
 async function proxy(
