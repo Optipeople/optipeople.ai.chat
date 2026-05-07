@@ -38,9 +38,6 @@ yarn-error.log*
 # Vercel
 .vercel
 
-# Generated knowledge base (deprecated — will be removed once Phase 1 ingestion lands)
-data/knowledge.json
-
 # Claude Code local state (per-developer, not shared)
 .claude/
 
