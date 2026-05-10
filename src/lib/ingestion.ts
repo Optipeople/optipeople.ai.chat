@@ -139,6 +139,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     page_count: extracted.pageCount,
     status: "embedding",
     created_by: input.createdBy ?? "cli",
+    extraction_source: extracted.source,
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 

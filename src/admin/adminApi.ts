@@ -59,6 +59,18 @@ export async function updateAdminDocumentSummary(
   }
 }
 
+export async function getAdminDocumentSignedUrl(
+  id: string,
+  opts: { download?: boolean } = {},
+): Promise<{ url: string; fileName: string }> {
+  const qs = opts.download ? "?download=1" : "";
+  const res = await fetchWithAuth(`/api/admin/documents/${id}/url${qs}`);
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente fil-URL (${res.status})`);
+  }
+  return (await res.json()) as { url: string; fileName: string };
+}
+
 export async function deleteAdminDocument(id: string): Promise<void> {
   const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
     method: "DELETE",

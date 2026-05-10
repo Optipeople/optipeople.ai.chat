@@ -16,6 +16,7 @@ export type AdminDocument = {
   byteSize: number | null;
   createdAt: string;
   createdBy: string;
+  extractionSource: "pdf-parse" | "claude-ocr" | null;
 };
 
 export type AdminMachineDetail = {
@@ -56,7 +57,7 @@ export async function GET(
       supabase
         .from("kb_documents")
         .select(
-          "id, title, summary, status, page_count, byte_size, created_at, created_by",
+          "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source",
         )
         .eq("machine_id", id)
         .order("created_at", { ascending: false }),
@@ -85,6 +86,7 @@ export async function GET(
         byte_size: number | null;
         created_at: string;
         created_by: string;
+        extraction_source: "pdf-parse" | "claude-ocr" | null;
       };
       return {
         id: r.id,
@@ -95,6 +97,7 @@ export async function GET(
         byteSize: r.byte_size,
         createdAt: r.created_at,
         createdBy: r.created_by,
+        extractionSource: r.extraction_source ?? null,
       };
     }),
   };

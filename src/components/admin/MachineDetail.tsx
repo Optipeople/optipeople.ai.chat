@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
+  CheckCircle2,
+  Download,
+  Eye,
   Loader2,
   Pencil,
+  ScanEye,
   Trash2,
   Upload,
   X,
@@ -14,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   deleteAdminDocument,
+  getAdminDocumentSignedUrl,
   getAdminMachine,
   updateAdminDocumentSummary,
   updateAdminMachineName,
@@ -22,6 +28,8 @@ import {
   type AdminMachineDetail,
   type UploadResult,
 } from "@/admin/adminApi";
+import { filesFromDrop } from "@/admin/dropFiles";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 const DA_DATE = new Intl.DateTimeFormat("da-DK", {
   year: "numeric",
@@ -230,6 +238,17 @@ function MachineSummary({
   );
 }
 
+type QueueStatus = "pending" | "uploading" | "done" | "failed";
+
+type QueueItem = {
+  id: string;
+  file: File;
+  status: QueueStatus;
+  progress: number;
+  error?: string;
+  result?: UploadResult;
+};
+
 function UploadCard({
   machineId,
   onUploaded,
@@ -237,62 +256,132 @@ function UploadCard({
   machineId: string;
   onUploaded: () => Promise<void>;
 }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [summary, setSummary] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [err, setErr] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<UploadResult | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
+  // Mirror of `queue` so the async processing loop reads up-to-date state
+  // without juggling setState updaters as data sources.
+  const queueRef = useRef<QueueItem[]>([]);
 
-  function handleFiles(list: FileList | null) {
-    setErr(null);
-    if (!list || list.length === 0) return;
-    const f = list[0];
-    if (f.type && f.type !== "application/pdf") {
-      setErr("Kun PDF-filer er understøttet.");
-      return;
-    }
-    setFile(f);
-  }
+  const update = useCallback(
+    (updater: (q: QueueItem[]) => QueueItem[]) => {
+      const next = updater(queueRef.current);
+      queueRef.current = next;
+      setQueue(next);
+    },
+    [],
+  );
 
-  async function submit() {
-    if (!file || uploading) return;
-    setUploading(true);
-    setProgress(0);
-    setErr(null);
-    setLastResult(null);
+  const processNext = useCallback(async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
     try {
-      const result = await uploadAdminDocument({
-        machineId,
-        file,
-        summary: summary.trim() || undefined,
-        onProgress: (loaded, total) => {
-          setProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
-        },
-      });
-      setLastResult(result);
-      setFile(null);
-      setSummary("");
-      setProgress(0);
-      if (inputRef.current) inputRef.current.value = "";
-      await onUploaded();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Upload fejlede");
+      // Drain the queue one item at a time. Voyage's free-tier rate limits
+      // (3 RPM / 10k TPM) make parallel ingestion a bad idea — we'd just
+      // 429-and-retry our way to the same total wall time but with worse
+      // error visibility.
+      while (true) {
+        const next = queueRef.current.find((i) => i.status === "pending");
+        if (!next) break;
+
+        update((q) =>
+          q.map((i) =>
+            i.id === next.id ? { ...i, status: "uploading", progress: 0 } : i,
+          ),
+        );
+
+        try {
+          const result = await uploadAdminDocument({
+            machineId,
+            file: next.file,
+            onProgress: (loaded, total) => {
+              const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+              update((q) =>
+                q.map((i) => (i.id === next.id ? { ...i, progress: pct } : i)),
+              );
+            },
+          });
+          update((q) =>
+            q.map((i) =>
+              i.id === next.id
+                ? { ...i, status: "done", progress: 100, result }
+                : i,
+            ),
+          );
+          // Refresh the document table after each one — operator gets
+          // incremental feedback instead of a bulk reveal at the very end.
+          await onUploaded();
+        } catch (e) {
+          update((q) =>
+            q.map((i) =>
+              i.id === next.id
+                ? {
+                    ...i,
+                    status: "failed",
+                    error: e instanceof Error ? e.message : "Upload fejlede",
+                  }
+                : i,
+            ),
+          );
+        }
+      }
     } finally {
-      setUploading(false);
+      processingRef.current = false;
     }
+  }, [machineId, onUploaded, update]);
+
+  const enqueue = useCallback(
+    (files: File[]) => {
+      const accepted = files.filter(
+        (f) =>
+          f.type === "application/pdf" ||
+          f.name.toLowerCase().endsWith(".pdf"),
+      );
+      if (accepted.length === 0) return;
+      const items: QueueItem[] = accepted.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        status: "pending",
+        progress: 0,
+      }));
+      update((q) => [...q, ...items]);
+      void processNext();
+    },
+    [processNext, update],
+  );
+
+  function handleFileInput(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    enqueue(Array.from(list));
+    // Allow re-selecting the same file later.
+    if (inputRef.current) inputRef.current.value = "";
   }
+
+  async function handleDrop(dt: DataTransfer) {
+    const files = await filesFromDrop(dt);
+    enqueue(files);
+  }
+
+  function clearFinished() {
+    update((q) => q.filter((i) => i.status !== "done"));
+  }
+
+  const pendingOrUploading = queue.some(
+    (i) => i.status === "pending" || i.status === "uploading",
+  );
+  const finishedCount = queue.filter((i) => i.status === "done").length;
+  const failedCount = queue.filter((i) => i.status === "failed").length;
 
   return (
     <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <h2 className="text-[16px] font-semibold text-[var(--color-foreground)]">
-        Upload manual
+        Upload manualer
       </h2>
       <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-        PDF op til 100 MB. Beskrivelsen ses af AI&#39;en når den vælger
-        manualer — skriv 1 linje om hvad denne handler om.
+        Træk én eller flere PDF&#39;er — eller en hel mappe — hertil. Filerne
+        køres igennem en ad gangen pga. embeddings-rate-limits. Du kan redigere
+        beskrivelser i tabellen efter upload.
       </p>
 
       <div
@@ -315,104 +404,131 @@ function UploadCard({
         onDrop={(e) => {
           e.preventDefault();
           setDragActive(false);
-          handleFiles(e.dataTransfer.files);
+          void handleDrop(e.dataTransfer);
         }}
       >
         <Upload className="h-5 w-5 text-[var(--color-muted-foreground)]" />
-        {file ? (
-          <p className="text-[14px] text-[var(--color-foreground)]">
-            <span className="font-medium">{file.name}</span>{" "}
-            <span className="text-[var(--color-muted-foreground)]">
-              ({formatBytes(file.size)})
-            </span>
-          </p>
-        ) : (
-          <p className="text-[14px] text-[var(--color-muted-foreground)]">
-            Træk en PDF hertil, eller{" "}
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              className="font-medium text-[var(--color-brand)] hover:underline"
-            >
-              vælg en fil
-            </button>
-          </p>
-        )}
+        <p className="text-[14px] text-[var(--color-muted-foreground)]">
+          Træk PDF&#39;er eller en mappe hertil, eller{" "}
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="font-medium text-[var(--color-brand)] hover:underline"
+          >
+            vælg filer
+          </button>
+        </p>
         <input
           ref={inputRef}
           type="file"
           accept="application/pdf"
+          multiple
           className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => handleFileInput(e.target.files)}
         />
       </div>
 
-      <label className="mt-4 block text-[13px] font-medium text-[var(--color-foreground)]">
-        Beskrivelse (valgfri)
-        <input
-          value={summary}
-          onChange={(e) => setSummary(e.target.value)}
-          placeholder="F.eks. Procedure for alarm 731"
-          disabled={uploading}
-          className={cn(
-            "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-            "bg-[var(--color-background)] px-3 text-[14px] font-normal",
-            "placeholder:text-[var(--color-muted-foreground)]",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-          )}
-        />
-      </label>
-
-      {err && (
-        <p className="mt-3 text-[13px] text-red-600">{err}</p>
-      )}
-
-      {lastResult && (
-        <p className="mt-3 text-[13px] text-emerald-700">
-          ✓ Uploadet: {lastResult.chunkCount} chunks fra{" "}
-          {lastResult.pageCount} sider
-          {lastResult.extractionSource === "claude-ocr" && (
-            <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium">
-              Claude OCR
+      {queue.length > 0 && (
+        <div className="mt-4 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between text-[12px] text-[var(--color-muted-foreground)]">
+            <span>
+              {pendingOrUploading
+                ? `Behandler ${queue.length - finishedCount - failedCount} af ${queue.length}…`
+                : `${finishedCount} færdig${finishedCount === 1 ? "" : "e"}${
+                    failedCount > 0 ? `, ${failedCount} fejlet` : ""
+                  }`}
             </span>
-          )}
-        </p>
-      )}
-
-      <div className="mt-4 flex items-center justify-between gap-4">
-        <div className="text-[13px] text-[var(--color-muted-foreground)]">
-          {uploading ? (
-            <span className="flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {progress < 100
-                ? `Uploader ${progress}%…`
-                : "Behandler PDF og embedder…"}
-            </span>
-          ) : (
-            "Embedding kan tage et minut eller to."
-          )}
+            {!pendingOrUploading && finishedCount > 0 && (
+              <button
+                type="button"
+                onClick={clearFinished}
+                className="hover:text-[var(--color-foreground)]"
+              >
+                Ryd færdige
+              </button>
+            )}
+          </div>
+          <ul className="flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)]">
+            {queue.map((item) => (
+              <QueueRow key={item.id} item={item} />
+            ))}
+          </ul>
         </div>
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={!file || uploading}
-          className={cn(
-            "inline-flex h-10 items-center gap-2 rounded-[var(--radius)] px-4",
-            "text-[14px] font-medium text-white transition-colors",
-            "bg-[var(--color-brand)] hover:opacity-90",
-            "disabled:cursor-not-allowed disabled:opacity-40",
-          )}
-        >
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4" />
-          )}
-          Upload
-        </button>
-      </div>
+      )}
     </section>
   );
+}
+
+function QueueRow({ item }: { item: QueueItem }) {
+  return (
+    <li className="flex items-center gap-3 bg-[var(--color-surface)] px-3 py-2 text-[13px]">
+      <QueueStatusIcon status={item.status} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-medium text-[var(--color-foreground)]">
+            {item.file.name}
+          </span>
+          <span className="shrink-0 text-[12px] text-[var(--color-muted-foreground)]">
+            {formatBytes(item.file.size)}
+          </span>
+          {item.result?.extractionSource === "claude-ocr" && (
+            <span
+              title="Tekst udvundet med Claude vision (OCR)"
+              className="inline-flex items-center"
+            >
+              <ScanEye
+                aria-label="Claude vision OCR"
+                className="h-3.5 w-3.5 text-violet-600"
+              />
+            </span>
+          )}
+        </div>
+        {item.status === "uploading" && (
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-[var(--color-muted)]">
+            <div
+              className="h-full bg-[var(--color-brand)] transition-[width] duration-200"
+              style={{
+                width: `${item.progress < 100 ? item.progress : 100}%`,
+                opacity: item.progress < 100 ? 1 : 0.7,
+              }}
+            />
+          </div>
+        )}
+        {item.status === "uploading" && item.progress >= 100 && (
+          <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+            Behandler & embedder…
+          </p>
+        )}
+        {item.status === "done" && item.result && (
+          <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+            {item.result.chunkCount} chunks fra {item.result.pageCount} sider
+          </p>
+        )}
+        {item.status === "failed" && item.error && (
+          <p className="mt-0.5 truncate text-[12px] text-red-600">
+            {item.error}
+          </p>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function QueueStatusIcon({ status }: { status: QueueStatus }) {
+  switch (status) {
+    case "pending":
+      return (
+        <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-[var(--color-hairline)]" />
+      );
+    case "uploading":
+      return (
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
+      );
+    case "done":
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />;
+    case "failed":
+      return <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />;
+  }
 }
 
 function DocumentsTable({
@@ -461,11 +577,65 @@ function DocumentRow({
   document: AdminDocument;
   onChanged: () => Promise<void>;
 }) {
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(document.summary);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function viewOriginal() {
+    if (opening) return;
+    // Open the popup synchronously inside the click handler so popup
+    // blockers don't catch the later navigation. We can't pass
+    // "noopener" here because that nukes the returned window handle —
+    // we instead null out `opener` after navigating to break the reverse
+    // reference, achieving the same security guarantee.
+    const w = window.open("", "_blank");
+    setOpening(true);
+    setErr(null);
+    try {
+      const { url } = await getAdminDocumentSignedUrl(document.id);
+      if (!w) {
+        setErr(
+          "Browseren blokerede pop-up. Tillad pop-ups eller brug download-knappen.",
+        );
+        return;
+      }
+      w.opener = null;
+      w.location.href = url;
+    } catch (e) {
+      w?.close();
+      setErr(e instanceof Error ? e.message : "Kunne ikke åbne fil");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  async function downloadOriginal() {
+    if (downloading) return;
+    setDownloading(true);
+    setErr(null);
+    try {
+      const { url, fileName } = await getAdminDocumentSignedUrl(document.id, {
+        download: true,
+      });
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.rel = "noopener noreferrer";
+      a.style.display = "none";
+      window.document.body.appendChild(a);
+      a.click();
+      window.document.body.removeChild(a);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Kunne ikke hente fil");
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   async function saveSummary() {
     if (!draft.trim() || draft.trim() === document.summary) {
@@ -487,13 +657,14 @@ function DocumentRow({
   }
 
   async function remove() {
-    if (
-      !window.confirm(
-        `Slet "${document.title}"? Embeddingerne fjernes også. Kan ikke fortrydes.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Slet "${document.title}"?`,
+      description:
+        "Dokumentet og alle dets embeddings fjernes permanent. Handlingen kan ikke fortrydes.",
+      confirmLabel: "Slet",
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     setErr(null);
     try {
@@ -510,7 +681,17 @@ function DocumentRow({
   return (
     <tr className="border-t border-[var(--color-hairline)]">
       <td className="px-4 py-3 font-medium text-[var(--color-foreground)]">
-        {document.title}
+        <span className="flex items-center gap-1.5">
+          {document.title}
+          {document.extractionSource === "claude-ocr" && (
+            <span title="Tekst udvundet med Claude vision (OCR)">
+              <ScanEye
+                aria-label="Claude vision OCR"
+                className="h-3.5 w-3.5 shrink-0 text-violet-600"
+              />
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-4 py-3 text-[var(--color-foreground)]">
         {editing ? (
@@ -584,18 +765,47 @@ function DocumentRow({
         {DA_DATE.format(new Date(document.createdAt))}
       </td>
       <td className="px-4 py-3 text-right">
-        <button
-          onClick={() => void remove()}
-          disabled={deleting}
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
-          aria-label="Slet"
-        >
-          {deleting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Trash2 className="h-4 w-4" />
-          )}
-        </button>
+        <div className="flex items-center justify-end gap-0.5">
+          <button
+            onClick={() => void viewOriginal()}
+            disabled={opening}
+            title="Åbn original"
+            aria-label="Åbn original"
+            className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+          >
+            {opening ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            onClick={() => void downloadOriginal()}
+            disabled={downloading}
+            title="Download original"
+            aria-label="Download original"
+            className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+          >
+            {downloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            onClick={() => void remove()}
+            disabled={deleting}
+            title="Slet dokument"
+            aria-label="Slet dokument"
+            className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+          >
+            {deleting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+          </button>
+        </div>
       </td>
     </tr>
   );
