@@ -1,20 +1,24 @@
 // Server-side auth helpers for Optipeople bearer tokens.
 //
 // requireSuperAdmin is the gate for every /api/admin/* route. It resolves
-// the caller's role via Optipeople /api/User/GetCurrentUser and 403s if
-// role.name isn't "SuperAdmin". One round trip per admin request is fine
-// for an internal tool.
+// the caller via Optipeople /api/User/GetCurrentUser and 403s if their
+// permissionName isn't "SuperAdministrator". One round trip per admin
+// request is fine for an internal tool.
 
 const TARGET =
   process.env.OPTIPEOPLE_API_TARGET ?? "https://api-staging.optipeople.dk";
 
 const USER_ME_PATH = "/api/User/GetCurrentUser";
-const SUPER_ADMIN_ROLE = "superadmin";
+// Stable code-style identifier from Optipeople's role catalog. The
+// human-readable label ("Super Administrator") may have spacing/casing
+// drift across environments — permissionName won't.
+const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
 
 export type SuperAdmin = {
   userId: string;
   email: string;
   roleName: string;
+  permissionName: string;
 };
 
 export class AuthError extends Error {
@@ -44,6 +48,7 @@ type CurrentUser = {
   id: string;
   email: string;
   roleName: string;
+  permissionName: string;
 };
 
 // Per-request cache so multiple helpers within a single handler don't
@@ -77,8 +82,9 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
     throw new AuthError(502, "Auth upstream returned non-JSON");
   }
 
-  // Optipeople wraps responses in { data, errors, meta }. data is a User
-  // shape (per swagger): { id, email, role: { name, ... }, ... }.
+  // Optipeople wraps responses in { data, errors, meta }. The User
+  // payload is flat, with role-related fields hoisted to the top level
+  // (roleId / roleName / permissionName) rather than nested under role.
   const data =
     body && typeof body === "object" && "data" in body
       ? (body as { data: unknown }).data
@@ -90,16 +96,17 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
   const obj = data as Record<string, unknown>;
   const id = typeof obj.id === "string" ? obj.id : null;
   const email = typeof obj.email === "string" ? obj.email : null;
-  const role =
-    obj.role && typeof obj.role === "object"
-      ? (obj.role as Record<string, unknown>)
-      : null;
-  const roleName = role && typeof role.name === "string" ? role.name : null;
+  const roleName = typeof obj.roleName === "string" ? obj.roleName : null;
+  const permissionName =
+    typeof obj.permissionName === "string" ? obj.permissionName : null;
 
-  if (!id || !email || !roleName) {
-    throw new AuthError(401, "Current user response missing id/email/role");
+  if (!id || !email || !roleName || !permissionName) {
+    throw new AuthError(
+      401,
+      "Current user response missing id/email/roleName/permissionName",
+    );
   }
-  return { id, email, roleName };
+  return { id, email, roleName, permissionName };
 }
 
 // Throws AuthError on failure. Catch + .toResponse() in the route handler.
@@ -112,8 +119,13 @@ export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
   }
   const user = await pending;
 
-  if (user.roleName.toLowerCase() !== SUPER_ADMIN_ROLE) {
+  if (user.permissionName !== SUPER_ADMIN_PERMISSION) {
     throw new AuthError(403, "Not authorised");
   }
-  return { userId: user.id, email: user.email, roleName: user.roleName };
+  return {
+    userId: user.id,
+    email: user.email,
+    roleName: user.roleName,
+    permissionName: user.permissionName,
+  };
 }

@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { login as apiLogin } from "./authApi";
+import { getCurrentUser } from "./currentUserApi";
 import {
   AccountsForbiddenError,
   getAccounts,
@@ -34,7 +35,20 @@ import {
   type StoredMachine,
 } from "./storage";
 
-export type User = { email: string };
+export type User = {
+  email: string;
+  // Human-readable Optipeople role (e.g. "Super Administrator"). Shown in
+  // the user menu. Populated asynchronously after login from
+  // /api/User/GetCurrentUser; null until that fetch completes.
+  roleName: string | null;
+  // Stable code-style identifier (e.g. "SuperAdministrator"). Use this
+  // for gating, not roleName.
+  permissionName: string | null;
+};
+
+export function isSuperAdmin(user: User | null): boolean {
+  return user?.permissionName === "SuperAdministrator";
+}
 
 export type AuthContextValue = {
   user: User | null;
@@ -221,19 +235,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [logout, reloadMachines]);
 
+  // Resolves role from /api/User/GetCurrentUser and merges it onto the
+  // existing user. Best-effort — a failure here just leaves role: null,
+  // it shouldn't block the rest of the auth flow.
+  const refreshRole = useCallback(async () => {
+    try {
+      const me = await getCurrentUser();
+      if (me) {
+        setUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                email: me.email,
+                roleName: me.roleName,
+                permissionName: me.permissionName,
+              }
+            : prev,
+        );
+      }
+    } catch {
+      // ignore — UI shows "—" rolle until the next refresh
+    }
+  }, []);
+
   useEffect(() => {
     const token = getAccessToken();
     const email = getUserName();
     if (token && email) {
-      setUser({ email });
+      setUser({ email, roleName: null, permissionName: null });
       const storedAccount = getCurrentAccount();
       if (storedAccount) setCurrentAccount(storedAccount);
       const storedMachine = getCurrentMachine();
       if (storedMachine) setCurrentMachine(storedMachine);
       void reloadAccounts();
+      void refreshRole();
     }
     setIsInitializing(false);
-  }, [reloadAccounts]);
+  }, [reloadAccounts, refreshRole]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -241,8 +279,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoginError(null);
       try {
         const res = await apiLogin(email, password);
-        setUser({ email: res.user_name ?? email });
-        await reloadAccounts();
+        setUser({
+          email: res.user_name ?? email,
+          roleName: null,
+          permissionName: null,
+        });
+        await Promise.all([reloadAccounts(), refreshRole()]);
       } catch (err) {
         setLoginError(err instanceof Error ? err.message : "Login failed");
         throw err;
@@ -250,7 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoggingIn(false);
       }
     },
-    [reloadAccounts],
+    [reloadAccounts, refreshRole],
   );
 
   const selectAccount = useCallback(

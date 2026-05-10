@@ -72,6 +72,12 @@ export function UserMenu() {
             <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
               {user.email}
             </p>
+            <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+              Rolle
+            </p>
+            <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
+              {user.roleName ?? "—"}
+            </p>
             {currentAccount && (
               <>
                 <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
