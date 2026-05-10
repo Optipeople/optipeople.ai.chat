@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { LogOut, Repeat, Wrench } from "lucide-react";
-import { useAuth } from "@/auth/AuthContext";
+import { LogOut, Repeat, Settings, Wrench } from "lucide-react";
+import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function UserMenu() {
@@ -100,6 +101,23 @@ export function UserMenu() {
             )}
           </div>
           <div className="h-px bg-[var(--color-hairline)]" />
+          {isSuperAdmin(user) && (
+            <>
+              <Link
+                href="/admin/machines"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
+                  "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+                )}
+              >
+                <Settings className="h-4 w-4" />
+                Admin
+              </Link>
+              <div className="h-px bg-[var(--color-hairline)]" />
+            </>
+          )}
           {machines.length > 1 && (
             <>
               <button
