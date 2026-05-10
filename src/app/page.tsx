@@ -1190,7 +1190,9 @@ function EscalateCard({
                 ? `Vi åbner telefonopkald til ${state.label ?? state.target}.`
                 : state.channel === "email"
                   ? `E-mail sendt til ${state.label ?? state.target} med et link til samtalen.`
-                  : "Send linket nedenfor til service-teamet."}
+                  : state.channel === "webhook"
+                    ? `Service-systemet har modtaget anmodningen${state.label ? ` (${state.label})` : ""}.`
+                    : "Send linket nedenfor til service-teamet."}
             </p>
             {state.channel === "service_ticket" && (
               <ShareLinkRow url={state.shareUrl} />

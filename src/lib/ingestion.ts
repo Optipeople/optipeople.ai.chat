@@ -114,7 +114,9 @@ export async function ensureFolderPath(
 
 // Best-effort progress writes. We intentionally swallow errors here —
 // progress is observability, not a correctness primitive, and a failed
-// update mid-pipeline shouldn't tank the whole ingest.
+// update mid-pipeline shouldn't tank the whole ingest. Bumps updated_at
+// so the watchdog can tell the difference between "still working" and
+// "stuck".
 async function writeProgress(
   documentId: string,
   pct: number,
@@ -124,10 +126,99 @@ async function writeProgress(
     const supabase = getSupabaseServerClient();
     await supabase
       .from("kb_documents")
-      .update({ progress: pct, progress_label: label })
+      .update({
+        progress: pct,
+        progress_label: label,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", documentId);
   } catch (err) {
     console.warn("writeProgress failed:", err);
+  }
+}
+
+// Vercel kills the function at 300s. We give the actual work 270s and
+// reserve ~30s for the failure path (mark the row failed, return a
+// response). The reserved budget is generous because Supabase writes
+// from a cold instance can spike to a few seconds.
+const INGEST_BUDGET_MS = 270_000;
+
+const TIMEOUT_LABEL =
+  "Tidsgrænse på 5 min nået — del PDF'en op i mindre filer eller kontakt support@optipeople.dk";
+
+export class IngestTimeoutError extends Error {
+  constructor() {
+    super(TIMEOUT_LABEL);
+    this.name = "IngestTimeoutError";
+  }
+}
+
+// Race the actual ingestion against a hard timer. On timeout we flip
+// the row to failed with a Danish-language label that's safe to show to
+// the operator (the queue panel surfaces progress_label as the failure
+// reason). The underlying work may continue running in the background
+// until Vercel reaps the invocation; if it happens to finish and write
+// 'ready' afterwards, the row recovers — benign race.
+async function withIngestBudget<T>(
+  documentId: string,
+  work: Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const supabase = getSupabaseServerClient();
+          await supabase
+            .from("kb_documents")
+            .update({
+              status: "failed",
+              progress: null,
+              progress_label: TIMEOUT_LABEL,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", documentId);
+        } catch (err) {
+          console.warn("ingest timeout: status flip failed:", err);
+        }
+        reject(new IngestTimeoutError());
+      })();
+    }, INGEST_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Watchdog: any kb_documents row whose status is mid-pipeline AND
+// hasn't been touched in STUCK_THRESHOLD_MS gets flipped to failed.
+// Catches the case where a function instance died (OOM, deploy, network
+// drop) before withIngestBudget could fire its own timer. Cheap to call
+// — single conditional UPDATE per machine.
+const STUCK_THRESHOLD_MS = 6 * 60_000;
+const STUCK_LABEL =
+  "Behandlingen blev afbrudt (server-genstart eller timeout). Prøv igen.";
+
+export async function cleanupStuckDocuments(machineId: string): Promise<void> {
+  try {
+    const supabase = getSupabaseServerClient();
+    const cutoff = new Date(Date.now() - STUCK_THRESHOLD_MS).toISOString();
+    const { error } = await supabase
+      .from("kb_documents")
+      .update({
+        status: "failed",
+        progress: null,
+        progress_label: STUCK_LABEL,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("machine_id", machineId)
+      .in("status", ["uploaded", "extracting", "embedding"])
+      .lt("updated_at", cutoff);
+    if (error) console.warn("cleanupStuckDocuments failed:", error);
+  } catch (err) {
+    console.warn("cleanupStuckDocuments threw:", err);
   }
 }
 
@@ -209,7 +300,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 
-  try {
+  const work = (async (): Promise<IngestPdfResult> => {
     const extracted = await extractPdfText(input.fileBuffer, {
       onPhaseStart: async (phase) => {
         if (phase === "claude-ocr") {
@@ -226,6 +317,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
         extraction_source: extracted.source,
         progress: 30,
         progress_label: `Chunker (${extracted.pageCount} sider)`,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);
 
@@ -279,6 +371,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
         status: "ready",
         progress: null,
         progress_label: null,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);
 
@@ -290,19 +383,28 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
       storagePath,
       extractionSource: extracted.source,
     };
+  })();
+
+  try {
+    return await withIngestBudget(documentId, work);
   } catch (err) {
     // Mark the row failed so the operator sees what happened instead
     // of a perpetual "extracting" badge. Storage object stays so they
-    // can retry via the reprocess button.
-    await supabase
-      .from("kb_documents")
-      .update({
-        status: "failed",
-        progress: null,
-        progress_label:
-          err instanceof Error ? err.message.slice(0, 200) : null,
-      })
-      .eq("id", documentId);
+    // can retry via the reprocess button. The timeout path already
+    // wrote a Danish-language label in withIngestBudget; for any other
+    // failure we surface the raw message.
+    if (!(err instanceof IngestTimeoutError)) {
+      await supabase
+        .from("kb_documents")
+        .update({
+          status: "failed",
+          progress: null,
+          progress_label:
+            err instanceof Error ? err.message.slice(0, 200) : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+    }
     throw err;
   }
 }
@@ -357,6 +459,7 @@ export async function reprocessPdf(args: {
       status: "extracting",
       progress: 5,
       progress_label: "Læser PDF",
+      updated_at: new Date().toISOString(),
     })
     .eq("id", row.id);
 
@@ -371,7 +474,7 @@ export async function reprocessPdf(args: {
     throw new Error(`wipe old chunks failed: ${delErr.message}`);
   }
 
-  try {
+  const work = (async (): Promise<ReprocessPdfResult> => {
     const extracted = await extractPdfText(buf, {
       force: args.force,
       onPhaseStart: async (phase) => {
@@ -387,6 +490,7 @@ export async function reprocessPdf(args: {
         status: "embedding",
         progress: 30,
         progress_label: `Chunker (${extracted.pageCount} sider)`,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
 
@@ -441,6 +545,7 @@ export async function reprocessPdf(args: {
         extraction_source: extracted.source,
         progress: null,
         progress_label: null,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
 
@@ -450,16 +555,23 @@ export async function reprocessPdf(args: {
       pageCount: extracted.pageCount,
       extractionSource: extracted.source,
     };
+  })();
+
+  try {
+    return await withIngestBudget(row.id, work);
   } catch (err) {
-    await supabase
-      .from("kb_documents")
-      .update({
-        status: "failed",
-        progress: null,
-        progress_label:
-          err instanceof Error ? err.message.slice(0, 200) : null,
-      })
-      .eq("id", row.id);
+    if (!(err instanceof IngestTimeoutError)) {
+      await supabase
+        .from("kb_documents")
+        .update({
+          status: "failed",
+          progress: null,
+          progress_label:
+            err instanceof Error ? err.message.slice(0, 200) : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+    }
     throw err;
   }
 }

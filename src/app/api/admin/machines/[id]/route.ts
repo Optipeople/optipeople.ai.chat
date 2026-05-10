@@ -6,6 +6,7 @@
 //                                   audit history stays (no FK to machine_kb).
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { cleanupStuckDocuments } from "@/lib/ingestion";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -62,6 +63,12 @@ export async function GET(
 
   const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
+
+  // Watchdog: flip any in-pipeline doc that hasn't progressed in
+  // STUCK_THRESHOLD_MS to failed before we read the list, so the admin
+  // sees the correct status without a manual refresh round-trip.
+  // Best-effort and cheap (single conditional UPDATE).
+  await cleanupStuckDocuments(id);
 
   const [
     { data: machine, error: mErr },

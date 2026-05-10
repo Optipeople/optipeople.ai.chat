@@ -41,7 +41,7 @@ export type AdminFeedback = {
 
 export type AdminEscalation = {
   id: string;
-  channel: "phone" | "email" | "service_ticket";
+  channel: "phone" | "email" | "service_ticket" | "webhook";
   target: string;
   note: string | null;
   createdBy: string | null;
@@ -211,7 +211,7 @@ export async function GET(
   const escalation = esc as
     | {
         id: string;
-        channel: "phone" | "email" | "service_ticket";
+        channel: "phone" | "email" | "service_ticket" | "webhook";
         target: string;
         note: string | null;
         created_by: string | null;

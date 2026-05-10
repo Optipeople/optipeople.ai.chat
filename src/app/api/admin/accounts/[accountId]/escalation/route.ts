@@ -27,7 +27,12 @@ export type AdminEscalationTargetResponse = {
   target: AdminEscalationTarget | null;
 };
 
-const VALID_CHANNELS: EscalationChannel[] = ["phone", "email", "service_ticket"];
+const VALID_CHANNELS: EscalationChannel[] = [
+  "phone",
+  "email",
+  "service_ticket",
+  "webhook",
+];
 
 async function gate(req: Request) {
   try {
@@ -113,7 +118,10 @@ export async function PUT(
 
   if (!channel) {
     return Response.json(
-      { error: "channel must be 'phone', 'email' or 'service_ticket'" },
+      {
+        error:
+          "channel must be 'phone', 'email', 'service_ticket' or 'webhook'",
+      },
       { status: 400 },
     );
   }
@@ -122,6 +130,22 @@ export async function PUT(
       { error: "target is required (1–500 chars)" },
       { status: 400 },
     );
+  }
+  // Webhook URLs must parse and use http(s). Reject anything else
+  // up-front so the admin gets a clear error rather than a 502 at chat
+  // time when the operator hits "Tilkald service".
+  if (channel === "webhook") {
+    try {
+      const u = new URL(target);
+      if (u.protocol !== "https:" && u.protocol !== "http:") {
+        throw new Error("non-http");
+      }
+    } catch {
+      return Response.json(
+        { error: "Webhook target skal være en gyldig http(s)://-URL" },
+        { status: 400 },
+      );
+    }
   }
 
   const supabase = getSupabaseServerClient();

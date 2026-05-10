@@ -31,6 +31,7 @@ const CHANNEL_LABEL: Record<EscalationChannel, string> = {
   phone: "Telefon",
   email: "E-mail",
   service_ticket: "Service-ticket",
+  webhook: "Webhook",
 };
 
 type EscalationRow = {

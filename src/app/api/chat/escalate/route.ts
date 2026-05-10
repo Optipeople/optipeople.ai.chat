@@ -10,13 +10,17 @@
 // snapshot is stored on the row so the tech's view doesn't depend on
 // the live `messages` table — escalation is a frozen handoff.
 
+import { randomUUID } from "node:crypto";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
 import { EmailError, sendEmail } from "@/lib/email";
 import {
   mintShareToken,
   SHARE_TOKEN_TTL_MS,
+  WebhookError,
+  sendEscalationWebhook,
   type EscalationChannel,
   type EscalationSnapshot,
+  type EscalationWebhookPayload,
 } from "@/lib/escalation";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
@@ -39,11 +43,14 @@ export type EscalateResponse = {
   shareToken: string;
   shareUrl: string;
   expiresAt: string;
-  // 'email' channel: server-sent via Resend; client should not open mailto.
+  // 'email'         : server-sent via Resend; client should not open mailto.
   // 'phone'         : client opens tel:.
   // 'service_ticket': client surfaces the share URL for copy.
+  // 'webhook'       : server POSTs JSON to the configured URL.
   emailSent: boolean;
   emailId: string | null;
+  webhookSent: boolean;
+  webhookStatus: number | null;
 };
 
 export async function POST(req: Request) {
@@ -219,7 +226,13 @@ export async function POST(req: Request) {
   // policy: the operator should know mail didn't go out, not discover
   // a stranded row in audit). For phone / service_ticket channels mail
   // isn't part of the contract; the row is the contract.
+  // Mint the escalationId up-front so the webhook payload can include
+  // a stable id (the downstream system needs it to dedupe retries).
+  // We use the same id when inserting the row a few lines down.
+  const escalationId = randomUUID();
+
   let emailId: string | null = null;
+  let webhookStatus: number | null = null;
   if (target.channel === "email") {
     const subject = `Service-anmodning${
       snapshot.machineName ? ` — ${snapshot.machineName}` : ""
@@ -254,9 +267,42 @@ export async function POST(req: Request) {
     }
   }
 
-  const { data: inserted, error: insErr } = await supabase
+  if (target.channel === "webhook") {
+    const payload: EscalationWebhookPayload = {
+      type: "optipeople.escalation.created",
+      version: 1,
+      escalationId,
+      conversationId,
+      machine: { id: snapshot.machineId, name: snapshot.machineName },
+      account: { id: snapshot.accountId },
+      operator: snapshot.operator,
+      note,
+      shareUrl,
+      expiresAt: expiresAt.toISOString(),
+      startedAt: snapshot.startedAt,
+      transcript: snapshot.messages,
+    };
+    try {
+      const sent = await sendEscalationWebhook(target.target, payload);
+      webhookStatus = sent.status;
+    } catch (err) {
+      const detail =
+        err instanceof WebhookError ? err.message : "Ukendt webhook-fejl";
+      console.error("escalate: webhook send failed:", err);
+      return Response.json(
+        {
+          error: `Kunne ikke sende webhook: ${detail}`,
+          code: "webhook_failed",
+        },
+        { status: 502 },
+      );
+    }
+  }
+
+  const { error: insErr } = await supabase
     .from("escalations")
     .insert({
+      id: escalationId,
       conversation_id: conversationId,
       channel: target.channel,
       target: target.target,
@@ -266,14 +312,11 @@ export async function POST(req: Request) {
       expires_at: expiresAt.toISOString(),
       created_by: userIdentity.email ?? userIdentity.userId,
       note,
-    })
-    .select("id")
-    .single();
-  if (insErr || !inserted) {
+    });
+  if (insErr) {
     console.error("escalate: insert failed:", insErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
-  const escalationId = (inserted as { id: string }).id;
 
   const { error: updErr } = await supabase
     .from("conversations")
@@ -298,6 +341,8 @@ export async function POST(req: Request) {
     expiresAt: expiresAt.toISOString(),
     emailSent: emailId !== null,
     emailId,
+    webhookSent: webhookStatus !== null,
+    webhookStatus,
   };
   return Response.json(result);
 }

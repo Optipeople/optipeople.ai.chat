@@ -6,7 +6,7 @@
 // the operator wants to force a Claude OCR pass without delete/re-upload.
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
-import { reprocessPdf } from "@/lib/ingestion";
+import { IngestTimeoutError, reprocessPdf } from "@/lib/ingestion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +44,12 @@ export async function POST(
     const result = await reprocessPdf({ documentId: id, force });
     return Response.json(result);
   } catch (err) {
+    if (err instanceof IngestTimeoutError) {
+      return Response.json(
+        { error: err.message, code: "timeout" },
+        { status: 504 },
+      );
+    }
     console.error("reprocess failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return Response.json(

@@ -5,7 +5,7 @@
 // 30+ seconds — the UI shows a spinner.
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
-import { ingestPdf } from "@/lib/ingestion";
+import { IngestTimeoutError, ingestPdf } from "@/lib/ingestion";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -94,6 +94,15 @@ export async function POST(req: Request) {
     });
     return Response.json(result);
   } catch (err) {
+    if (err instanceof IngestTimeoutError) {
+      // The doc row is already flipped to 'failed' with the same label
+      // by withIngestBudget — the queue panel will pick it up on the
+      // next poll regardless of the status code we return here.
+      return Response.json(
+        { error: err.message, code: "timeout" },
+        { status: 504 },
+      );
+    }
     console.error("admin ingest pipeline failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return Response.json(

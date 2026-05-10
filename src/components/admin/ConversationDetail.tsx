@@ -134,7 +134,9 @@ export function ConversationDetail({
                   ? "telefon"
                   : data.escalation.channel === "email"
                     ? "e-mail"
-                    : "service-ticket"}{" "}
+                    : data.escalation.channel === "webhook"
+                      ? "webhook"
+                      : "service-ticket"}{" "}
                 <span className="font-mono">{data.escalation.target}</span>
               </p>
               {data.escalation.note && (

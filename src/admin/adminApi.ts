@@ -6,6 +6,7 @@ import type {
   AdminMachineDetail,
 } from "@/app/api/admin/machines/[id]/route";
 import type { AdminConversationListItem } from "@/app/api/admin/machines/[id]/conversations/route";
+import type { AdminEscalationListItem } from "@/app/api/admin/machines/[id]/escalations/route";
 import type {
   AdminChunkRef,
   AdminConversationDetail,
@@ -24,6 +25,7 @@ export type {
   AdminConversationListItem,
   AdminConversationMessage,
   AdminDocument,
+  AdminEscalationListItem,
   AdminEscalationTarget,
   AdminFeedback,
   AdminMachine,
@@ -190,6 +192,30 @@ export async function listAdminConversations(
   }
   return (await res.json()) as {
     conversations: AdminConversationListItem[];
+    page: number;
+    perPage: number;
+    hasMore: boolean;
+  };
+}
+
+export async function listAdminEscalations(
+  machineId: string,
+  page = 0,
+  perPage = 25,
+): Promise<{
+  escalations: AdminEscalationListItem[];
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+}> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/escalations?page=${page}&perPage=${perPage}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente eskaleringer (${res.status})`);
+  }
+  return (await res.json()) as {
+    escalations: AdminEscalationListItem[];
     page: number;
     perPage: number;
     hasMore: boolean;

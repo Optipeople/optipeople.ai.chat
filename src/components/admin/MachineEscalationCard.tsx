@@ -17,12 +17,14 @@ const CHANNEL_LABEL: Record<Channel, string> = {
   phone: "Telefon",
   email: "E-mail",
   service_ticket: "Service-ticket (URL)",
+  webhook: "Webhook (HTTPS POST)",
 };
 
 const CHANNEL_PLACEHOLDER: Record<Channel, string> = {
   phone: "+45 12 34 56 78",
   email: "service@leverandør.dk",
   service_ticket: "https://leverandør.dk/ticket/new",
+  webhook: "https://api.helpdesk.dk/optipeople/escalate",
 };
 
 function formatTarget(t: AdminEscalationTarget): string {
@@ -292,6 +294,7 @@ function EditForm({
             <option value="phone">{CHANNEL_LABEL.phone}</option>
             <option value="email">{CHANNEL_LABEL.email}</option>
             <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
+            <option value="webhook">{CHANNEL_LABEL.webhook}</option>
           </select>
         </label>
         <label className="block text-[12px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
@@ -299,7 +302,9 @@ function EditForm({
             ? "Telefonnummer"
             : channel === "email"
               ? "E-mail-adresse"
-              : "URL til ticket-system"}
+              : channel === "webhook"
+                ? "Webhook-URL"
+                : "URL til ticket-system"}
           <input
             value={targetInput}
             onChange={(e) => setTargetInput(e.target.value)}

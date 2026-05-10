@@ -21,9 +21,9 @@ import {
   QrCode,
   RefreshCw,
   ScanEye,
-  Trash,
   Trash2,
   Upload,
+  Wrench,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -333,6 +333,18 @@ function MachineSummary({
           >
             <History className="h-4 w-4" />
             Samtaler
+          </Link>
+          <Link
+            href={`/admin/machines/${machine.machineId}/escalations`}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+              "transition-colors hover:bg-[var(--color-muted)]",
+            )}
+            title="Se alle service-tilkald for denne maskine"
+          >
+            <Wrench className="h-4 w-4" />
+            Eskaleringer
           </Link>
           <a
             href={chatHref}
