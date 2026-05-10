@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { ChevronRight, Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
 
 export function MachinesList() {
+  const router = useRouter();
   const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,21 +93,21 @@ export function MachinesList() {
                 <th className="px-4 py-3 font-medium">Machine ID</th>
                 <th className="px-4 py-3 font-medium">Konto ID</th>
                 <th className="px-4 py-3 text-right font-medium">Dokumenter</th>
+                <th className="w-10 px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((m) => (
                 <tr
                   key={m.machineId}
-                  className="border-t border-[var(--color-hairline)] transition-colors hover:bg-[var(--color-muted)]/50"
+                  onClick={() => router.push(`/admin/machines/${m.machineId}`)}
+                  className={cn(
+                    "group cursor-pointer border-t border-[var(--color-hairline)]",
+                    "transition-colors hover:bg-[var(--color-muted)]/60",
+                  )}
                 >
-                  <td className="px-4 py-3 font-medium text-[var(--color-foreground)]">
-                    <Link
-                      href={`/admin/machines/${m.machineId}`}
-                      className="hover:underline"
-                    >
-                      {m.displayName ?? "(uden navn)"}
-                    </Link>
+                  <td className="px-4 py-3 font-medium text-[var(--color-foreground)] group-hover:underline">
+                    {m.displayName ?? "(uden navn)"}
                   </td>
                   <td className="px-4 py-3 font-mono text-[12px] text-[var(--color-muted-foreground)]">
                     {m.machineId}
@@ -116,6 +117,9 @@ export function MachinesList() {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-[var(--color-foreground)]">
                     {m.documentCount}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <ChevronRight className="ml-auto h-4 w-4 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]" />
                   </td>
                 </tr>
               ))}

@@ -74,12 +74,19 @@ export async function deleteAdminDocument(id: string): Promise<void> {
 // retry; the next regular request will trigger the refresh.
 export type UploadProgress = (loaded: number, total: number) => void;
 
+export type UploadResult = {
+  documentId: string;
+  chunkCount: number;
+  pageCount: number;
+  extractionSource: "pdf-parse" | "claude-ocr";
+};
+
 export async function uploadAdminDocument(args: {
   machineId: string;
   file: File;
   summary?: string;
   onProgress?: UploadProgress;
-}): Promise<{ documentId: string; chunkCount: number; pageCount: number }> {
+}): Promise<UploadResult> {
   const token = getAccessToken();
   if (!token) throw new Error("Session expired");
 
@@ -102,12 +109,7 @@ export async function uploadAdminDocument(args: {
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        const r = xhr.response as {
-          documentId: string;
-          chunkCount: number;
-          pageCount: number;
-        };
-        resolve(r);
+        resolve(xhr.response as UploadResult);
       } else {
         const message =
           (xhr.response as { error?: string } | null)?.error ??

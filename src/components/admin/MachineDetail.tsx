@@ -20,6 +20,7 @@ import {
   uploadAdminDocument,
   type AdminDocument,
   type AdminMachineDetail,
+  type UploadResult,
 } from "@/admin/adminApi";
 
 const DA_DATE = new Intl.DateTimeFormat("da-DK", {
@@ -241,6 +242,7 @@ function UploadCard({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<UploadResult | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -260,8 +262,9 @@ function UploadCard({
     setUploading(true);
     setProgress(0);
     setErr(null);
+    setLastResult(null);
     try {
-      await uploadAdminDocument({
+      const result = await uploadAdminDocument({
         machineId,
         file,
         summary: summary.trim() || undefined,
@@ -269,6 +272,7 @@ function UploadCard({
           setProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
         },
       });
+      setLastResult(result);
       setFile(null);
       setSummary("");
       setProgress(0);
@@ -361,6 +365,18 @@ function UploadCard({
 
       {err && (
         <p className="mt-3 text-[13px] text-red-600">{err}</p>
+      )}
+
+      {lastResult && (
+        <p className="mt-3 text-[13px] text-emerald-700">
+          ✓ Uploadet: {lastResult.chunkCount} chunks fra{" "}
+          {lastResult.pageCount} sider
+          {lastResult.extractionSource === "claude-ocr" && (
+            <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium">
+              Claude OCR
+            </span>
+          )}
+        </p>
       )}
 
       <div className="mt-4 flex items-center justify-between gap-4">

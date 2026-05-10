@@ -8,12 +8,9 @@
 // Server-only: uses the service-role Supabase client.
 
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
+import { extractPdfText, type PdfExtractionSource } from "./pdfText";
 import { getSupabaseServerClient } from "./supabase";
 import { embedDocuments, VOYAGE_MODEL } from "./voyage";
-
-const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 
 export type IngestPdfInput = {
   machineId: string;
@@ -35,6 +32,9 @@ export type IngestPdfResult = {
   pageCount: number;
   byteSize: number;
   storagePath: string;
+  // Which extraction path produced the text. "claude-ocr" means the PDF
+  // had no usable text layer and was processed via vision instead.
+  extractionSource: PdfExtractionSource;
 };
 
 // Recursive splitter: tries the most natural break points first
@@ -126,11 +126,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     });
   if (uploadError) throw new Error(`storage upload failed: ${uploadError.message}`);
 
-  const { text, numpages } = await pdfParse(input.fileBuffer);
-  const cleaned = text
-    .replace(/\s+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const extracted = await extractPdfText(input.fileBuffer);
 
   const { error: docError } = await supabase.from("kb_documents").insert({
     id: documentId,
@@ -140,13 +136,13 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     source_type: "pdf",
     storage_path: storagePath,
     byte_size: byteSize,
-    page_count: numpages,
+    page_count: extracted.pageCount,
     status: "embedding",
     created_by: input.createdBy ?? "cli",
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 
-  const chunks = chunkText(cleaned);
+  const chunks = chunkText(extracted.text);
   const embeddings = await embedDocuments(chunks);
   if (embeddings.length !== chunks.length) {
     throw new Error(
@@ -183,9 +179,10 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
   return {
     documentId,
     chunkCount: chunks.length,
-    pageCount: numpages,
+    pageCount: extracted.pageCount,
     byteSize,
     storagePath,
+    extractionSource: extracted.source,
   };
 }
 
