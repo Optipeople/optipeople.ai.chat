@@ -17,7 +17,6 @@ import {
   MessageSquare,
   MessageSquareQuote,
   Pencil,
-  Printer,
   QrCode,
   RefreshCw,
   ScanEye,
@@ -480,10 +479,10 @@ function MachineQrCard({
                 "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
                 "transition-colors hover:bg-[var(--color-muted)]",
               )}
-              title="Åbn print-venlig side"
+              title="Åbn QR-side med download"
             >
-              <Printer className="h-4 w-4" />
-              Vis & print
+              <Download className="h-4 w-4" />
+              Vis & hent
             </Link>
           )}
           <button
