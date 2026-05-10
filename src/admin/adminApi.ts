@@ -10,6 +10,7 @@ import type {
   AdminChunkRef,
   AdminConversationDetail,
   AdminConversationMessage,
+  AdminFeedback,
 } from "@/app/api/admin/conversations/[id]/route";
 
 export type {
@@ -18,6 +19,7 @@ export type {
   AdminConversationListItem,
   AdminConversationMessage,
   AdminDocument,
+  AdminFeedback,
   AdminMachine,
   AdminMachineDetail,
 };

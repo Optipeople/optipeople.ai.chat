@@ -4,7 +4,7 @@ Living document. Reflects where the project is *right now* and the next chunk of
 work to pick up. For long-term direction see [architecture.md](architecture.md);
 for product framing see [overview.md](overview.md).
 
-Last updated: 2026-05-10 (late afternoon).
+Last updated: 2026-05-10 (evening — iteration 3 step 4 + clickable source chips).
 
 ---
 
@@ -30,15 +30,15 @@ prompt → promote answers into the KB) is still pending.
 | Admin UI | `/admin/machines` list + `/admin/machines/[id]` detail with: machine-name edit, drag-drop folder upload (full tree preserved, multi-file queue), folder tree view with DnD reorganise, "+ Ny mappe" + delete-empty-folder, view/download original PDF (signed URL), inline summary edit, document delete. ScanEye icon marks OCR-extracted docs. |
 | Admin queue / progress | Persistent "Behandlingskø" panel. Reads from `kb_documents.progress` / `progress_label` so it survives refresh, polls every 3s while any doc is non-terminal. Server-side rows show a live progress bar through phases: `Læser PDF` → `Kører OCR…` → `Chunker` → `Embedder X/Y` → `Indsætter chunks`. |
 | Conversation persistence | Every operator chat creates a `conversations` row + `messages` rows for user/assistant/tool turns. Tool messages capture the `kb_chunks` UUIDs the AI saw. Operator email + name denormalised onto conversations for cheap audit display. |
-| Conversation audit UI | `/admin/machines/[id]/conversations` (paginated list) + `/admin/machines/[id]/conversations/[convId]` (full drilldown with messages, tool calls, expandable chunk text, token usage, cache-hit count). |
+| Conversation audit UI | `/admin/machines/[id]/conversations` (paginated list) + `/admin/machines/[id]/conversations/[convId]` (full drilldown with messages, tool calls, expandable chunk text, token usage, cache-hit count, **feedback verdict + solution text**). |
+| Resolution prompt | "Afslut samtale" button + 10-min idle auto-prompt → footer card with **Ja** / **Nej** + optional "Hvad virkede?" textarea on Ja. Posts to `/api/chat/feedback` → `feedback` row + `conversations.resolution` + `ended_at`. |
+| Source chips in chat | Each assistant reply gets a "Kilder" row of clickable chips (one per unique document hit), deep-linked to the best-scoring page via `#page=N`. Backed by `/api/documents/[id]/url` (operator-auth, 10-min signed URL). Chat route streams a `sources` SSE event derived from search_kb results. |
 | Admin → operator deep-link | `MessageSquare` icon on every machine row + "Test chat" button on the detail header opens `/?account=…&machine=…` in a new tab. |
 | Confirm dialog | Branded `<ConfirmProvider>` + `useConfirm()` hook replaces `window.confirm`. Esc/Enter/click-outside, danger flag. |
 | Knowledge base for the test machine | Felder (test) — `machine_id 700a3579-8cdf-4afa-2bb8-08db9ef8e885`, account `8452d639-8953-46ea-a57a-08db9ef8b057`. Document count drifts as we test reprocess flows; check `/admin/machines/<id>` for the live total. |
 
 ### What's NOT done yet
 
-- **Iteration 3 step 4** — resolution prompt at end of conversation
-  ("Did this solve it?") writing to the `feedback` table.
 - **Iteration 3 step 5** — promote a "yes + solution text" answer to a
   new `kb_documents` row of `source_type = 'feedback'`. Closes the loop:
   next operator with the same problem gets a chunk that came from a peer's
@@ -77,6 +77,8 @@ b8b147d Refactor: extract ingestion pipeline into src/lib/ingestion.ts
 | Concern | File |
 |---|---|
 | Operator chat (agentic loop, system prompt, search_kb tool, audit writes) | [src/app/api/chat/route.ts](../src/app/api/chat/route.ts) |
+| Resolution prompt API | [src/app/api/chat/feedback/route.ts](../src/app/api/chat/feedback/route.ts) |
+| Operator-accessible signed-URL endpoint | [src/app/api/documents/[id]/url/route.ts](../src/app/api/documents/%5Bid%5D/url/route.ts) |
 | Conversation persistence helpers | [src/lib/conversations.ts](../src/lib/conversations.ts) |
 | Auth resolver (`resolveCurrentUser` + `requireSuperAdmin`) | [src/lib/auth.ts](../src/lib/auth.ts) |
 | Hybrid search SQL function | [supabase/migrations/20260507141106_hybrid_search.sql](../supabase/migrations/20260507141106_hybrid_search.sql) |
@@ -283,22 +285,20 @@ JSON, and the chunks each tool call returned (document title, chunk
 ordinal, page range). Click a chunk row to expand its full text.
 Header card shows total tokens (in/out) and cache-hit count.
 
-### Step 4 — Resolution prompt (⏳ not started)
+### Step 4 — Resolution prompt (✅ shipped)
 
-At end of an operator's session (idle timeout? explicit "I'm done"
-button?), prompt "Var dette nyttigt?" → write to `feedback` table.
-
-Open questions before starting:
-
-- **What's "end of conversation"?** Idle timeout (e.g. 5 min no
-  activity) is least intrusive but has odd UX. Explicit button is
-  clearest but easy to ignore. Recommendation: explicit "Afslut samtale"
-  button + a 10-min idle auto-prompt.
-- **How is the prompt rendered?** Inline assistant message? Modal?
-  Recommendation: inline non-blocking footer card so the chat history
-  isn't disturbed.
-- **What gets stored?** `resolved: boolean`, `solution_text: string?`
-  for the "yes + here's what worked" path.
+Operator gets a **"Afslut samtale"** pill button above the input once
+the chat has at least one assistant reply. Clicking it (or 10 minutes
+of idle, whichever comes first) surfaces a non-blocking footer card:
+"Var dette nyttigt?" with **Ja** / **Nej**. **Ja** opens an optional
+"Hvad virkede?" textarea (skippable); **Nej** submits immediately.
+Submission posts to `POST /api/chat/feedback` which writes a `feedback`
+row, sets `conversations.resolution` to `resolved`/`unresolved` and
+stamps `ended_at`. Re-submitting overwrites the prior feedback row, so
+the operator can change their mind before navigating away. After
+submission the input bar locks and a "Start ny samtale" button appears.
+Audit drilldown shows the feedback verdict + solution text in the
+header card.
 
 ### Step 5 — Promote feedback to KB (⏳ not started)
 
@@ -315,13 +315,12 @@ Open questions:
   of garbage flowing into the KB if every "yes" promotes. Recommend a
   pending queue that admins approve from a "Pending feedback" tab.
 
-### Suggested commit cadence for steps 4 + 5
+### Suggested commit cadence for step 5
 
-1. *Add resolution prompt UI + POST /api/chat/feedback endpoint* — writes to `feedback` table
-2. *Auto-end conversations on idle timeout* — bumps `conversations.ended_at`
-3. *Add /admin/machines/[id]/feedback (pending review) page*
-4. *Promote-to-KB action with chunking + embedding* — creates `kb_documents` row of `source_type='feedback'`
-5. *Surface feedback-source icon in the document tree*
+1. *Add /admin/machines/[id]/feedback (pending review) page* — list of unpromoted `feedback` rows where `resolved=true` and `solution_text` is non-null
+2. *Promote-to-KB action with chunking + embedding* — creates a `kb_documents` row of `source_type='feedback'`, sets `feedback.promoted_doc_id`
+3. *Surface feedback-source icon in the document tree* (alongside the violet ScanEye icon for OCR)
+4. *Optional: auto-promote on Ja with admin-flag override* once we trust the signal
 
 See [architecture.md §7](architecture.md) for the full phase plan
 beyond iteration 3.

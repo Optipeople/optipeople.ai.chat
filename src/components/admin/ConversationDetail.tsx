@@ -9,6 +9,8 @@ import {
   FileText,
   Loader2,
   Search,
+  ThumbsDown,
+  ThumbsUp,
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -121,6 +123,46 @@ export function ConversationDetail({
             </dd>
           </div>
         </dl>
+
+        {data.feedback && (
+          <div
+            className={cn(
+              "mt-5 flex items-start gap-3 rounded-[var(--radius)] border p-4 text-[14px]",
+              data.feedback.resolved
+                ? "border-emerald-200 bg-emerald-50"
+                : "border-red-200 bg-red-50",
+            )}
+          >
+            {data.feedback.resolved ? (
+              <ThumbsUp className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+            ) : (
+              <ThumbsDown className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />
+            )}
+            <div className="flex-1">
+              <p
+                className={cn(
+                  "font-medium",
+                  data.feedback.resolved ? "text-emerald-800" : "text-red-800",
+                )}
+              >
+                Operatør markerede samtalen som{" "}
+                {data.feedback.resolved ? "løst" : "uløst"}
+              </p>
+              {data.feedback.solutionText && (
+                <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-[var(--color-foreground)]">
+                  <span className="text-[var(--color-muted-foreground)]">
+                    Hvad virkede:{" "}
+                  </span>
+                  {data.feedback.solutionText}
+                </p>
+              )}
+              <p className="mt-1 text-[12px] text-[var(--color-muted-foreground)]">
+                {DA_DT.format(new Date(data.feedback.createdAt))}
+                {data.feedback.promotedDocId && " · forfremmet til KB"}
+              </p>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="flex flex-col gap-3">

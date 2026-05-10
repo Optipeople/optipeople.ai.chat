@@ -32,6 +32,13 @@ export type AdminConversationMessage = {
   createdAt: string;
 };
 
+export type AdminFeedback = {
+  resolved: boolean;
+  solutionText: string | null;
+  promotedDocId: string | null;
+  createdAt: string;
+};
+
 export type AdminConversationDetail = {
   id: string;
   machineId: string;
@@ -43,6 +50,7 @@ export type AdminConversationDetail = {
   endedAt: string | null;
   entryMode: string | null;
   resolution: string | null;
+  feedback: AdminFeedback | null;
   messages: AdminConversationMessage[];
 };
 
@@ -63,6 +71,7 @@ export async function GET(
   const [
     { data: conv, error: cErr },
     { data: msgs, error: mErr },
+    { data: fb, error: fErr },
   ] = await Promise.all([
     supabase
       .from("conversations")
@@ -78,10 +87,17 @@ export async function GET(
       )
       .eq("conversation_id", id)
       .order("created_at", { ascending: true }),
+    supabase
+      .from("feedback")
+      .select("resolved, solution_text, promoted_doc_id, created_at")
+      .eq("conversation_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
-  if (cErr || mErr) {
-    console.error("admin conversation detail failed:", cErr, mErr);
+  if (cErr || mErr || fErr) {
+    console.error("admin conversation detail failed:", cErr, mErr, fErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
   if (!conv) {
@@ -155,6 +171,15 @@ export async function GET(
     resolution: string | null;
   };
 
+  const feedback = fb as
+    | {
+        resolved: boolean;
+        solution_text: string | null;
+        promoted_doc_id: string | null;
+        created_at: string;
+      }
+    | null;
+
   const result: AdminConversationDetail = {
     id: conversation.id,
     machineId: conversation.machine_id,
@@ -166,6 +191,14 @@ export async function GET(
     endedAt: conversation.ended_at,
     entryMode: conversation.entry_mode,
     resolution: conversation.resolution,
+    feedback: feedback
+      ? {
+          resolved: feedback.resolved,
+          solutionText: feedback.solution_text,
+          promotedDocId: feedback.promoted_doc_id,
+          createdAt: feedback.created_at,
+        }
+      : null,
     messages: ((msgs ?? []) as Array<{
       id: string;
       role: "user" | "assistant" | "tool";

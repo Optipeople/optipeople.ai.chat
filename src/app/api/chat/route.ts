@@ -46,7 +46,7 @@ Formatering (svar vises som Markdown):
 - Brug korte overskrifter (### Overskrift) kun når svaret har 2+ adskilte dele (f.eks. "Årsag", "Løsning", "Hvis det fortsætter"). Spring overskrifter over ved korte svar.
 - Brug inline \`code\` til parameternavne, filstier og eksakte værdier.
 - Hold afsnit på 1–3 linjer. Foretræk lister frem for prosa ved alt flertrins-indhold.
-- Slut med én kursiv *Kilde: <manualnavn>* linje når du citerer, ikke inline-henvisninger.
+- Skriv IKKE en *Kilde:* linje selv — kildelinks tilføjes automatisk under svaret når du har brugt search_kb. Du kan referere til manualens titel i prosa hvis det hjælper, men ingen footer-citat.
 - Pak aldrig hele svaret ind i en code block.
 `;
 
@@ -128,12 +128,25 @@ ${manifest}
 `;
 }
 
+type DocHit = {
+  id: string;
+  title: string;
+  // Page of the highest-scoring chunk for this doc — used to deep-link
+  // the operator-facing source chip via PDF "#page=N".
+  pageFrom: number | null;
+  score: number;
+};
+
 type ToolExecResult = {
   // What goes back to the model as the tool_result content.
   modelPayload: unknown;
   // chunk_ids retrieved (search_kb only) — persisted alongside the
   // tool message so audit views can show which snippets the AI saw.
   chunkIds: string[];
+  // Per-document best hit (search_kb only). Accumulated across the
+  // agentic loop and streamed to the client as `sources` so the UI can
+  // render clickable links to the original PDFs.
+  documents: DocHit[];
 };
 
 async function executeSearchKb(
@@ -144,6 +157,7 @@ async function executeSearchKb(
     return {
       modelPayload: { error: "query must be a non-empty string" },
       chunkIds: [],
+      documents: [],
     };
   }
   const topK = Math.min(
@@ -163,7 +177,11 @@ async function executeSearchKb(
   });
   if (error) {
     console.error("search_kb rpc error:", error);
-    return { modelPayload: { error: error.message }, chunkIds: [] };
+    return {
+      modelPayload: { error: error.message },
+      chunkIds: [],
+      documents: [],
+    };
   }
 
   const rows = (data ?? []) as Array<{
@@ -189,6 +207,22 @@ async function executeSearchKb(
     }
   }
 
+  // Best chunk page per doc — keeps the source chip's deep-link
+  // pointing at the most relevant page when there are multiple hits in
+  // the same document.
+  const hitsByDoc = new Map<string, DocHit>();
+  for (const r of rows) {
+    const cur = hitsByDoc.get(r.document_id);
+    if (!cur || r.rrf_score > cur.score) {
+      hitsByDoc.set(r.document_id, {
+        id: r.document_id,
+        title: titleByDoc.get(r.document_id) ?? "(unknown)",
+        pageFrom: r.page_from,
+        score: r.rrf_score,
+      });
+    }
+  }
+
   return {
     modelPayload: {
       results: rows.map((r) => ({
@@ -201,6 +235,7 @@ async function executeSearchKb(
       })),
     },
     chunkIds: rows.map((r) => r.chunk_id),
+    documents: Array.from(hitsByDoc.values()),
   };
 }
 
@@ -215,6 +250,7 @@ async function executeTool(
   return {
     modelPayload: { error: `Unknown tool: ${name}` },
     chunkIds: [],
+    documents: [],
   };
 }
 
@@ -336,6 +372,10 @@ export async function POST(req: Request) {
         let conversation: MessageParam[] = userMessages;
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
         let lastStopReason: string | null = null;
+        // Accumulate the best hit per document across all search_kb
+        // calls in this turn's agentic loop. Streamed back as `sources`
+        // so the UI can render clickable chips under the assistant reply.
+        const docHits = new Map<string, DocHit>();
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
           const s = anthropic.messages.stream({
@@ -402,6 +442,10 @@ export async function POST(req: Request) {
             toolUses.map(async (tu) => {
               try {
                 const exec = await executeTool(tu.name, tu.input, machineId);
+                for (const d of exec.documents) {
+                  const cur = docHits.get(d.id);
+                  if (!cur || d.score > cur.score) docHits.set(d.id, d);
+                }
                 const payloadStr = JSON.stringify(exec.modelPayload);
                 await safe("appendToolMessage", () =>
                   appendToolMessage({
@@ -450,6 +494,17 @@ export async function POST(req: Request) {
           ];
         }
 
+        if (docHits.size > 0) {
+          send("sources", {
+            sources: Array.from(docHits.values())
+              .sort((a, b) => b.score - a.score)
+              .map((d) => ({
+                id: d.id,
+                title: d.title,
+                pageFrom: d.pageFrom,
+              })),
+          });
+        }
         send("done", { stop_reason: lastStopReason, usage: totalUsage });
         controller.close();
       } catch (err) {

@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  FileText,
+  Loader2,
+  ThumbsDown,
+  ThumbsUp,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/ui/markdown";
@@ -84,9 +92,15 @@ function useDeepLinkSelection() {
 }
 
 type Role = "user" | "assistant";
+type SourceRef = {
+  id: string;
+  title: string;
+  pageFrom: number | null;
+};
 interface Message {
   role: Role;
   content: string;
+  sources?: SourceRef[];
 }
 
 const SAMPLE_QUESTIONS = [
@@ -125,6 +139,19 @@ export default function Home() {
   return <ChatApp />;
 }
 
+// 10 minutes of no chat activity (no streaming, no typing, no send) auto-
+// prompts the operator to mark resolution. Long enough that they aren't
+// nagged mid-task; short enough that the prompt still has context.
+const IDLE_FEEDBACK_MS = 10 * 60 * 1000;
+
+type FeedbackState =
+  | { phase: "hidden" }
+  | { phase: "prompt" }
+  | { phase: "answered_yes"; solution: string; submitting: boolean }
+  | { phase: "submitting" }
+  | { phase: "thanks"; resolved: boolean }
+  | { phase: "error"; message: string };
+
 function ChatApp() {
   const { currentAccount, currentMachine } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -135,6 +162,7 @@ function ChatApp() {
   // grouped together for the audit view. Reset whenever the operator
   // switches machines so the new chat starts a fresh row.
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -142,12 +170,14 @@ function ChatApp() {
   const streamDoneRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Switching machine = new conversation context. Drop any prior id
     // and clear messages — operator likely wants a fresh slate.
     setConversationId(null);
     setMessages([]);
+    setFeedback({ phase: "hidden" });
   }, [currentMachine?.id]);
 
   useEffect(() => {
@@ -168,8 +198,91 @@ function ChatApp() {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       abortRef.current?.abort();
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
   }, []);
+
+  // Idle prompt: arm a timer when the chat is settled (we have a
+  // conversation, no streaming, no card already showing). Clear on any
+  // activity. When it fires, surface the resolution card.
+  const armIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      // Only auto-prompt if we still have a conversation and nothing is
+      // happening — guards against the prompt flashing while the operator
+      // started typing right at the deadline.
+      setFeedback((prev) => (prev.phase === "hidden" ? { phase: "prompt" } : prev));
+    }, IDLE_FEEDBACK_MS);
+  }, []);
+
+  const clearIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      conversationId &&
+      !streaming &&
+      feedback.phase === "hidden" &&
+      messages.some((m) => m.role === "assistant" && m.content.length > 0)
+    ) {
+      armIdleTimer();
+      return clearIdleTimer;
+    }
+    clearIdleTimer();
+    return undefined;
+  }, [
+    conversationId,
+    streaming,
+    feedback.phase,
+    messages,
+    armIdleTimer,
+    clearIdleTimer,
+  ]);
+
+  function startNewConversation() {
+    abortRef.current?.abort();
+    pendingRef.current = "";
+    streamDoneRef.current = false;
+    setStreaming(false);
+    setMessages([]);
+    setConversationId(null);
+    setFeedback({ phase: "hidden" });
+    setInput("");
+  }
+
+  async function submitFeedback(resolved: boolean, solutionText?: string) {
+    if (!conversationId) return;
+    setFeedback(
+      resolved && solutionText !== undefined
+        ? { phase: "answered_yes", solution: solutionText, submitting: true }
+        : { phase: "submitting" },
+    );
+    try {
+      const res = await fetchWithAuth("/api/chat/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          resolved,
+          solutionText: solutionText && solutionText.trim().length > 0
+            ? solutionText
+            : null,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Server error ${res.status}${txt ? `: ${txt}` : ""}`);
+      }
+      setFeedback({ phase: "thanks", resolved });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setFeedback({ phase: "error", message: msg });
+    }
+  }
 
   function startDrain() {
     if (rafRef.current !== null) return;
@@ -203,6 +316,10 @@ function ChatApp() {
   async function send(textOverride?: string) {
     const text = (textOverride ?? input).trim();
     if (!text || streaming) return;
+    // Any send means the operator isn't done — drop the idle prompt
+    // (and any in-flight feedback state) so it doesn't sit there stale.
+    clearIdleTimer();
+    if (feedback.phase !== "hidden") setFeedback({ phase: "hidden" });
 
     const next: Message[] = [
       ...messages,
@@ -262,6 +379,18 @@ function ChatApp() {
             pendingRef.current += data.text;
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
+          } else if (event === "sources") {
+            if (Array.isArray(data.sources)) {
+              const sources = data.sources as SourceRef[];
+              setMessages((prev) => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.role === "assistant") {
+                  copy[copy.length - 1] = { ...last, sources };
+                }
+                return copy;
+              });
+            }
           } else if (event === "error") {
             pendingRef.current = "";
             setMessages((prev) => {
@@ -306,7 +435,13 @@ function ChatApp() {
   }
 
   const isEmpty = messages.length === 0;
-  const canSend = !streaming && input.trim().length > 0;
+  const hasAssistantReply = messages.some(
+    (m) => m.role === "assistant" && m.content.length > 0,
+  );
+  const inputLocked = streaming || feedback.phase === "thanks";
+  const canSend = !inputLocked && input.trim().length > 0;
+  const showEndButton =
+    !!conversationId && hasAssistantReply && feedback.phase === "hidden";
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
@@ -369,12 +504,53 @@ function ChatApp() {
               ))}
             </div>
           )}
+          {showEndButton && (
+            <div className="msg-in mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFeedback({ phase: "prompt" })}
+                className={cn(
+                  "rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-muted-foreground)]",
+                  "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
+                  "transition-colors hover:text-[var(--color-foreground)] hover:border-[var(--color-brand)]/40",
+                )}
+              >
+                Afslut samtale
+              </button>
+            </div>
+          )}
+          {feedback.phase !== "hidden" && (
+            <div className="msg-in mb-3">
+              <FeedbackCard
+                state={feedback}
+                onAnswerYes={() =>
+                  setFeedback({
+                    phase: "answered_yes",
+                    solution: "",
+                    submitting: false,
+                  })
+                }
+                onAnswerNo={() => submitFeedback(false)}
+                onSubmitYes={(solution) => submitFeedback(true, solution)}
+                onSolutionChange={(solution) =>
+                  setFeedback((prev) =>
+                    prev.phase === "answered_yes"
+                      ? { ...prev, solution }
+                      : prev,
+                  )
+                }
+                onDismiss={() => setFeedback({ phase: "hidden" })}
+                onStartNew={startNewConversation}
+              />
+            </div>
+          )}
           <div
             className={cn(
               "flex items-end gap-3 rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-2.5",
               "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
               "transition-[border-color,box-shadow] duration-300",
               "focus-within:border-[var(--color-brand)]/30",
+              inputLocked && "opacity-60",
             )}
           >
             <Textarea
@@ -382,9 +558,13 @@ function ChatApp() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Skriv dit spørgsmål her…"
+              placeholder={
+                feedback.phase === "thanks"
+                  ? "Samtalen er afsluttet. Start en ny ovenfor."
+                  : "Skriv dit spørgsmål her…"
+              }
               rows={1}
-              disabled={streaming}
+              disabled={inputLocked}
               className="min-h-[48px] max-h-[200px] flex-1 border-0 bg-transparent shadow-none focus:border-0"
             />
             <Button
@@ -441,8 +621,283 @@ function MessageRow({ message }: { message: Message }) {
   }
 
   return (
-    <div className="msg-in">
+    <div className="msg-in flex flex-col gap-3">
       <Markdown>{message.content}</Markdown>
+      {message.sources && message.sources.length > 0 && (
+        <SourceChips sources={message.sources} />
+      )}
+    </div>
+  );
+}
+
+function SourceChips({ sources }: { sources: SourceRef[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <span className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        Kilder
+      </span>
+      {sources.map((s) => (
+        <SourceChip key={s.id} source={s} />
+      ))}
+    </div>
+  );
+}
+
+function SourceChip({ source }: { source: SourceRef }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function open() {
+    if (loading) return;
+    setError(null);
+    setLoading(true);
+    // We pop a placeholder window synchronously so the click counts as
+    // user-initiated; popup blockers won't fire after the await.
+    const popup =
+      typeof window !== "undefined" ? window.open("", "_blank") : null;
+    try {
+      const res = await fetchWithAuth(
+        `/api/documents/${encodeURIComponent(source.id)}/url`,
+      );
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Server error ${res.status}${txt ? `: ${txt}` : ""}`);
+      }
+      const body = (await res.json()) as { url?: string };
+      if (!body.url) throw new Error("Manglende URL i svaret");
+      const target =
+        source.pageFrom != null
+          ? `${body.url}#page=${source.pageFrom}`
+          : body.url;
+      if (popup) popup.location.href = target;
+      else window.open(target, "_blank");
+    } catch (err: unknown) {
+      if (popup) popup.close();
+      setError(err instanceof Error ? err.message : "Kunne ikke åbne dokument");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const pageLabel = source.pageFrom != null ? ` · s. ${source.pageFrom}` : "";
+
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={loading}
+      title={error ?? `Åbn ${source.title}${pageLabel} i ny fane`}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3 py-1 text-[12px] text-[var(--color-foreground)]",
+        "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
+        "transition-colors hover:border-[var(--color-brand)]/40 hover:bg-[var(--color-muted)]/40",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+        "disabled:opacity-60",
+        error && "border-red-300 text-red-700",
+      )}
+    >
+      {loading ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <FileText className="h-3 w-3" />
+      )}
+      <span className="max-w-[260px] truncate">{source.title}</span>
+      {source.pageFrom != null && (
+        <span className="text-[var(--color-muted-foreground)]">
+          s. {source.pageFrom}
+        </span>
+      )}
+      <ExternalLink className="h-3 w-3 text-[var(--color-muted-foreground)]" />
+    </button>
+  );
+}
+
+function FeedbackCard({
+  state,
+  onAnswerYes,
+  onAnswerNo,
+  onSubmitYes,
+  onSolutionChange,
+  onDismiss,
+  onStartNew,
+}: {
+  state: FeedbackState;
+  onAnswerYes: () => void;
+  onAnswerNo: () => void;
+  onSubmitYes: (solution: string) => void;
+  onSolutionChange: (solution: string) => void;
+  onDismiss: () => void;
+  onStartNew: () => void;
+}) {
+  if (state.phase === "thanks") {
+    return (
+      <div className="rounded-[var(--radius-xl)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
+        <div className="flex items-start gap-3">
+          <CheckCircle2
+            className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600"
+            aria-hidden
+          />
+          <div className="flex-1">
+            <p className="text-[15px] font-medium text-[var(--color-foreground)]">
+              Tak for din feedback.
+            </p>
+            <p className="mt-0.5 text-[13px] text-[var(--color-muted-foreground)]">
+              {state.resolved
+                ? "Markeret som løst. Det hjælper næste operatør med samme problem."
+                : "Markeret som uløst. Vi kigger på det."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onStartNew}
+            className="rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40"
+          >
+            Start ny samtale
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "error") {
+    return (
+      <div className="rounded-[var(--radius-xl)] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-medium">Kunne ikke gemme feedback</p>
+            <p className="mt-0.5 text-[13px]">{state.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-red-700/70 hover:text-red-700"
+            aria-label="Luk"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const submitting =
+    state.phase === "submitting" ||
+    (state.phase === "answered_yes" && state.submitting);
+
+  return (
+    <div className="rounded-[var(--radius-xl)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[15px] font-medium text-[var(--color-foreground)]">
+            Var dette nyttigt?
+          </p>
+          <p className="mt-0.5 text-[13px] text-[var(--color-muted-foreground)]">
+            Hjælp den næste operatør ved at fortælle os om svaret løste dit
+            problem.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={submitting}
+          className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
+          aria-label="Luk"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {state.phase === "prompt" || state.phase === "submitting" ? (
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={onAnswerYes}
+            disabled={submitting}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-[14px] font-medium text-white shadow-[var(--shadow-sm)]",
+              "transition-colors hover:bg-emerald-700 disabled:opacity-60",
+            )}
+          >
+            <ThumbsUp className="h-4 w-4" />
+            Ja, det løste det
+          </button>
+          <button
+            type="button"
+            onClick={onAnswerNo}
+            disabled={submitting}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-4 py-2 text-[14px] font-medium text-[var(--color-foreground)]",
+              "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors",
+              "hover:border-[var(--color-brand)]/40 disabled:opacity-60",
+            )}
+          >
+            <ThumbsDown className="h-4 w-4" />
+            Nej
+          </button>
+          {submitting && (
+            <Loader2 className="ml-1 mt-2 h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+          )}
+        </div>
+      ) : state.phase === "answered_yes" ? (
+        <YesSolutionForm
+          solution={state.solution}
+          submitting={submitting}
+          onChange={onSolutionChange}
+          onSubmit={() => onSubmitYes(state.solution)}
+          onSkip={() => onSubmitYes("")}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function YesSolutionForm({
+  solution,
+  submitting,
+  onChange,
+  onSubmit,
+  onSkip,
+}: {
+  solution: string;
+  submitting: boolean;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <label
+        htmlFor="solution"
+        className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]"
+      >
+        Hvad virkede? (valgfrit — bliver delt med næste operatør)
+      </label>
+      <Textarea
+        id="solution"
+        value={solution}
+        onChange={(e) => onChange(e.target.value)}
+        rows={3}
+        disabled={submitting}
+        placeholder="F.eks. RESET-knappen + genstart styringen efter alarm-koden var læst."
+        className="min-h-[80px] text-[14px]"
+      />
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={submitting}
+          className="rounded-full bg-[var(--color-surface)] px-4 py-2 text-[13px] text-[var(--color-muted-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-60"
+        >
+          Spring over
+        </button>
+        <Button
+          onClick={onSubmit}
+          disabled={submitting}
+          className="h-9 min-w-[90px] rounded-full bg-emerald-600 text-white shadow-[var(--shadow-sm)] hover:bg-emerald-700"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+        </Button>
+      </div>
     </div>
   );
 }
