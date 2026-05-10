@@ -12,6 +12,7 @@ import type {
   AdminConversationMessage,
   AdminFeedback,
 } from "@/app/api/admin/conversations/[id]/route";
+import type { AdminQrTokenResponse } from "@/app/api/admin/machines/[id]/qr/route";
 
 export type {
   AdminChunkRef,
@@ -22,6 +23,7 @@ export type {
   AdminFeedback,
   AdminMachine,
   AdminMachineDetail,
+  AdminQrTokenResponse,
 };
 
 export async function getAdminMachines(): Promise<AdminMachine[]> {
@@ -258,4 +260,25 @@ export async function uploadAdminDocument(args: {
     xhr.onerror = () => reject(new Error("Upload fejlede (netværk)"));
     xhr.send(form);
   });
+}
+
+export async function generateAdminMachineQr(
+  machineId: string,
+): Promise<AdminQrTokenResponse> {
+  const res = await fetchWithAuth(`/api/admin/machines/${machineId}/qr`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke generere QR-kode (${res.status})`);
+  }
+  return (await res.json()) as AdminQrTokenResponse;
+}
+
+export async function revokeAdminMachineQr(machineId: string): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/machines/${machineId}/qr`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke inaktivere QR-kode (${res.status})`);
+  }
 }

@@ -13,6 +13,11 @@ import {
   createConversation,
   validateConversation,
 } from "@/lib/conversations";
+import {
+  readQrTokenFromRequest,
+  resolveQrToken,
+  type QrSession,
+} from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 
@@ -81,6 +86,11 @@ type ChatRequest = {
   accountId?: string | null;
   machineId?: string | null;
   conversationId?: string | null;
+  // Optional QR token. When present and no Optipeople bearer is sent,
+  // the request authenticates against the machine_kb.qr_token of the
+  // requested machine. Mutually exclusive with the bearer flow at the
+  // operator's level — if a bearer is present we ignore the QR token.
+  qrToken?: string | null;
 };
 
 // Helper: extract plain text from a user MessageParam. The client
@@ -279,35 +289,71 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (!machineId) {
+
+  // Two auth paths. Optipeople bearer takes precedence if present; the
+  // QR token (header X-QR-Token or body.qrToken) is the fallback for
+  // shop-floor sticker access. Either path resolves to a uniform "who
+  // is the operator" shape so the rest of the route doesn't branch.
+  const hasBearer = !!req.headers.get("authorization");
+  const qrToken = readQrTokenFromRequest(req, body);
+
+  let user: { userId: string; email: string | null; name: string | null };
+  let qrSession: QrSession | null = null;
+  let resolvedAccountId = accountId;
+  let resolvedMachineId = machineId;
+  let entryMode: "qr" | "manual" = "manual";
+
+  if (hasBearer) {
+    try {
+      const u = await resolveCurrentUser(req);
+      user = { userId: u.userId, email: u.email, name: u.name };
+    } catch (err) {
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
+  } else if (qrToken) {
+    qrSession = await resolveQrToken(qrToken);
+    if (!qrSession) {
+      return Response.json(
+        { error: "Invalid or revoked QR token" },
+        { status: 401 },
+      );
+    }
+    user = {
+      userId: qrSession.userId,
+      email: qrSession.email,
+      name: qrSession.name,
+    };
+    // QR sessions are pinned to a single machine — ignore whatever the
+    // client sent and use the machine the token resolves to. Same for
+    // accountId; never trust client-supplied IDs over the token.
+    resolvedMachineId = qrSession.machineId;
+    resolvedAccountId = qrSession.accountId;
+    entryMode = "qr";
+  } else {
+    return Response.json(
+      { error: "Missing or malformed Authorization header" },
+      { status: 401 },
+    );
+  }
+
+  // Account ID is required for the conversations row. Operators always
+  // have one; reject otherwise so we don't ingest orphan rows.
+  if (!resolvedAccountId) {
+    return Response.json(
+      { error: "accountId is required" },
+      { status: 400 },
+    );
+  }
+  if (!resolvedMachineId) {
     return Response.json(
       { error: "machineId is required" },
       { status: 400 },
     );
   }
 
-  // Resolve operator identity for audit attribution. /api/chat is gated
-  // by login already (the page won't load without a token); this just
-  // gives us a stable user_id to pin conversations to.
-  let user;
-  try {
-    user = await resolveCurrentUser(req);
-  } catch (err) {
-    if (err instanceof AuthError) return err.toResponse();
-    throw err;
-  }
-
-  // Account ID is required for the conversations row. Operators always
-  // have one; reject otherwise so we don't ingest orphan rows.
-  if (!accountId) {
-    return Response.json(
-      { error: "accountId is required" },
-      { status: 400 },
-    );
-  }
-
   console.log(
-    `chat: account=${accountId} machine=${machineId} user=${user.email} turns=${userMessages.length}`,
+    `chat: account=${resolvedAccountId} machine=${resolvedMachineId} user=${user.email ?? user.userId} entry=${entryMode} turns=${userMessages.length}`,
   );
 
   const anthropic = new Anthropic();
@@ -332,7 +378,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        const systemPrompt = await buildSystemPrompt(machineId);
+        const systemPrompt = await buildSystemPrompt(resolvedMachineId);
 
         // Conversation lifecycle: client sends conversationId on
         // follow-ups; we validate it. Otherwise we create a fresh row
@@ -341,18 +387,19 @@ export async function POST(req: Request) {
         if (body.conversationId) {
           const ok = await validateConversation(
             body.conversationId,
-            machineId,
+            resolvedMachineId,
             user.userId,
           );
           if (ok) conversationId = body.conversationId;
         }
         if (!conversationId) {
           conversationId = await createConversation({
-            machineId,
-            accountId,
+            machineId: resolvedMachineId,
+            accountId: resolvedAccountId,
             userId: user.userId,
             userEmail: user.email,
             userName: user.name,
+            entryMode,
           });
           send("conversation", { id: conversationId });
         }
@@ -441,7 +488,7 @@ export async function POST(req: Request) {
           const toolResults: ToolResultBlockParam[] = await Promise.all(
             toolUses.map(async (tu) => {
               try {
-                const exec = await executeTool(tu.name, tu.input, machineId);
+                const exec = await executeTool(tu.name, tu.input, resolvedMachineId);
                 for (const d of exec.documents) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);

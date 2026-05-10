@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Check,
   ChevronRight,
+  Copy,
   Download,
   Eye,
   Folder,
@@ -14,7 +15,10 @@ import {
   History,
   Loader2,
   MessageSquare,
+  MessageSquareQuote,
   Pencil,
+  Printer,
+  QrCode,
   RefreshCw,
   ScanEye,
   Trash2,
@@ -26,8 +30,10 @@ import {
   createAdminFolder,
   deleteAdminDocument,
   deleteAdminFolder,
+  generateAdminMachineQr,
   getAdminDocumentSignedUrl,
   getAdminMachine,
+  revokeAdminMachineQr,
   updateAdminDocumentFolder,
   updateAdminDocumentSummary,
   updateAdminMachineName,
@@ -150,6 +156,8 @@ export function MachineDetail({ machineId }: { machineId: string }) {
         </Link>
 
         <MachineSummary machine={data} onChanged={reload} />
+
+        <MachineQrCard machine={data} onChanged={reload} />
 
         <UploadCard existingFolders={mergedFolders(data)} />
 
@@ -308,6 +316,212 @@ function MachineSummary({
             <MessageSquare className="h-4 w-4" />
             Test chat
           </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MachineQrCard({
+  machine,
+  onChanged,
+}: {
+  machine: AdminMachineDetail;
+  onChanged: () => Promise<void>;
+}) {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState<"generate" | "revoke" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Origin is window-only; computed lazily on click so SSR doesn't try
+  // to read it. The generated link is what an operator scans into.
+  const tokenUrl =
+    typeof window !== "undefined" && machine.qrToken
+      ? `${window.location.origin}/?qr=${encodeURIComponent(machine.qrToken)}`
+      : null;
+
+  async function generate() {
+    setBusy("generate");
+    setErr(null);
+    try {
+      if (machine.qrToken) {
+        const ok = await confirm({
+          title: "Regenerér QR-kode?",
+          description:
+            "Den eksisterende kode bliver ugyldig med det samme. Operatører der scanner gamle stickers vil få en fejl indtil de får ny print.",
+          confirmLabel: "Regenerér",
+          danger: true,
+        });
+        if (!ok) {
+          setBusy(null);
+          return;
+        }
+      }
+      await generateAdminMachineQr(machine.machineId);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Fejl");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function revoke() {
+    const ok = await confirm({
+      title: "Inaktivér QR-kode?",
+      description:
+        "Operatører kan ikke længere scanne sig ind på maskinen. Du kan altid generere en ny senere.",
+      confirmLabel: "Inaktivér",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy("revoke");
+    setErr(null);
+    try {
+      await revokeAdminMachineQr(machine.machineId);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Fejl");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copy() {
+    if (!tokenUrl) return;
+    try {
+      await navigator.clipboard.writeText(tokenUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard can fail on insecure contexts; fall back silently.
+    }
+  }
+
+  const created = machine.qrTokenCreatedAt
+    ? DA_DATE.format(new Date(machine.qrTokenCreatedAt))
+    : null;
+
+  return (
+    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <QrCode className="h-5 w-5 text-[var(--color-foreground)]" />
+            <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
+              QR-adgang
+            </h2>
+          </div>
+          <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
+            Operatøren scanner stickeren ved maskinen og lander direkte i
+            chatten — uden at logge ind.
+          </p>
+
+          {machine.qrToken ? (
+            <div className="mt-4 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  Aktiv
+                </span>
+                {created && (
+                  <span className="text-[12px] text-[var(--color-muted-foreground)]">
+                    Genereret {created}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 truncate rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
+                  {tokenUrl ?? ""}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copy()}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                    "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
+                    "transition-colors hover:bg-[var(--color-muted)]",
+                  )}
+                  title="Kopiér link"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      Kopieret
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      Kopiér
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4">
+              <span className="inline-flex rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-muted-foreground)]">
+                Ingen aktiv QR-kode
+              </span>
+            </div>
+          )}
+
+          {err && <p className="mt-2 text-[13px] text-red-600">{err}</p>}
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          {machine.qrToken && (
+            <Link
+              href={`/admin/machines/${machine.machineId}/qr`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+                "transition-colors hover:bg-[var(--color-muted)]",
+              )}
+              title="Åbn print-venlig side"
+            >
+              <Printer className="h-4 w-4" />
+              Vis & print
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => void generate()}
+            disabled={busy !== null}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+              "transition-colors hover:bg-[var(--color-muted)] disabled:opacity-50",
+            )}
+          >
+            {busy === "generate" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {machine.qrToken ? "Regenerér" : "Generér QR"}
+          </button>
+          {machine.qrToken && (
+            <button
+              type="button"
+              onClick={() => void revoke()}
+              disabled={busy !== null}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-red-700",
+                "transition-colors hover:bg-red-50 disabled:opacity-50",
+              )}
+            >
+              {busy === "revoke" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <X className="h-4 w-4" />
+              )}
+              Inaktivér
+            </button>
+          )}
         </div>
       </div>
     </section>
@@ -1060,6 +1274,14 @@ function DocumentRow({
             />
           </span>
         )}
+        {document.sourceType === "feedback" && (
+          <span title="Auto-promoveret fra operatør-feedback (markeret som virkende)">
+            <MessageSquareQuote
+              aria-label="Operatør-erfaring"
+              className="h-3.5 w-3.5 shrink-0 text-emerald-600"
+            />
+          </span>
+        )}
       </div>
 
       <div className="min-w-0 text-[var(--color-foreground)]">
@@ -1143,44 +1365,52 @@ function DocumentRow({
       </div>
 
       <div className="flex items-center justify-end gap-0.5">
-        <button
-          onClick={() => void viewOriginal()}
-          disabled={opening}
-          title="Åbn original"
-          aria-label="Åbn original"
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
-        >
-          {opening ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Eye className="h-4 w-4" />
-          )}
-        </button>
-        <button
-          onClick={() => void downloadOriginal()}
-          disabled={downloading}
-          title="Download original"
-          aria-label="Download original"
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
-        >
-          {downloading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
-        </button>
-        <button
-          onClick={() => void reprocess()}
-          title="Kør igennem Claude OCR igen — kører i den fælles kø"
-          aria-label="Reprocesser med OCR"
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
-        >
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        {document.sourceType !== "feedback" && (
+          <>
+            <button
+              onClick={() => void viewOriginal()}
+              disabled={opening}
+              title="Åbn original"
+              aria-label="Åbn original"
+              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+            >
+              {opening ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={() => void downloadOriginal()}
+              disabled={downloading}
+              title="Download original"
+              aria-label="Download original"
+              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
+            >
+              {downloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={() => void reprocess()}
+              title="Kør igennem Claude OCR igen — kører i den fælles kø"
+              aria-label="Reprocesser med OCR"
+              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </>
+        )}
         <button
           onClick={() => void remove()}
           disabled={deleting}
-          title="Slet dokument"
+          title={
+            document.sourceType === "feedback"
+              ? "Demoter — fjern operatør-erfaringen fra KB"
+              : "Slet dokument"
+          }
           aria-label="Slet dokument"
           className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
         >

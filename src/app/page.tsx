@@ -20,6 +20,13 @@ import { MachineSelectScreen } from "@/components/MachineSelectScreen";
 import { UserMenu } from "@/components/UserMenu";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchWithAuth } from "@/auth/authApi";
+import {
+  clearQrSession,
+  getQrMachine,
+  getQrToken,
+  saveQrSession,
+  type QrMachineInfo,
+} from "@/auth/qrStorage";
 import { cn } from "@/lib/utils";
 
 // Deep-link helper: super-admins navigate from /admin/machines to a
@@ -109,7 +116,103 @@ const SAMPLE_QUESTIONS = [
   "Hvad står der på vedligeholdelses-tjeklisten?",
 ];
 
+type ChatTarget = {
+  account: { id: string; name: string };
+  machine: { id: string; name: string };
+};
+
 export default function Home() {
+  const [qrPhase, setQrPhase] = useState<
+    | { kind: "checking" }
+    | { kind: "active"; target: ChatTarget }
+    | { kind: "error"; message: string }
+    | { kind: "none" }
+  >({ kind: "checking" });
+
+  // QR resolution runs once on mount, BEFORE the regular auth gate
+  // renders, so a sticker scan never shows the login screen. The token
+  // arrives via ?qr=… on first load; we strip it from the URL and
+  // stash it in sessionStorage so refreshes stay anchored.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("qr");
+    const storedToken = getQrToken();
+    const storedMachine = getQrMachine();
+    const token = urlToken ?? storedToken;
+
+    if (!token) {
+      setQrPhase({ kind: "none" });
+      return;
+    }
+
+    // Fast path: token already in sessionStorage from a previous
+    // resolve in this tab. Reuse the cached machine info instead of
+    // re-hitting the network on every refresh.
+    if (!urlToken && storedToken && storedMachine) {
+      setQrPhase({
+        kind: "active",
+        target: {
+          account: { id: storedMachine.accountId, name: "" },
+          machine: { id: storedMachine.id, name: storedMachine.name ?? "" },
+        },
+      });
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/qr/resolve?token=${encodeURIComponent(token)}`,
+        );
+        if (!res.ok) {
+          throw new Error(
+            res.status === 404
+              ? "QR-koden er ugyldig eller er blevet inaktiveret."
+              : `Fejl ved QR-opslag (${res.status})`,
+          );
+        }
+        const body = (await res.json()) as {
+          machineId: string;
+          accountId: string;
+          machineName: string | null;
+        };
+        if (cancelled) return;
+        const info: QrMachineInfo = {
+          id: body.machineId,
+          accountId: body.accountId,
+          name: body.machineName,
+        };
+        saveQrSession(token, info);
+        // Strip ?qr= from the URL so the token isn't visible / re-used
+        // on subsequent navigations. sessionStorage carries it onward.
+        if (urlToken) {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+        setQrPhase({
+          kind: "active",
+          target: {
+            account: { id: body.accountId, name: "" },
+            machine: { id: body.machineId, name: body.machineName ?? "" },
+          },
+        });
+      } catch (err) {
+        if (cancelled) return;
+        clearQrSession();
+        setQrPhase({
+          kind: "error",
+          message: err instanceof Error ? err.message : "Ukendt fejl",
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const {
     user,
     isInitializing,
@@ -119,6 +222,21 @@ export default function Home() {
     machinesForbidden,
   } = useAuth();
   useDeepLinkSelection();
+
+  // QR session resolution outranks the Optipeople login flow.
+  if (qrPhase.kind === "checking") {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
+        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+      </div>
+    );
+  }
+  if (qrPhase.kind === "error") {
+    return <QrErrorScreen message={qrPhase.message} />;
+  }
+  if (qrPhase.kind === "active") {
+    return <ChatApp account={qrPhase.target.account} machine={qrPhase.target.machine} />;
+  }
 
   if (isInitializing) {
     return (
@@ -136,7 +254,30 @@ export default function Home() {
     return <MachineSelectScreen />;
   }
 
-  return <ChatApp />;
+  return (
+    <ChatApp
+      account={
+        currentAccount ? { id: currentAccount.id, name: currentAccount.name } : null
+      }
+      machine={
+        currentMachine ? { id: currentMachine.id, name: currentMachine.name } : null
+      }
+    />
+  );
+}
+
+function QrErrorScreen({ message }: { message: string }) {
+  return (
+    <div className="flex h-full items-center justify-center bg-[var(--color-background)] p-6">
+      <div className="max-w-md rounded-[var(--radius-lg)] border border-red-200 bg-red-50 p-6 text-center">
+        <p className="text-[16px] font-medium text-red-800">QR-koden virker ikke</p>
+        <p className="mt-2 text-[14px] text-red-700">{message}</p>
+        <p className="mt-4 text-[12px] text-red-700/80">
+          Bed en super-admin om at generere en ny QR-kode for maskinen.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // 10 minutes of no chat activity (no streaming, no typing, no send) auto-
@@ -152,8 +293,13 @@ type FeedbackState =
   | { phase: "thanks"; resolved: boolean }
   | { phase: "error"; message: string };
 
-function ChatApp() {
-  const { currentAccount, currentMachine } = useAuth();
+function ChatApp({
+  account,
+  machine,
+}: {
+  account: { id: string; name: string } | null;
+  machine: { id: string; name: string } | null;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -178,7 +324,7 @@ function ChatApp() {
     setConversationId(null);
     setMessages([]);
     setFeedback({ phase: "hidden" });
-  }, [currentMachine?.id]);
+  }, [machine?.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -342,8 +488,8 @@ function ChatApp() {
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          accountId: currentAccount?.id ?? null,
-          machineId: currentMachine?.id ?? null,
+          accountId: account?.id ?? null,
+          machineId: machine?.id ?? null,
           conversationId,
           messages: next
             .slice(0, -1)
@@ -456,7 +602,11 @@ function ChatApp() {
       </header>
 
       <div ref={scrollRef} className="scroll-area flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 pt-12 pb-44">
+        {/* pb sized to clear the absolutely-positioned footer (24px fade
+            + solid panel containing the input bar, optional "Afslut
+            samtale" pill, and feedback card). Without enough room here,
+            content scrolls under the panel. */}
+        <div className="mx-auto max-w-3xl px-6 pt-12 pb-56">
           {isEmpty ? (
             <p className="msg-in max-w-2xl text-[22px] leading-[1.55] tracking-[-0.005em] text-[var(--color-foreground)]">
               Spørg om installation, vedligeholdelse, værktøjsskift, alarmer
@@ -473,15 +623,23 @@ function ChatApp() {
       </div>
 
       <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+        {/* Soft fade above the solid panel — pure transparent → background.
+            Sized small (24px) since the panel below now does the heavy
+            lifting of hiding scroll content. */}
         <div
           aria-hidden
-          className="pointer-events-none h-28 w-full"
+          className="pointer-events-none h-6 w-full"
           style={{
             background:
-              "linear-gradient(to top, var(--color-background) 35%, oklch(from var(--color-background) l c h / 0%) 100%)",
+              "linear-gradient(to top, var(--color-background) 0%, oklch(from var(--color-background) l c h / 0%) 100%)",
           }}
         />
-        <div className="pointer-events-auto mx-auto -mt-4 max-w-3xl px-4 pb-8">
+        {/* Full-width solid panel — covers the chat behind the input bar,
+            the "Afslut samtale" pill row, and the feedback card. Without
+            this, gaps to the sides of those (max-w-3xl) elements let
+            scroll content bleed through. */}
+        <div className="pointer-events-auto w-full bg-[var(--color-background)]">
+        <div className="mx-auto max-w-3xl px-4 pb-8 pt-2">
           {isEmpty && (
             <div className="msg-in mb-3 flex flex-wrap gap-2">
               {SAMPLE_QUESTIONS.map((q) => (
@@ -583,6 +741,7 @@ function ChatApp() {
               )}
             </Button>
           </div>
+        </div>
         </div>
         <div className="brand-stripe" aria-hidden>
           <span />

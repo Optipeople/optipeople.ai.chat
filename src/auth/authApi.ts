@@ -1,3 +1,4 @@
+import { getQrToken } from "./qrStorage";
 import {
   clearSession,
   getAccessToken,
@@ -78,9 +79,21 @@ function withAuthHeader(init: RequestInit, token: string): RequestInit {
   return { ...init, headers };
 }
 
+function withQrHeader(init: RequestInit, token: string): RequestInit {
+  const headers = new Headers(init.headers);
+  headers.set("X-QR-Token", token);
+  return { ...init, headers };
+}
+
 // Authenticated fetch with one transparent refresh-and-retry on 401.
 // Concurrent callers share a single in-flight refresh, so a token that's
 // expired at app-load doesn't trigger N parallel refreshes.
+//
+// In QR-session mode (sessionStorage holds an OptiAI QR token), the
+// request is signed with X-QR-Token instead of an Optipeople bearer.
+// Server-side, the operator endpoints accept either path. This way
+// chat / feedback / source-link calls work uniformly across both
+// session models without every caller knowing which mode they're in.
 //
 // Only throws "Session expired" when the refresh itself fails (i.e. the
 // refresh token is also dead). A 401 on the *retry* is returned to the
@@ -91,6 +104,11 @@ export async function fetchWithAuth(
   url: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const qrToken = getQrToken();
+  if (qrToken) {
+    return fetch(url, withQrHeader(init, qrToken));
+  }
+
   const token = getAccessToken();
   if (!token) throw new Error("Session expired");
 

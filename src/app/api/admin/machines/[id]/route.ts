@@ -12,6 +12,7 @@ export type AdminDocument = {
   title: string;
   summary: string;
   status: string;
+  sourceType: "pdf" | "url" | "manual_note" | "feedback";
   pageCount: number | null;
   byteSize: number | null;
   createdAt: string;
@@ -27,6 +28,11 @@ export type AdminMachineDetail = {
   accountId: string;
   displayName: string | null;
   updatedAt: string;
+  // Active QR token. Null means no QR access has been provisioned yet,
+  // or it's been revoked. The token itself is the URL parameter — it's
+  // not secret beyond "anyone with the sticker can chat".
+  qrToken: string | null;
+  qrTokenCreatedAt: string | null;
   documents: AdminDocument[];
   // Explicit folder list, including empty folders. Tree rendering merges
   // these with folders implied by document paths so nothing is missed.
@@ -60,13 +66,15 @@ export async function GET(
   ] = await Promise.all([
     supabase
       .from("machine_kb")
-      .select("machine_id, account_id, display_name, updated_at")
+      .select(
+        "machine_id, account_id, display_name, updated_at, qr_token, qr_token_created_at",
+      )
       .eq("machine_id", id)
       .maybeSingle(),
     supabase
       .from("kb_documents")
       .select(
-        "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source, folder_path, progress, progress_label",
+        "id, title, summary, status, source_type, page_count, byte_size, created_at, created_by, extraction_source, folder_path, progress, progress_label",
       )
       .eq("machine_id", id)
       .order("created_at", { ascending: false }),
@@ -84,11 +92,22 @@ export async function GET(
     return Response.json({ error: "Machine not found" }, { status: 404 });
   }
 
+  const m = machine as {
+    machine_id: string;
+    account_id: string;
+    display_name: string | null;
+    updated_at: string;
+    qr_token: string | null;
+    qr_token_created_at: string | null;
+  };
+
   const result: AdminMachineDetail = {
-    machineId: machine.machine_id as string,
-    accountId: machine.account_id as string,
-    displayName: (machine.display_name as string | null) ?? null,
-    updatedAt: machine.updated_at as string,
+    machineId: m.machine_id,
+    accountId: m.account_id,
+    displayName: m.display_name ?? null,
+    updatedAt: m.updated_at,
+    qrToken: m.qr_token ?? null,
+    qrTokenCreatedAt: m.qr_token_created_at ?? null,
     folders: (folders ?? [])
       .map((f) => (f as { path: string }).path)
       .filter(Boolean),
@@ -98,6 +117,7 @@ export async function GET(
         title: string;
         summary: string;
         status: string;
+        source_type: "pdf" | "url" | "manual_note" | "feedback";
         page_count: number | null;
         byte_size: number | null;
         created_at: string;
@@ -112,6 +132,7 @@ export async function GET(
         title: r.title,
         summary: r.summary,
         status: r.status,
+        sourceType: r.source_type,
         pageCount: r.page_count,
         byteSize: r.byte_size,
         createdAt: r.created_at,

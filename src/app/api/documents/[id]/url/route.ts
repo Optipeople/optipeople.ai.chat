@@ -5,6 +5,7 @@
 // citations into clickable links opening in a new tab.
 
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -16,11 +17,36 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  try {
-    await resolveCurrentUser(req);
-  } catch (err) {
-    if (err instanceof AuthError) return err.toResponse();
-    throw err;
+  // Either Optipeople bearer or a QR token (header X-QR-Token, or
+  // ?qrToken=… on the URL). For QR sessions we additionally restrict
+  // access to documents on the operator's resolved machine.
+  const hasBearer = !!req.headers.get("authorization");
+  const url = new URL(req.url);
+  const qrToken =
+    readQrTokenFromRequest(req, null) ?? url.searchParams.get("qrToken");
+
+  let qrMachineId: string | null = null;
+  if (hasBearer) {
+    try {
+      await resolveCurrentUser(req);
+    } catch (err) {
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
+  } else if (qrToken) {
+    const session = await resolveQrToken(qrToken);
+    if (!session) {
+      return Response.json(
+        { error: "Invalid or revoked QR token" },
+        { status: 401 },
+      );
+    }
+    qrMachineId = session.machineId;
+  } else {
+    return Response.json(
+      { error: "Missing or malformed Authorization header" },
+      { status: 401 },
+    );
   }
 
   const { id } = await ctx.params;
@@ -28,7 +54,7 @@ export async function GET(
   const supabase = getSupabaseServerClient();
   const { data: doc, error } = await supabase
     .from("kb_documents")
-    .select("storage_path, title")
+    .select("storage_path, title, machine_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -39,7 +65,16 @@ export async function GET(
   if (!doc) {
     return Response.json({ error: "Document not found" }, { status: 404 });
   }
-  const row = doc as { storage_path: string | null; title: string };
+  const row = doc as {
+    storage_path: string | null;
+    title: string;
+    machine_id: string;
+  };
+  // QR sessions are pinned to one machine — refuse cross-machine doc
+  // lookups even if the operator guesses a UUID.
+  if (qrMachineId && row.machine_id !== qrMachineId) {
+    return Response.json({ error: "Document not found" }, { status: 404 });
+  }
   if (!row.storage_path) {
     return Response.json(
       { error: "Document has no original file" },
