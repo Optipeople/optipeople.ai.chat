@@ -1,7 +1,12 @@
 import { fetchWithAuth } from "@/auth/authApi";
+import { getAccessToken } from "@/auth/storage";
 import type { AdminMachine } from "@/app/api/admin/machines/route";
+import type {
+  AdminDocument,
+  AdminMachineDetail,
+} from "@/app/api/admin/machines/[id]/route";
 
-export type { AdminMachine };
+export type { AdminDocument, AdminMachine, AdminMachineDetail };
 
 export async function getAdminMachines(): Promise<AdminMachine[]> {
   const res = await fetchWithAuth("/api/admin/machines");
@@ -13,4 +18,104 @@ export async function getAdminMachines(): Promise<AdminMachine[]> {
   }
   const body = (await res.json()) as { machines?: AdminMachine[] };
   return body.machines ?? [];
+}
+
+export async function getAdminMachine(id: string): Promise<AdminMachineDetail> {
+  const res = await fetchWithAuth(`/api/admin/machines/${id}`);
+  if (res.status === 404) {
+    throw new Error("Maskinen findes ikke");
+  }
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente maskine (${res.status})`);
+  }
+  return (await res.json()) as AdminMachineDetail;
+}
+
+export async function updateAdminMachineName(
+  id: string,
+  displayName: string,
+): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/machines/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName }),
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke gemme navn (${res.status})`);
+  }
+}
+
+export async function updateAdminDocumentSummary(
+  id: string,
+  summary: string,
+): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ summary }),
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke gemme beskrivelse (${res.status})`);
+  }
+}
+
+export async function deleteAdminDocument(id: string): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke slette dokument (${res.status})`);
+  }
+}
+
+// Multipart uploads use raw fetch — fetchWithAuth's transparent retry-on-401
+// can't replay a streamed FormData body, so we do the auth header
+// ourselves. If the token's expired the user just sees an error and can
+// retry; the next regular request will trigger the refresh.
+export type UploadProgress = (loaded: number, total: number) => void;
+
+export async function uploadAdminDocument(args: {
+  machineId: string;
+  file: File;
+  summary?: string;
+  onProgress?: UploadProgress;
+}): Promise<{ documentId: string; chunkCount: number; pageCount: number }> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Session expired");
+
+  const form = new FormData();
+  form.set("machineId", args.machineId);
+  form.set("file", args.file);
+  if (args.summary) form.set("summary", args.summary);
+
+  // Use XHR so we can track upload progress events. fetch() doesn't
+  // expose them yet across browsers.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/admin/ingest");
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && args.onProgress) {
+        args.onProgress(e.loaded, e.total);
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const r = xhr.response as {
+          documentId: string;
+          chunkCount: number;
+          pageCount: number;
+        };
+        resolve(r);
+      } else {
+        const message =
+          (xhr.response as { error?: string } | null)?.error ??
+          `Upload fejlede (${xhr.status})`;
+        reject(new Error(message));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload fejlede (netværk)"));
+    xhr.send(form);
+  });
 }

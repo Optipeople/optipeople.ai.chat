@@ -4,15 +4,15 @@ Living document. Reflects where the project is *right now* and the next chunk of
 work to pick up. For long-term direction see [architecture.md](architecture.md);
 for product framing see [overview.md](overview.md).
 
-Last updated: 2026-05-07.
+Last updated: 2026-05-10.
 
 ---
 
 ## 1. Where we are
 
-Iteration 1 is shipped on `main`. Operator chat is driven by **agentic
-retrieval over a per-machine Supabase knowledge base**, end-to-end working
-against the existing Felder manuals.
+Iteration 2 is shipped on `main`. On top of iteration 1's agentic
+retrieval, super-admins can now manage manuals end-to-end through a
+browser admin UI — no terminal required.
 
 ### What's live
 
@@ -26,15 +26,21 @@ against the existing Felder manuals.
 | Embeddings | Voyage `voyage-4-large` @ 1024d (Matryoshka). Free tier (3 RPM / 10k TPM); helper retries on 429. |
 | Auth | Optipeople OAuth2, dev proxy → real `/auth-api/[...]` route handler. |
 | Knowledge base for the test machine | 6 documents, ~24 chunks ingested for `machine_id = 700a3579-8cdf-4afa-2bb8-08db9ef8e885` (Felder, account `8452d639-8953-46ea-a57a-08db9ef8b057`). |
+| Admin UI | `/admin/machines` (list) + `/admin/machines/[id]` (detail with PDF upload, inline summary edit, machine-name edit, document delete). Gated server-side by `permissionName === "SuperAdministrator"` from Optipeople; client gate hides chrome for non-admins. |
+| Ingestion API | `POST /api/admin/ingest` (multipart), `PATCH /api/admin/machines/[id]`, `PATCH/DELETE /api/admin/documents/[id]`, all gated by `requireSuperAdmin`. |
 
 ### What's NOT done yet
 
-- No admin UI — manuals are added via the `npm run ingest` CLI.
 - No conversation persistence (`conversations` / `messages` tables exist in
   the schema but the chat route doesn't write to them yet).
 - No QR access, escalation, or feedback loop.
 - No production deploy verified through the browser yet (Vercel preview /
   prod URL hasn't been clicked through end-to-end since last env update).
+- Admin UI can only manage **existing** `machine_kb` rows. Creating a
+  brand-new machine still requires the CLI; the UI doesn't pull from
+  Optipeople's machine list.
+- Long uploads (>5min embedding) will fail at the Vercel function
+  timeout — fine for typical manuals, will need async/queue if we hit it.
 
 ### Key git commits (most recent first)
 
@@ -177,11 +183,11 @@ that machine before re-ingesting.
 
 ---
 
-## 3. Next: Iteration 2 — Admin UI
+## 3. Iteration 2 — Admin UI (shipped)
 
-**Goal:** a super-admin can add manuals to any machine through the browser
-without touching a terminal. The CLI stays around for power use, but the
-default path becomes the UI.
+**Goal (met):** a super-admin can add manuals to any existing machine
+through the browser without touching a terminal. The CLI stays around
+for power use, but the default path is now the UI.
 
 ### Why this is the right next slice
 

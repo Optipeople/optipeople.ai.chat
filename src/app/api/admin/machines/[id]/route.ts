@@ -1,0 +1,140 @@
+// GET    /api/admin/machines/[id] — machine summary + its documents
+// PATCH  /api/admin/machines/[id] — update display_name
+
+import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { getSupabaseServerClient } from "@/lib/supabase";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export type AdminDocument = {
+  id: string;
+  title: string;
+  summary: string;
+  status: string;
+  pageCount: number | null;
+  byteSize: number | null;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type AdminMachineDetail = {
+  machineId: string;
+  accountId: string;
+  displayName: string | null;
+  updatedAt: string;
+  documents: AdminDocument[];
+};
+
+async function gate(req: Request): Promise<Response | null> {
+  try {
+    await requireSuperAdmin(req);
+    return null;
+  } catch (err) {
+    if (err instanceof AuthError) return err.toResponse();
+    throw err;
+  }
+}
+
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const denied = await gate(req);
+  if (denied) return denied;
+
+  const { id } = await ctx.params;
+  const supabase = getSupabaseServerClient();
+
+  const [{ data: machine, error: mErr }, { data: docs, error: dErr }] =
+    await Promise.all([
+      supabase
+        .from("machine_kb")
+        .select("machine_id, account_id, display_name, updated_at")
+        .eq("machine_id", id)
+        .maybeSingle(),
+      supabase
+        .from("kb_documents")
+        .select(
+          "id, title, summary, status, page_count, byte_size, created_at, created_by",
+        )
+        .eq("machine_id", id)
+        .order("created_at", { ascending: false }),
+    ]);
+
+  if (mErr || dErr) {
+    console.error("admin/machines/[id] query failed:", mErr, dErr);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+  if (!machine) {
+    return Response.json({ error: "Machine not found" }, { status: 404 });
+  }
+
+  const result: AdminMachineDetail = {
+    machineId: machine.machine_id as string,
+    accountId: machine.account_id as string,
+    displayName: (machine.display_name as string | null) ?? null,
+    updatedAt: machine.updated_at as string,
+    documents: (docs ?? []).map((d) => {
+      const r = d as {
+        id: string;
+        title: string;
+        summary: string;
+        status: string;
+        page_count: number | null;
+        byte_size: number | null;
+        created_at: string;
+        created_by: string;
+      };
+      return {
+        id: r.id,
+        title: r.title,
+        summary: r.summary,
+        status: r.status,
+        pageCount: r.page_count,
+        byteSize: r.byte_size,
+        createdAt: r.created_at,
+        createdBy: r.created_by,
+      };
+    }),
+  };
+
+  return Response.json(result);
+}
+
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const denied = await gate(req);
+  if (denied) return denied;
+
+  const { id } = await ctx.params;
+  let body: { displayName?: unknown };
+  try {
+    body = (await req.json()) as { displayName?: unknown };
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const displayName =
+    typeof body.displayName === "string" ? body.displayName.trim() : null;
+  if (displayName === null) {
+    return Response.json(
+      { error: "displayName must be a string" },
+      { status: 400 },
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from("machine_kb")
+    .update({ display_name: displayName, updated_at: new Date().toISOString() })
+    .eq("machine_id", id);
+
+  if (error) {
+    console.error("admin PATCH machine failed:", error);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+  return Response.json({ ok: true, displayName });
+}

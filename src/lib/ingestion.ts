@@ -85,23 +85,26 @@ export function chunkText(text: string, target = 3500, overlap = 400): string[] 
   return chunks;
 }
 
-// Idempotent: safe to call before every ingestPdf, repeated runs just
-// refresh display_name. Exposed so callers (CLI --reset, admin tools)
-// can ensure the row exists outside of an ingestion call.
+// Idempotent: safe to call before every ingestPdf. Only writes
+// display_name when machineName is a non-empty string — passing null /
+// undefined leaves the existing value alone, which is what the admin
+// upload flow wants (the row already exists with its name set).
 export async function ensureMachineKb(
   machineId: string,
   accountId: string,
   machineName?: string | null,
 ): Promise<void> {
   const supabase = getSupabaseServerClient();
-  const { error } = await supabase.from("machine_kb").upsert(
-    {
-      machine_id: machineId,
-      account_id: accountId,
-      display_name: machineName ?? null,
-    },
-    { onConflict: "machine_id" },
-  );
+  const row: Record<string, unknown> = {
+    machine_id: machineId,
+    account_id: accountId,
+  };
+  if (typeof machineName === "string" && machineName.length > 0) {
+    row.display_name = machineName;
+  }
+  const { error } = await supabase
+    .from("machine_kb")
+    .upsert(row, { onConflict: "machine_id" });
   if (error) throw new Error(`machine_kb upsert failed: ${error.message}`);
 }
 
