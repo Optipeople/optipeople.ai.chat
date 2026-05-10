@@ -4,7 +4,8 @@ Living document. Reflects where the project is *right now* and the next chunk of
 work to pick up. For long-term direction see [architecture.md](architecture.md);
 for product framing see [overview.md](overview.md).
 
-Last updated: 2026-05-10 (evening — iteration 3 complete + Phase 3 QR access).
+Last updated: 2026-05-10 (late evening — Phase 4 escalation + admin
+machine CRUD + onboarded-machine filter on login).
 
 ---
 
@@ -26,6 +27,40 @@ document-URL endpoints accept it via `X-QR-Token` header (mutually
 exclusive with the bearer flow). Audit attribution: `entry_mode='qr'`
 and `user_id='qr:<token-suffix>'`.
 
+Phase 4 escalation also shipped. Per-account escalation targets
+(`escalation_targets` table, configured by super-admins on any
+machine page — the card label notes the setting is shared across the
+account). Operator hits a "Tilkald service" pill button → optional
+note → `POST /api/chat/escalate` snapshots the conversation, mints a
+30-day share token, writes an `escalations` row, and stamps the
+conversation with `resolution='escalated'`. Phone targets open `tel:`,
+e-mail targets open `mailto:` with the share URL in the body, and
+service-ticket targets surface a copy-to-clipboard share URL. The
+service tech opens `/escalation/<token>` — no login — and reads the
+frozen transcript snapshot. Audit drilldown surfaces the escalation
+above the feedback card with channel/target + a click-through to the
+tech-facing link.
+
+Admin can now **create and delete machines** end-to-end from the
+browser. The machines list has a "Tilføj maskine" button that opens a
+two-combobox dialog (account → machine, both populated from the live
+Optipeople API and intersected against existing `machine_kb` rows so
+already-onboarded machines are disabled). Submit creates the empty KB
+row; the new machine detail page is one click away. The detail page
+header has a matching "Slet maskine" button that wipes the storage
+folder + cascades `kb_documents` / `kb_chunks` / `kb_folders` via FK,
+while leaving conversation/feedback/escalation history intact (no FK to
+`machine_kb`).
+
+The operator login pickers now **filter to onboarded machines only**.
+A new public `GET /api/registered` returns the set of `machine_id` and
+`account_id` values present in `machine_kb`. The auth context
+intersects Optipeople's accounts/machines lists with that set before
+rendering the pickers, so operators never land on an account or
+machine that this Opti Assist instance can't actually serve. Empty
+states point to `support@optipeople.dk` instead of "contact your
+administrator", since onboarding is on Optipeople.
+
 ### What's live
 
 | Layer | State |
@@ -33,41 +68,49 @@ and `user_id='qr:<token-suffix>'`.
 | Hosting | Repo at [Optipeople/optipeople.ai.chat](https://github.com/Optipeople/optipeople.ai.chat). Vercel project linked, env vars set. |
 | Frontend | Next.js 16 App Router. Operator login → account/machine pickers → chat (streaming). Deep-link `?account=…&machine=…` skips the pickers. |
 | Backend (Next route handlers) | `/api/chat` (agentic, persisted), `/api/health`, `/auth-api/[...path]` (Optipeople proxy). |
-| Database | Supabase project `wnswhzitolcfbfulchra` in eu-central-1. RLS on; service role bypasses. **9 migrations applied** — see [supabase/migrations/](../supabase/migrations/). |
+| Database | Supabase project `wnswhzitolcfbfulchra` in eu-central-1. RLS on; service role bypasses. **10 migrations applied** — see [supabase/migrations/](../supabase/migrations/). |
 | Storage | Supabase bucket `kb-documents` (private, 100 MB, PDF only). PDFs stored under `<machine_id>/<doc_id>.pdf`. |
 | Embeddings | Voyage `voyage-4-large` @ 1024d (Matryoshka). Now on a paid plan — free-tier 3 RPM ceiling no longer applies; helper still retries on 429 defensively. |
 | OCR fallback | Claude Sonnet 4.6 vision via streaming. Fires automatically when pdf-parse yields <500 chars or <400/page. Per-doc "Reprocess (OCR)" button on each document row. |
 | Auth | Optipeople OAuth2 via dev proxy → real `/auth-api/[...]` route handler. Bearer token resolved server-side via `/api/User/GetCurrentUser` → `resolveCurrentUser()` in `src/lib/auth.ts`. |
-| Admin UI | `/admin/machines` list + `/admin/machines/[id]` detail with: machine-name edit, drag-drop folder upload (full tree preserved, multi-file queue), folder tree view with DnD reorganise, "+ Ny mappe" + delete-empty-folder, view/download original PDF (signed URL), inline summary edit, document delete. **ScanEye** icon marks OCR-extracted docs; **MessageSquareQuote** marks feedback-promoted docs (PDF actions hidden for those rows — only delete is offered, which acts as demote). |
+| Admin UI | `/admin/machines` list + `/admin/machines/[id]` detail with: **"Tilføj maskine"** dialog (account/machine comboboxes pulling from Optipeople, dedup against existing `machine_kb` rows), machine-name edit, **"Slet maskine"** (wipes storage + cascades `kb_documents`/chunks/folders, keeps audit history), drag-drop folder upload (full tree preserved, multi-file queue), folder tree view with DnD reorganise, "+ Ny mappe" + delete-empty-folder, view/download original PDF (signed URL), inline summary edit, document delete. **ScanEye** icon marks OCR-extracted docs; **MessageSquareQuote** marks feedback-promoted docs (PDF actions hidden for those rows — only delete is offered, which acts as demote). |
+| Operator picker filter | `GET /api/registered` returns the `machine_id` / `account_id` sets from `machine_kb`. The auth context intersects Optipeople's account + machine lists with these sets so operators only see what this Opti Assist instance is actually onboarded for. Public endpoint — IDs only, no names. |
 | Admin queue / progress | Persistent "Behandlingskø" panel. Reads from `kb_documents.progress` / `progress_label` so it survives refresh, polls every 3s while any doc is non-terminal. Server-side rows show a live progress bar through phases: `Læser PDF` → `Kører OCR…` → `Chunker` → `Embedder X/Y` → `Indsætter chunks`. |
 | Conversation persistence | Every operator chat creates a `conversations` row + `messages` rows for user/assistant/tool turns. Tool messages capture the `kb_chunks` UUIDs the AI saw. Operator email + name denormalised onto conversations for cheap audit display. |
 | Conversation audit UI | `/admin/machines/[id]/conversations` (paginated list) + `/admin/machines/[id]/conversations/[convId]` (full drilldown with messages, tool calls, expandable chunk text, token usage, cache-hit count, **feedback verdict + solution text**). |
 | Resolution prompt | "Afslut samtale" button + 10-min idle auto-prompt → footer card with **Ja** / **Nej** + optional "Hvad virkede?" textarea on Ja. Posts to `/api/chat/feedback` → `feedback` row + `conversations.resolution` + `ended_at`. |
 | Feedback → KB auto-promote | On "Ja + solution_text", the route synchronously builds a Q&A chunk (first user question + solution), embeds via Voyage, and inserts a `kb_documents` row of `source_type='feedback'` with the new chunk. `feedback.promoted_doc_id` is set. Re-submitting on the same conversation drops the prior promoted doc and re-promotes from the new answer. Admins demote by deleting the doc — `feedback.promoted_doc_id` becomes null via `on delete set null`. |
 | Source chips in chat | Each assistant reply gets a "Kilder" row of clickable chips (one per unique document hit), deep-linked to the best-scoring page via `#page=N`. Backed by `/api/documents/[id]/url` (operator-auth, 10-min signed URL). Chat route streams a `sources` SSE event derived from search_kb results. |
-| QR access | Per-machine permanent revocable token on `machine_kb.qr_token`. Operator scans `/?qr=<token>` → token resolved via `/api/qr/resolve` → stashed in sessionStorage → chat renders without login or pickers. `fetchWithAuth` sends `X-QR-Token` instead of bearer when in QR mode. Admin card on machine detail handles generate/regenerate/revoke; printable A4 page at `/admin/machines/[id]/qr` renders a QR sticker. |
+| QR access | Per-machine permanent revocable token on `machine_kb.qr_token`. Operator scans `/?qr=<token>` → token resolved via `/api/qr/resolve` → stashed in sessionStorage → chat renders without login or pickers. `fetchWithAuth` sends `X-QR-Token` instead of bearer when in QR mode. Admin card on machine detail handles generate/regenerate/revoke. Sticker is downloaded as a 1200×1500 PNG (logo + machine name + QR rendered to canvas) at `/admin/machines/[id]/qr` — preview-then-download, no browser print. |
+| Service escalation | Per-account target row in `escalation_targets` (channel = `phone` \| `email` \| `service_ticket`, target, label). Configured via the **MachineEscalationCard** on any machine detail page (admin sees a "shared across the account" hint). Operator chat shows a "Tilkald service" pill next to "Afslut samtale" once a conversation exists. Submit → `POST /api/chat/escalate` snapshots the conversation into `escalations.context_blob`, mints a 30-day share token, sets `resolution='escalated'`. **Phone**: client opens `tel:` to the target. **Email**: server sends via Resend (`OptiAI <noreply@optipeople.dk>`, EU region) with the share URL in the body — hard-fails the request if Resend rejects, so operator knows mail didn't go out. **Service-ticket**: client surfaces share URL for copy/paste. Service tech opens `/escalation/<token>` — public, token-gated — and reads the frozen transcript. Audit drilldown surfaces the escalation as an amber card above the feedback verdict with a click-through to the tech link. |
+| E-mail delivery | Resend, EU region, sender `OptiAI <noreply@optipeople.dk>`. SDK wrapped in [src/lib/email.ts](../src/lib/email.ts). Domain registered in Resend; **DNS records still need to be added at the optipeople.dk registrar** for emails to actually deliver — see notes below. Reply-to is set to the operator's e-mail when available so techs reply to the operator, not the no-reply mailbox. |
 | Admin → operator deep-link | `MessageSquare` icon on every machine row + "Test chat" button on the detail header opens `/?account=…&machine=…` in a new tab. |
 | Confirm dialog | Branded `<ConfirmProvider>` + `useConfirm()` hook replaces `window.confirm`. Esc/Enter/click-outside, danger flag. |
 | Knowledge base for the test machine | Felder (test) — `machine_id 700a3579-8cdf-4afa-2bb8-08db9ef8e885`, account `8452d639-8953-46ea-a57a-08db9ef8b057`. Document count drifts as we test reprocess flows; check `/admin/machines/<id>` for the live total. |
 
 ### What's NOT done yet
 
-- **Phase 4 — Escalation** (~1 week per architecture). Per-account
-  escalation target config, "escalate to human" button + snapshot
-  endpoint, signed read-only transcript view for service techs.
 - No production deploy verified through the browser yet (Vercel preview /
-  prod URL hasn't been clicked through end-to-end since the iteration-3
-  changes landed).
-- Admin UI can only manage **existing** `machine_kb` rows. Creating a
-  brand-new machine still requires the CLI; the UI doesn't pull from
-  Optipeople's machine list.
+  prod URL hasn't been clicked through end-to-end since iteration 3 +
+  Phase 4 landed).
+- Escalation: no outbound webhook for `service_ticket` channel — we
+  just expose the share URL for copy/paste. If a customer needs
+  programmatic ticket creation, wire it as a per-target `webhook_url`
+  config and POST from the escalate route.
+- Escalation: no admin "list of escalations" view yet. Each
+  conversation drilldown shows its escalation, but there's no
+  per-machine "show me everything that escalated this week".
 - Long PDFs hitting the 5-min Vercel function timeout still fail — fine
   for typical manuals, would need async/queue if we hit it routinely.
 
 ### Key git commits (most recent first)
 
 ```
-???     Iteration 3: progress bars, OCR threshold tune, reprocess + queue
+???     Phase 4 escalation, admin machine create/delete, onboarded-only login pickers
+c357c3c QR sticker: download as PNG instead of browser print
+2eb28ed Auto-promote feedback, fix scroll fade, add Phase 3 QR access
+54613b8 Resolution prompt + clickable source links in chat
+5487262 Iteration 3: progress bars, OCR threshold tune, reprocess + queue
 38f9b6f Persist conversations + messages, add admin → chat deep-link
 c4e7696 Folders: tree view with DnD, drag-import paths, explicit folder rows
 b51a633 Admin UX polish: queue, confirm dialog, file viewer, OCR badge
@@ -94,7 +137,17 @@ b8b147d Refactor: extract ingestion pipeline into src/lib/ingestion.ts
 | QR auth helper (server) | [src/lib/qrAuth.ts](../src/lib/qrAuth.ts) |
 | QR resolve (public) + admin generate/revoke | [src/app/api/qr/resolve/route.ts](../src/app/api/qr/resolve/route.ts), [src/app/api/admin/machines/[id]/qr/route.ts](../src/app/api/admin/machines/%5Bid%5D/qr/route.ts) |
 | QR session storage (client) | [src/auth/qrStorage.ts](../src/auth/qrStorage.ts) |
-| QR print page | [src/components/admin/QrPrintView.tsx](../src/components/admin/QrPrintView.tsx) |
+| QR sticker preview + download view | [src/components/admin/QrPrintView.tsx](../src/components/admin/QrPrintView.tsx) |
+| QR sticker PNG generator (canvas + qrcode lib) | [src/admin/qrSticker.ts](../src/admin/qrSticker.ts) |
+| Escalation target admin route (account-scoped) | [src/app/api/admin/accounts/[accountId]/escalation/route.ts](../src/app/api/admin/accounts/%5BaccountId%5D/escalation/route.ts) |
+| Escalation snapshot endpoint (operator) | [src/app/api/chat/escalate/route.ts](../src/app/api/chat/escalate/route.ts) |
+| Escalation token-gated view (public) | [src/app/api/escalations/[token]/route.ts](../src/app/api/escalations/%5Btoken%5D/route.ts), [src/app/escalation/[token]/page.tsx](../src/app/escalation/%5Btoken%5D/page.tsx) |
+| Escalation token + snapshot helpers | [src/lib/escalation.ts](../src/lib/escalation.ts) |
+| Admin escalation target card | [src/components/admin/MachineEscalationCard.tsx](../src/components/admin/MachineEscalationCard.tsx) |
+| Add-machine dialog (account/machine combobox) | [src/components/admin/AddMachineDialog.tsx](../src/components/admin/AddMachineDialog.tsx) |
+| Admin machine create / delete routes | [src/app/api/admin/machines/route.ts](../src/app/api/admin/machines/route.ts), [src/app/api/admin/machines/[id]/route.ts](../src/app/api/admin/machines/%5Bid%5D/route.ts) |
+| Onboarded sets endpoint (public) + client helper | [src/app/api/registered/route.ts](../src/app/api/registered/route.ts), [src/auth/registeredApi.ts](../src/auth/registeredApi.ts) |
+| Resend e-mail wrapper | [src/lib/email.ts](../src/lib/email.ts) |
 | Conversation persistence helpers | [src/lib/conversations.ts](../src/lib/conversations.ts) |
 | Auth resolver (`resolveCurrentUser` + `requireSuperAdmin`) | [src/lib/auth.ts](../src/lib/auth.ts) |
 | Hybrid search SQL function | [supabase/migrations/20260507141106_hybrid_search.sql](../supabase/migrations/20260507141106_hybrid_search.sql) |
@@ -124,6 +177,7 @@ b8b147d Refactor: extract ingestion pipeline into src/lib/ingestion.ts
 | `20260510111126_conversation_user_details.sql` | `conversations.user_email` + `user_name` denormalised at insert time. |
 | `20260510115801_doc_progress.sql` | `kb_documents.progress` (0–100) + `progress_label` for the live queue panel. |
 | `20260510170000_machine_qr_token.sql` | `machine_kb.qr_token` (unique, nullable) + `qr_token_created_at` for permanent revocable QR access tokens. |
+| `20260510180000_phase4_escalation.sql` | New `escalation_targets(account_id PK, channel, target, label, ...)`. Adds `share_token` (unique), `share_token_created_at`, `expires_at`, `created_by`, `note` columns to `escalations`. Also adds `escalations_conversation_idx`. |
 
 ---
 
@@ -159,6 +213,8 @@ Then check `.env.local` contains all of:
 ```
 ANTHROPIC_API_KEY=...
 VOYAGE_API_KEY=...
+RESEND_API_KEY=...
+RESEND_FROM=OptiAI <noreply@optipeople.dk>
 OPTIPEOPLE_API_TARGET=https://api-staging.optipeople.dk
 SUPABASE_URL=https://wnswhzitolcfbfulchra.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
@@ -200,6 +256,7 @@ Expected response (truncated):
   "checks": {
     "anthropic_key": { "ok": true },
     "voyage_key":    { "ok": true },
+    "resend_key":    { "ok": true, "detail": "OptiAI <noreply@optipeople.dk>" },
     "optipeople_target": { "ok": true, "detail": "https://api-staging.optipeople.dk" },
     "supabase":      { "ok": true, "detail": "machine_kb rows: 1" }
   }
@@ -364,7 +421,45 @@ beyond iteration 3.
 
 ---
 
-## 5. Things to do before any of this
+## 5. Resend domain verification (REQUIRED before email escalations work)
+
+`optipeople.dk` is registered in Resend (EU region), but DNS isn't
+verified yet. Until the records below land at the registrar,
+`/api/chat/escalate` for the `email` channel will hard-fail with
+`Kunne ikke sende e-mail: …` and no escalations row will be created.
+Phone + service-ticket channels work without DNS.
+
+Add these three records to whatever DNS provider hosts `optipeople.dk`
+(GoDaddy / Cloudflare / Simply.com — wherever the zone lives):
+
+| Type | Host / Name        | Value                                                                                                                                                                                                                                                                       | Priority | TTL  |
+|------|--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|------|
+| TXT  | `resend._domainkey` | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDaULb5n466nYFiuwYooUGRTd7DBsVdb0QijSMLrhEurD6O7NJW3YX2WRaP1oTRiEiDmpE70dy5KmOvB4J52viSpKFbPGDoaSuI7eDXKZ2Tr9JYMyte66FCNTEljnY+IO2QG49g9Dt3lPJ5rSxTAU+ah51rLN5/oAJuTEhOxoE8owIDAQAB` | —        | Auto |
+| MX   | `send`              | `feedback-smtp.eu-west-1.amazonses.com`                                                                                                                                                                                                                                     | 10       | Auto |
+| TXT  | `send`              | `v=spf1 include:amazonses.com ~all`                                                                                                                                                                                                                                         | —        | Auto |
+
+After the records propagate, click **Verify DNS records** in Resend
+dashboard → Domains → optipeople.dk. Status should flip from
+`not_started` to `verified` within a few minutes.
+
+Resend domain ID for reference: `923c349d-aee0-4762-9415-a7fbb6a73c3d`.
+
+You also need to mirror `RESEND_API_KEY` and `RESEND_FROM` into Vercel:
+
+```bash
+# Either via the dashboard at vercel.com → project → settings → env vars,
+# or via CLI:
+echo "OptiAI <noreply@optipeople.dk>" | npx vercel env add RESEND_FROM production
+echo "OptiAI <noreply@optipeople.dk>" | npx vercel env add RESEND_FROM preview
+echo "<key>" | npx vercel env add RESEND_API_KEY production
+echo "<key>" | npx vercel env add RESEND_API_KEY preview
+```
+
+Until the env vars land in Vercel, escalation works in local dev only.
+
+---
+
+## 6. Things to do before any of this
 
 - **Rotate every secret that touched chat** (Anthropic, Voyage, Supabase
   service role + DB password, Optipeople test creds). Free / staging
@@ -379,7 +474,7 @@ beyond iteration 3.
 
 ---
 
-## 6. Notes for the next session
+## 7. Notes for the next session
 
 - All migrations applied to remote Supabase already; nothing pending.
 - Voyage is on a paid plan — the 25–40s retry waits in `voyage.ts`

@@ -9,9 +9,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const checks: Record<string, { ok: boolean; detail?: string }> = {};
 
-  // Anthropic + Voyage keys: presence only, never echo values.
+  // Anthropic + Voyage + Resend keys: presence only, never echo values.
   checks.anthropic_key = { ok: !!process.env.ANTHROPIC_API_KEY };
   checks.voyage_key = { ok: !!process.env.VOYAGE_API_KEY };
+  checks.resend_key = {
+    ok: !!process.env.RESEND_API_KEY,
+    detail: process.env.RESEND_FROM ?? undefined,
+  };
   checks.optipeople_target = {
     ok: !!process.env.OPTIPEOPLE_API_TARGET,
     detail: process.env.OPTIPEOPLE_API_TARGET ?? undefined,

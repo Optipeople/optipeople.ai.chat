@@ -1,15 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, LogOut, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
+import { Loader2, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OptipeopleLogo } from "@/components/logo";
+import { UserMenu } from "@/components/UserMenu";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function MachineSelectScreen() {
   const {
-    user,
     accounts,
     currentAccount,
     machines,
@@ -18,7 +18,6 @@ export function MachineSelectScreen() {
     selectMachine,
     reloadMachines,
     clearSelectedAccount,
-    logout,
   } = useAuth();
 
   const [query, setQuery] = useState("");
@@ -43,20 +42,7 @@ export function MachineSelectScreen() {
             className="h-7 w-auto text-white"
             aria-label="Optipeople"
           />
-          {user && (
-            <button
-              type="button"
-              onClick={logout}
-              className={cn(
-                "flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-medium",
-                "bg-white/15 text-white transition-colors hover:bg-white/25",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
-              )}
-            >
-              <LogOut className="h-4 w-4" />
-              Log ud
-            </button>
-          )}
+          <UserMenu />
         </div>
       </header>
 
@@ -103,7 +89,15 @@ export function MachineSelectScreen() {
 
           {!isLoadingMachines && !machinesError && machines.length === 0 && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-              Der er ingen maskiner på denne konto. Kontakt din administrator.
+              Der er ingen maskiner tilføjet i Opti Assist på denne konto. Skriv
+              til{" "}
+              <a
+                href="mailto:support@optipeople.dk"
+                className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
+              >
+                support@optipeople.dk
+              </a>{" "}
+              for hjælp med at få maskinerne tilføjet.
             </p>
           )}
 

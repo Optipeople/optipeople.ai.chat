@@ -13,6 +13,10 @@ import type {
   AdminFeedback,
 } from "@/app/api/admin/conversations/[id]/route";
 import type { AdminQrTokenResponse } from "@/app/api/admin/machines/[id]/qr/route";
+import type {
+  AdminEscalationTarget,
+  AdminEscalationTargetResponse,
+} from "@/app/api/admin/accounts/[accountId]/escalation/route";
 
 export type {
   AdminChunkRef,
@@ -20,6 +24,7 @@ export type {
   AdminConversationListItem,
   AdminConversationMessage,
   AdminDocument,
+  AdminEscalationTarget,
   AdminFeedback,
   AdminMachine,
   AdminMachineDetail,
@@ -60,6 +65,34 @@ export async function updateAdminMachineName(
   });
   if (!res.ok) {
     throw new Error(`Kunne ikke gemme navn (${res.status})`);
+  }
+}
+
+export async function createAdminMachine(input: {
+  machineId: string;
+  accountId: string;
+  displayName: string | null;
+}): Promise<AdminMachine> {
+  const res = await fetchWithAuth(`/api/admin/machines`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke oprette maskine (${res.status})`);
+  }
+  const out = (await res.json()) as { machine: AdminMachine };
+  return out.machine;
+}
+
+export async function deleteAdminMachine(id: string): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/machines/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke slette maskine (${res.status})`);
   }
 }
 
@@ -280,5 +313,55 @@ export async function revokeAdminMachineQr(machineId: string): Promise<void> {
   });
   if (!res.ok) {
     throw new Error(`Kunne ikke inaktivere QR-kode (${res.status})`);
+  }
+}
+
+export async function getAdminEscalationTarget(
+  accountId: string,
+): Promise<AdminEscalationTarget | null> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/escalation`,
+  );
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente service-target (${res.status})`);
+  }
+  const body = (await res.json()) as AdminEscalationTargetResponse;
+  return body.target;
+}
+
+export async function saveAdminEscalationTarget(
+  accountId: string,
+  input: {
+    channel: AdminEscalationTarget["channel"];
+    target: string;
+    label: string | null;
+  },
+): Promise<AdminEscalationTarget> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/escalation`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke gemme target (${res.status})`);
+  }
+  const out = (await res.json()) as AdminEscalationTargetResponse;
+  if (!out.target) throw new Error("Server returnerede tom target");
+  return out.target;
+}
+
+export async function clearAdminEscalationTarget(
+  accountId: string,
+): Promise<void> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/escalation`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    throw new Error(`Kunne ikke fjerne target (${res.status})`);
   }
 }

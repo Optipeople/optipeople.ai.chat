@@ -3,13 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
+  Copy,
   ExternalLink,
   FileText,
   Loader2,
   ThumbsDown,
   ThumbsUp,
+  Wrench,
   X,
 } from "lucide-react";
+import type { EscalateResponse } from "@/app/api/chat/escalate/route";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/ui/markdown";
@@ -293,6 +296,23 @@ type FeedbackState =
   | { phase: "thanks"; resolved: boolean }
   | { phase: "error"; message: string };
 
+// Operator-side escalation flow. The "Tilkald service" pill button
+// transitions hidden → confirm. On submit we POST /api/chat/escalate,
+// move to submitting, and on success either auto-open tel:/mailto: or
+// land on `done` with the share URL for copy.
+type EscalateState =
+  | { phase: "hidden" }
+  | { phase: "confirm"; note: string }
+  | { phase: "submitting"; note: string }
+  | {
+      phase: "done";
+      channel: EscalateResponse["channel"];
+      target: string;
+      label: string | null;
+      shareUrl: string;
+    }
+  | { phase: "error"; message: string };
+
 function ChatApp({
   account,
   machine,
@@ -309,6 +329,7 @@ function ChatApp({
   // switches machines so the new chat starts a fresh row.
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
+  const [escalate, setEscalate] = useState<EscalateState>({ phase: "hidden" });
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -324,6 +345,7 @@ function ChatApp({
     setConversationId(null);
     setMessages([]);
     setFeedback({ phase: "hidden" });
+    setEscalate({ phase: "hidden" });
   }, [machine?.id]);
 
   useEffect(() => {
@@ -397,6 +419,7 @@ function ChatApp({
     setMessages([]);
     setConversationId(null);
     setFeedback({ phase: "hidden" });
+    setEscalate({ phase: "hidden" });
     setInput("");
   }
 
@@ -427,6 +450,54 @@ function ChatApp({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setFeedback({ phase: "error", message: msg });
+    }
+  }
+
+  async function submitEscalation(note: string) {
+    if (!conversationId) return;
+    setEscalate({ phase: "submitting", note });
+    try {
+      const res = await fetchWithAuth("/api/chat/escalate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          note: note.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        throw new Error(
+          body.error ?? `Server error ${res.status}`,
+        );
+      }
+      const data = (await res.json()) as EscalateResponse;
+
+      // Phone channel: open tel: from the click-handler descendant.
+      // Email channel: server already sent via Resend — no client open.
+      // Service-ticket: nothing to open; the `done` view exposes the
+      // share URL for copy.
+      if (data.channel === "phone") {
+        window.location.href = `tel:${data.target}`;
+      }
+
+      // Lock the chat (escalate.phase === "done" hides the feedback
+      // prompt and locks the input bar) so the operator doesn't keep
+      // typing as if the conversation is still live.
+      setFeedback({ phase: "hidden" });
+      setEscalate({
+        phase: "done",
+        channel: data.channel,
+        target: data.target,
+        label: data.label,
+        shareUrl: data.shareUrl,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setEscalate({ phase: "error", message: msg });
     }
   }
 
@@ -584,10 +655,14 @@ function ChatApp({
   const hasAssistantReply = messages.some(
     (m) => m.role === "assistant" && m.content.length > 0,
   );
-  const inputLocked = streaming || feedback.phase === "thanks";
+  const inputLocked =
+    streaming || feedback.phase === "thanks" || escalate.phase === "done";
   const canSend = !inputLocked && input.trim().length > 0;
-  const showEndButton =
-    !!conversationId && hasAssistantReply && feedback.phase === "hidden";
+  const showActionButtons =
+    !!conversationId &&
+    hasAssistantReply &&
+    feedback.phase === "hidden" &&
+    (escalate.phase === "hidden" || escalate.phase === "error");
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
@@ -662,8 +737,20 @@ function ChatApp({
               ))}
             </div>
           )}
-          {showEndButton && (
-            <div className="msg-in mb-3 flex justify-end">
+          {showActionButtons && (
+            <div className="msg-in mb-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEscalate({ phase: "confirm", note: "" })}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-muted-foreground)]",
+                  "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
+                  "transition-colors hover:text-amber-700 hover:border-amber-300",
+                )}
+              >
+                <Wrench className="h-3.5 w-3.5" />
+                Tilkald service
+              </button>
               <button
                 type="button"
                 onClick={() => setFeedback({ phase: "prompt" })}
@@ -675,6 +762,21 @@ function ChatApp({
               >
                 Afslut samtale
               </button>
+            </div>
+          )}
+          {escalate.phase !== "hidden" && (
+            <div className="msg-in mb-3">
+              <EscalateCard
+                state={escalate}
+                onSubmit={submitEscalation}
+                onNoteChange={(note) =>
+                  setEscalate((prev) =>
+                    prev.phase === "confirm" ? { ...prev, note } : prev,
+                  )
+                }
+                onCancel={() => setEscalate({ phase: "hidden" })}
+                onStartNew={startNewConversation}
+              />
             </div>
           )}
           {feedback.phase !== "hidden" && (
@@ -1057,6 +1159,178 @@ function YesSolutionForm({
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function EscalateCard({
+  state,
+  onSubmit,
+  onNoteChange,
+  onCancel,
+  onStartNew,
+}: {
+  state: EscalateState;
+  onSubmit: (note: string) => void;
+  onNoteChange: (note: string) => void;
+  onCancel: () => void;
+  onStartNew: () => void;
+}) {
+  if (state.phase === "done") {
+    return (
+      <div className="rounded-[var(--radius-xl)] border border-amber-200 bg-amber-50 p-4 shadow-[var(--shadow-md)]">
+        <div className="flex items-start gap-3">
+          <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
+          <div className="flex-1">
+            <p className="text-[15px] font-medium text-amber-900">
+              Service tilkaldt
+            </p>
+            <p className="mt-0.5 text-[13px] text-amber-900/80">
+              {state.channel === "phone"
+                ? `Vi åbner telefonopkald til ${state.label ?? state.target}.`
+                : state.channel === "email"
+                  ? `E-mail sendt til ${state.label ?? state.target} med et link til samtalen.`
+                  : "Send linket nedenfor til service-teamet."}
+            </p>
+            {state.channel === "service_ticket" && (
+              <ShareLinkRow url={state.shareUrl} />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onStartNew}
+            className="rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40"
+          >
+            Start ny samtale
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "error") {
+    return (
+      <div className="rounded-[var(--radius-xl)] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-medium">Kunne ikke tilkalde service</p>
+            <p className="mt-0.5 text-[13px]">{state.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-red-700/70 hover:text-red-700"
+            aria-label="Luk"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase !== "confirm" && state.phase !== "submitting") return null;
+  const submitting = state.phase === "submitting";
+  const note = state.note;
+
+  return (
+    <div className="rounded-[var(--radius-xl)] border border-amber-200 bg-amber-50/60 p-4 shadow-[var(--shadow-md)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[15px] font-medium text-amber-900">
+            Tilkald en tekniker?
+          </p>
+          <p className="mt-0.5 text-[13px] text-amber-900/80">
+            Vi sender et midlertidigt link til samtalen til service-kontakten
+            for din maskine. Tilføj gerne en kort beskrivelse.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={submitting}
+          className="text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
+          aria-label="Annullér"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2">
+        <Textarea
+          value={note}
+          onChange={(e) => onNoteChange(e.target.value)}
+          rows={2}
+          disabled={submitting}
+          placeholder="F.eks. Maskinen alarmerer 731 og starter ikke efter genstart."
+          className="min-h-[64px] text-[14px]"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-full bg-[var(--color-surface)] px-4 py-2 text-[13px] text-[var(--color-muted-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-60"
+          >
+            Annullér
+          </button>
+          <Button
+            onClick={() => onSubmit(note)}
+            disabled={submitting}
+            className="h-9 min-w-[140px] rounded-full bg-amber-600 text-white shadow-[var(--shadow-sm)] hover:bg-amber-700"
+          >
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <Wrench className="h-4 w-4" />
+                Tilkald service
+              </span>
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShareLinkRow({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API can fail on insecure contexts; the input below
+      // still lets the operator select-and-copy manually.
+    }
+  }
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <input
+        readOnly
+        value={url}
+        onFocus={(e) => e.currentTarget.select()}
+        className="flex-1 truncate rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[12px] text-amber-900"
+      />
+      <button
+        type="button"
+        onClick={() => void copy()}
+        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[13px] text-amber-900 hover:bg-amber-100"
+      >
+        {copied ? (
+          <>
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            Kopieret
+          </>
+        ) : (
+          <>
+            <Copy className="h-3.5 w-3.5" />
+            Kopiér
+          </>
+        )}
+      </button>
     </div>
   );
 }

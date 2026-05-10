@@ -1,10 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Loader2, MessageSquare, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChevronRight,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Search,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
+import { AddMachineDialog } from "@/components/admin/AddMachineDialog";
 
 export function MachinesList() {
   const router = useRouter();
@@ -12,6 +19,12 @@ export function MachinesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+
+  const reload = useCallback(async () => {
+    const rows = await getAdminMachines();
+    setMachines(rows);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,22 +66,43 @@ export function MachinesList() {
               : `${machines.length} maskiner med vidensbase`}
           </p>
         </div>
-        <label className="relative w-72">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Søg navn eller ID…"
+        <div className="flex items-center gap-2">
+          <label className="relative w-72">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Søg navn eller ID…"
+              className={cn(
+                "h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                "bg-[var(--color-surface)] pl-9 pr-3 text-[14px]",
+                "text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+              )}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
             className={cn(
-              "h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] pl-9 pr-3 text-[14px]",
-              "text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+              "inline-flex h-10 items-center gap-2 rounded-[var(--radius)] px-3 text-[13px] font-medium",
+              "bg-[var(--color-brand)] text-white transition-opacity hover:opacity-90",
             )}
-          />
-        </label>
+          >
+            <Plus className="h-4 w-4" />
+            Tilføj maskine
+          </button>
+        </div>
       </div>
+
+      {addOpen && (
+        <AddMachineDialog
+          existingMachineIds={new Set(machines.map((m) => m.machineId))}
+          onClose={() => setAddOpen(false)}
+          onCreated={reload}
+        />
+      )}
 
       {error ? (
         <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
@@ -81,7 +115,7 @@ export function MachinesList() {
       ) : filtered.length === 0 ? (
         <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           {machines.length === 0
-            ? "Ingen maskiner endnu. Brug ingest-CLI'en eller upload-formularen (kommer)."
+            ? 'Tryk "Tilføj maskine" for at tilføje din første maskine.'
             : "Ingen maskiner matcher din søgning."}
         </div>
       ) : (

@@ -39,6 +39,17 @@ export type AdminFeedback = {
   createdAt: string;
 };
 
+export type AdminEscalation = {
+  id: string;
+  channel: "phone" | "email" | "service_ticket";
+  target: string;
+  note: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  shareToken: string | null;
+};
+
 export type AdminConversationDetail = {
   id: string;
   machineId: string;
@@ -51,6 +62,7 @@ export type AdminConversationDetail = {
   entryMode: string | null;
   resolution: string | null;
   feedback: AdminFeedback | null;
+  escalation: AdminEscalation | null;
   messages: AdminConversationMessage[];
 };
 
@@ -72,6 +84,7 @@ export async function GET(
     { data: conv, error: cErr },
     { data: msgs, error: mErr },
     { data: fb, error: fErr },
+    { data: esc, error: eErr },
   ] = await Promise.all([
     supabase
       .from("conversations")
@@ -94,10 +107,25 @@ export async function GET(
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    supabase
+      .from("escalations")
+      .select(
+        "id, channel, target, note, created_by, created_at, expires_at, share_token",
+      )
+      .eq("conversation_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
-  if (cErr || mErr || fErr) {
-    console.error("admin conversation detail failed:", cErr, mErr, fErr);
+  if (cErr || mErr || fErr || eErr) {
+    console.error(
+      "admin conversation detail failed:",
+      cErr,
+      mErr,
+      fErr,
+      eErr,
+    );
     return Response.json({ error: "Database error" }, { status: 500 });
   }
   if (!conv) {
@@ -180,6 +208,19 @@ export async function GET(
       }
     | null;
 
+  const escalation = esc as
+    | {
+        id: string;
+        channel: "phone" | "email" | "service_ticket";
+        target: string;
+        note: string | null;
+        created_by: string | null;
+        created_at: string;
+        expires_at: string | null;
+        share_token: string | null;
+      }
+    | null;
+
   const result: AdminConversationDetail = {
     id: conversation.id,
     machineId: conversation.machine_id,
@@ -197,6 +238,18 @@ export async function GET(
           solutionText: feedback.solution_text,
           promotedDocId: feedback.promoted_doc_id,
           createdAt: feedback.created_at,
+        }
+      : null,
+    escalation: escalation
+      ? {
+          id: escalation.id,
+          channel: escalation.channel,
+          target: escalation.target,
+          note: escalation.note,
+          createdBy: escalation.created_by,
+          createdAt: escalation.created_at,
+          expiresAt: escalation.expires_at,
+          shareToken: escalation.share_token,
         }
       : null,
     messages: ((msgs ?? []) as Array<{

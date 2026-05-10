@@ -1,5 +1,9 @@
 // GET    /api/admin/machines/[id] — machine summary + its documents
 // PATCH  /api/admin/machines/[id] — update display_name
+// DELETE /api/admin/machines/[id] — drop machine_kb row + storage objects.
+//                                   kb_documents/kb_chunks/kb_folders cascade
+//                                   via FK; conversation/feedback/escalation
+//                                   audit history stays (no FK to machine_kb).
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
@@ -183,4 +187,44 @@ export async function PATCH(
     return Response.json({ error: "Database error" }, { status: 500 });
   }
   return Response.json({ ok: true, displayName });
+}
+
+export async function DELETE(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const denied = await gate(req);
+  if (denied) return denied;
+
+  const { id } = await ctx.params;
+  const supabase = getSupabaseServerClient();
+
+  // Best-effort storage cleanup: list everything under <machineId>/ and
+  // remove. Done before the row delete so we still have a foothold if the
+  // listing fails. The DB cascade drops kb_documents/kb_chunks/kb_folders.
+  const { data: objects, error: listErr } = await supabase.storage
+    .from("kb-documents")
+    .list(id, { limit: 1000 });
+  if (listErr) {
+    console.warn("admin DELETE machine: storage list failed:", listErr);
+  } else if (objects && objects.length > 0) {
+    const paths = objects.map((o) => `${id}/${o.name}`);
+    const { error: rmErr } = await supabase.storage
+      .from("kb-documents")
+      .remove(paths);
+    if (rmErr) {
+      console.warn("admin DELETE machine: storage remove failed:", rmErr);
+    }
+  }
+
+  const { error: delErr } = await supabase
+    .from("machine_kb")
+    .delete()
+    .eq("machine_id", id);
+
+  if (delErr) {
+    console.error("admin DELETE machine row failed:", delErr);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+  return Response.json({ ok: true });
 }

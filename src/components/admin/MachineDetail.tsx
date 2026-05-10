@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -20,6 +21,7 @@ import {
   QrCode,
   RefreshCw,
   ScanEye,
+  Trash,
   Trash2,
   Upload,
   X,
@@ -29,6 +31,7 @@ import {
   createAdminFolder,
   deleteAdminDocument,
   deleteAdminFolder,
+  deleteAdminMachine,
   generateAdminMachineQr,
   getAdminDocumentSignedUrl,
   getAdminMachine,
@@ -45,6 +48,7 @@ import {
   UploadQueueProvider,
   useUploadQueue,
 } from "@/components/admin/uploadQueue";
+import { MachineEscalationCard } from "@/components/admin/MachineEscalationCard";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
 
@@ -158,6 +162,11 @@ export function MachineDetail({ machineId }: { machineId: string }) {
 
         <MachineQrCard machine={data} onChanged={reload} />
 
+        <MachineEscalationCard
+          accountId={data.accountId}
+          accountLabel={data.accountId}
+        />
+
         <UploadCard existingFolders={mergedFolders(data)} />
 
         <DocumentsTree
@@ -186,9 +195,12 @@ function MachineSummary({
   machine: AdminMachineDetail;
   onChanged: () => Promise<void>;
 }) {
+  const router = useRouter();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(machine.displayName ?? "");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function save() {
@@ -203,6 +215,27 @@ function MachineSummary({
       setErr(e instanceof Error ? e.message : "Fejl");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function remove() {
+    const label = machine.displayName ?? machine.machineId;
+    const ok = await confirm({
+      title: `Slet maskinen "${label}"?`,
+      description:
+        "Vidensbasen, alle dokumenter, mapper og embeddings fjernes permanent. Samtaler og audit-historik beholdes. Handlingen kan ikke fortrydes.",
+      confirmLabel: "Slet maskine",
+      danger: true,
+    });
+    if (!ok) return;
+    setDeleting(true);
+    setErr(null);
+    try {
+      await deleteAdminMachine(machine.machineId);
+      router.push("/admin/machines");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Fejl");
+      setDeleting(false);
     }
   }
 
@@ -315,6 +348,24 @@ function MachineSummary({
             <MessageSquare className="h-4 w-4" />
             Test chat
           </a>
+          <button
+            type="button"
+            onClick={() => void remove()}
+            disabled={deleting}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-red-700",
+              "transition-colors hover:bg-red-50 disabled:opacity-50",
+            )}
+            title="Slet vidensbasen for denne maskine"
+          >
+            {deleting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Slet maskine
+          </button>
         </div>
       </div>
     </section>

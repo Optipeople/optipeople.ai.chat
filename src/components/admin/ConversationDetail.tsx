@@ -124,6 +124,48 @@ export function ConversationDetail({
           </div>
         </dl>
 
+        {data.escalation && (
+          <div className="mt-5 flex items-start gap-3 rounded-[var(--radius)] border border-amber-200 bg-amber-50 p-4 text-[14px]">
+            <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <div className="flex-1">
+              <p className="font-medium text-amber-900">
+                Eskaleret til{" "}
+                {data.escalation.channel === "phone"
+                  ? "telefon"
+                  : data.escalation.channel === "email"
+                    ? "e-mail"
+                    : "service-ticket"}{" "}
+                <span className="font-mono">{data.escalation.target}</span>
+              </p>
+              {data.escalation.note && (
+                <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-[var(--color-foreground)]">
+                  <span className="text-[var(--color-muted-foreground)]">
+                    Operatørens beskrivelse:{" "}
+                  </span>
+                  {data.escalation.note}
+                </p>
+              )}
+              <p className="mt-1 text-[12px] text-[var(--color-muted-foreground)]">
+                {DA_DT.format(new Date(data.escalation.createdAt))}
+                {data.escalation.createdBy && ` · af ${data.escalation.createdBy}`}
+                {data.escalation.shareToken && (
+                  <>
+                    {" · "}
+                    <a
+                      href={`/escalation/${data.escalation.shareToken}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-800 underline hover:text-amber-900"
+                    >
+                      åbn tekniker-link
+                    </a>
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+        )}
+
         {data.feedback && (
           <div
             className={cn(

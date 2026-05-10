@@ -21,6 +21,7 @@ import {
   getMachinesForAccount,
   type Machine,
 } from "./machinesApi";
+import { getRegisteredSets } from "./registeredApi";
 import {
   clearCurrentAccount,
   clearCurrentMachine,
@@ -131,7 +132,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoadingMachines(true);
     setMachinesError(null);
     try {
-      const list = await getMachinesForAccount(account.id);
+      // Operators should only see machines onboarded into Opti Assist.
+      // Intersect Optipeople's full machine list with machine_kb so the
+      // picker hides anything we can't serve answers for.
+      const [rawList, registered] = await Promise.all([
+        getMachinesForAccount(account.id),
+        getRegisteredSets(),
+      ]);
+      const list = rawList.filter((m) => registered.machineIds.has(m.id));
       setMachines(list);
       setMachinesForbidden(false);
 
@@ -180,7 +188,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoadingAccounts(true);
     setAccountsError(null);
     try {
-      const list = await getAccounts();
+      // Same filter as machines: only show accounts that have at least one
+      // machine onboarded into this Opti Assist instance. Keeps the picker
+      // focused on what the operator can actually use.
+      const [rawList, registered] = await Promise.all([
+        getAccounts(),
+        getRegisteredSets(),
+      ]);
+      const list = rawList.filter((a) => registered.accountIds.has(a.id));
       setAccounts(list);
       setAccountsForbidden(false);
 
