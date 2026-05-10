@@ -1,8 +1,9 @@
-// PATCH  /api/admin/documents/[id] — update summary or title
+// PATCH  /api/admin/documents/[id] — update summary, title, or folder
 // DELETE /api/admin/documents/[id] — remove the document, its chunks
 //                                    (cascade), and its Storage object
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { ensureFolderPath } from "@/lib/ingestion";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -26,28 +27,57 @@ export async function PATCH(
   if (denied) return denied;
 
   const { id } = await ctx.params;
-  let body: { title?: unknown; summary?: unknown };
+  let body: { title?: unknown; summary?: unknown; folderPath?: unknown };
   try {
-    body = (await req.json()) as { title?: unknown; summary?: unknown };
+    body = (await req.json()) as {
+      title?: unknown;
+      summary?: unknown;
+      folderPath?: unknown;
+    };
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const update: Record<string, string> = {};
+  const update: Record<string, string | null> = {};
   if (typeof body.title === "string" && body.title.trim()) {
     update.title = body.title.trim();
   }
   if (typeof body.summary === "string" && body.summary.trim()) {
     update.summary = body.summary.trim();
   }
+  // folderPath is the only field that accepts null (= move to root).
+  if (body.folderPath === null) {
+    update.folder_path = null;
+  } else if (typeof body.folderPath === "string") {
+    const cleaned = body.folderPath.trim();
+    update.folder_path = cleaned || null;
+  }
   if (Object.keys(update).length === 0) {
     return Response.json(
-      { error: "Nothing to update — provide title or summary" },
+      { error: "Nothing to update — provide title, summary or folderPath" },
       { status: 400 },
     );
   }
 
   const supabase = getSupabaseServerClient();
+
+  // If we're moving a doc into a folder, make sure that folder (and any
+  // ancestors) exist in kb_folders. Drag-drop in the UI always targets
+  // an existing folder, but a direct API caller might not.
+  if (typeof update.folder_path === "string" && update.folder_path) {
+    const { data: doc } = await supabase
+      .from("kb_documents")
+      .select("machine_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (doc) {
+      await ensureFolderPath(
+        (doc as { machine_id: string }).machine_id,
+        update.folder_path,
+      );
+    }
+  }
+
   const { error } = await supabase
     .from("kb_documents")
     .update(update)

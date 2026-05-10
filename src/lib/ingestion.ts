@@ -21,6 +21,9 @@ export type IngestPdfInput = {
   // Optional human-written one-line manifest entry. Falls back to the
   // filename (sans .pdf) if absent — the CLI relies on this fallback.
   summary?: string | null;
+  // Optional slash-separated folder path ("Setup/Calibration"). Null
+  // lands the doc at the root in the admin tree view.
+  folderPath?: string | null;
   // Free-form audit field on kb_documents.created_by. CLI passes "cli";
   // the admin endpoint will pass the operator's email.
   createdBy?: string;
@@ -85,6 +88,26 @@ export function chunkText(text: string, target = 3500, overlap = 400): string[] 
   return chunks;
 }
 
+// Upserts the given folder path AND every ancestor into kb_folders so
+// the admin tree shows them even after their last document is deleted.
+// "Setup/Calibration" → upserts both "Setup" and "Setup/Calibration".
+export async function ensureFolderPath(
+  machineId: string,
+  folderPath: string,
+): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const segs = folderPath.split("/").filter(Boolean);
+  if (segs.length === 0) return;
+  const rows: { machine_id: string; path: string }[] = [];
+  for (let i = 1; i <= segs.length; i++) {
+    rows.push({ machine_id: machineId, path: segs.slice(0, i).join("/") });
+  }
+  const { error } = await supabase
+    .from("kb_folders")
+    .upsert(rows, { onConflict: "machine_id,path", ignoreDuplicates: true });
+  if (error) throw new Error(`kb_folders upsert failed: ${error.message}`);
+}
+
 // Idempotent: safe to call before every ingestPdf. Only writes
 // display_name when machineName is a non-empty string — passing null /
 // undefined leaves the existing value alone, which is what the admin
@@ -128,6 +151,14 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
 
   const extracted = await extractPdfText(input.fileBuffer);
 
+  const folderPath =
+    typeof input.folderPath === "string" && input.folderPath.trim()
+      ? input.folderPath.trim()
+      : null;
+  if (folderPath) {
+    await ensureFolderPath(input.machineId, folderPath);
+  }
+
   const { error: docError } = await supabase.from("kb_documents").insert({
     id: documentId,
     machine_id: input.machineId,
@@ -140,6 +171,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     status: "embedding",
     created_by: input.createdBy ?? "cli",
     extraction_source: extracted.source,
+    folder_path: folderPath,
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 

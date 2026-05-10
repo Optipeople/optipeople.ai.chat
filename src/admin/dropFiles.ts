@@ -1,7 +1,10 @@
-// Flattens DataTransferItemList (drag-drop) into a flat File[] including
-// files from any folders the user drags. Falls back to plain dataTransfer.files
-// when the FileSystem API isn't available (Firefox older releases, Safari
-// quirks). Filters to PDFs since that's what the ingest endpoint accepts.
+// Flattens a DataTransferItemList from drag-drop into PDFs paired with
+// their relative folder path. Walks recursively so the user can drag a
+// whole knowledge-base folder containing nested subfolders.
+//
+// folderPath shape: slash-separated, no leading slash. A bare PDF
+// dragged at the drop root has folderPath = null. A PDF inside
+// `Setup/Calibration/foo.pdf` becomes folderPath = "Setup/Calibration".
 
 type FileSystemEntryLike = {
   isFile: boolean;
@@ -16,6 +19,11 @@ type FileSystemEntryLike = {
   };
 };
 
+export type DroppedPdf = {
+  file: File;
+  folderPath: string | null;
+};
+
 function readFile(entry: FileSystemEntryLike): Promise<File> {
   return new Promise((resolve, reject) => {
     if (!entry.file) return reject(new Error("entry.file not available"));
@@ -26,7 +34,6 @@ function readFile(entry: FileSystemEntryLike): Promise<File> {
 function readDir(entry: FileSystemEntryLike): Promise<FileSystemEntryLike[]> {
   if (!entry.createReader) return Promise.resolve([]);
   const reader = entry.createReader();
-  // readEntries returns at most ~100 entries per call — keep calling until empty.
   return new Promise((resolve, reject) => {
     const out: FileSystemEntryLike[] = [];
     function pump() {
@@ -43,28 +50,38 @@ function readDir(entry: FileSystemEntryLike): Promise<FileSystemEntryLike[]> {
   });
 }
 
-async function walk(entry: FileSystemEntryLike): Promise<File[]> {
+async function walk(
+  entry: FileSystemEntryLike,
+  parentPath: string | null,
+): Promise<DroppedPdf[]> {
   if (entry.isFile) {
     try {
-      return [await readFile(entry)];
+      const file = await readFile(entry);
+      return [{ file, folderPath: parentPath }];
     } catch {
       return [];
     }
   }
   if (entry.isDirectory) {
     const children = await readDir(entry);
-    const out: File[] = [];
+    const childPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+    const out: DroppedPdf[] = [];
     for (const child of children) {
-      out.push(...(await walk(child)));
+      out.push(...(await walk(child, childPath)));
     }
     return out;
   }
   return [];
 }
 
-export async function filesFromDrop(
-  dt: DataTransfer,
-): Promise<File[]> {
+function isPdf(file: File): boolean {
+  return (
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf")
+  );
+}
+
+export async function filesFromDrop(dt: DataTransfer): Promise<DroppedPdf[]> {
   const entries: FileSystemEntryLike[] = [];
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
@@ -78,17 +95,16 @@ export async function filesFromDrop(
     }
   }
 
-  let files: File[];
+  let pdfs: DroppedPdf[];
   if (entries.length > 0) {
-    const nested = await Promise.all(entries.map(walk));
-    files = nested.flat();
+    // Files at the drop root (i.e. siblings of any dropped folder) get
+    // folderPath=null. Files inside a dropped folder inherit that
+    // folder's name as the path.
+    const nested = await Promise.all(entries.map((e) => walk(e, null)));
+    pdfs = nested.flat();
   } else {
-    files = Array.from(dt.files);
+    pdfs = Array.from(dt.files).map((file) => ({ file, folderPath: null }));
   }
 
-  // PDF-only — silently drop other types so dragging a mixed folder works.
-  return files.filter(
-    (f) =>
-      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"),
-  );
+  return pdfs.filter((p) => isPdf(p.file));
 }

@@ -17,6 +17,7 @@ export type AdminDocument = {
   createdAt: string;
   createdBy: string;
   extractionSource: "pdf-parse" | "claude-ocr" | null;
+  folderPath: string | null;
 };
 
 export type AdminMachineDetail = {
@@ -25,6 +26,9 @@ export type AdminMachineDetail = {
   displayName: string | null;
   updatedAt: string;
   documents: AdminDocument[];
+  // Explicit folder list, including empty folders. Tree rendering merges
+  // these with folders implied by document paths so nothing is missed.
+  folders: string[];
 };
 
 async function gate(req: Request): Promise<Response | null> {
@@ -47,24 +51,31 @@ export async function GET(
   const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
-  const [{ data: machine, error: mErr }, { data: docs, error: dErr }] =
-    await Promise.all([
-      supabase
-        .from("machine_kb")
-        .select("machine_id, account_id, display_name, updated_at")
-        .eq("machine_id", id)
-        .maybeSingle(),
-      supabase
-        .from("kb_documents")
-        .select(
-          "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source",
-        )
-        .eq("machine_id", id)
-        .order("created_at", { ascending: false }),
-    ]);
+  const [
+    { data: machine, error: mErr },
+    { data: docs, error: dErr },
+    { data: folders, error: fErr },
+  ] = await Promise.all([
+    supabase
+      .from("machine_kb")
+      .select("machine_id, account_id, display_name, updated_at")
+      .eq("machine_id", id)
+      .maybeSingle(),
+    supabase
+      .from("kb_documents")
+      .select(
+        "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source, folder_path",
+      )
+      .eq("machine_id", id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("kb_folders")
+      .select("path")
+      .eq("machine_id", id),
+  ]);
 
-  if (mErr || dErr) {
-    console.error("admin/machines/[id] query failed:", mErr, dErr);
+  if (mErr || dErr || fErr) {
+    console.error("admin/machines/[id] query failed:", mErr, dErr, fErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
   if (!machine) {
@@ -76,6 +87,9 @@ export async function GET(
     accountId: machine.account_id as string,
     displayName: (machine.display_name as string | null) ?? null,
     updatedAt: machine.updated_at as string,
+    folders: (folders ?? [])
+      .map((f) => (f as { path: string }).path)
+      .filter(Boolean),
     documents: (docs ?? []).map((d) => {
       const r = d as {
         id: string;
@@ -87,6 +101,7 @@ export async function GET(
         created_at: string;
         created_by: string;
         extraction_source: "pdf-parse" | "claude-ocr" | null;
+        folder_path: string | null;
       };
       return {
         id: r.id,
@@ -98,6 +113,7 @@ export async function GET(
         createdAt: r.created_at,
         createdBy: r.created_by,
         extractionSource: r.extraction_source ?? null,
+        folderPath: r.folder_path ?? null,
       };
     }),
   };

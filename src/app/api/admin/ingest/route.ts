@@ -36,6 +36,7 @@ export async function POST(req: Request) {
 
   const machineId = form.get("machineId");
   const summaryRaw = form.get("summary");
+  const folderRaw = form.get("folderPath");
   const file = form.get("file");
 
   if (typeof machineId !== "string" || !machineId) {
@@ -74,6 +75,8 @@ export async function POST(req: Request) {
     typeof summaryRaw === "string" && summaryRaw.trim()
       ? summaryRaw.trim()
       : null;
+  const folderPath =
+    typeof folderRaw === "string" && folderRaw.trim() ? folderRaw.trim() : null;
 
   const buf = Buffer.from(await file.arrayBuffer());
 
@@ -86,6 +89,7 @@ export async function POST(req: Request) {
       fileName: file.name || "upload.pdf",
       fileBuffer: buf,
       summary,
+      folderPath,
       createdBy: admin.email,
     });
     return Response.json(result);

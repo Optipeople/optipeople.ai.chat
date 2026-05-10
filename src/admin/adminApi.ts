@@ -59,6 +59,20 @@ export async function updateAdminDocumentSummary(
   }
 }
 
+export async function updateAdminDocumentFolder(
+  id: string,
+  folderPath: string | null,
+): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folderPath }),
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke flytte dokument (${res.status})`);
+  }
+}
+
 export async function getAdminDocumentSignedUrl(
   id: string,
   opts: { download?: boolean } = {},
@@ -69,6 +83,42 @@ export async function getAdminDocumentSignedUrl(
     throw new Error(`Kunne ikke hente fil-URL (${res.status})`);
   }
   return (await res.json()) as { url: string; fileName: string };
+}
+
+export async function createAdminFolder(
+  machineId: string,
+  path: string,
+): Promise<void> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/folders`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke oprette mappe (${res.status})`);
+  }
+}
+
+export async function deleteAdminFolder(
+  machineId: string,
+  path: string,
+): Promise<void> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/folders`,
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke slette mappe (${res.status})`);
+  }
 }
 
 export async function deleteAdminDocument(id: string): Promise<void> {
@@ -97,6 +147,7 @@ export async function uploadAdminDocument(args: {
   machineId: string;
   file: File;
   summary?: string;
+  folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<UploadResult> {
   const token = getAccessToken();
@@ -106,6 +157,7 @@ export async function uploadAdminDocument(args: {
   form.set("machineId", args.machineId);
   form.set("file", args.file);
   if (args.summary) form.set("summary", args.summary);
+  if (args.folderPath) form.set("folderPath", args.folderPath);
 
   // Use XHR so we can track upload progress events. fetch() doesn't
   // expose them yet across browsers.
