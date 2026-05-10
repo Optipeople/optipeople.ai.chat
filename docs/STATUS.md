@@ -199,17 +199,16 @@ default path becomes the UI.
      from disk and calls this function.
    - The new HTTP endpoint (step 4) will call the same function.
    - **No behaviour changes** in this step — just a refactor.
-2. **Super-admin gating.** Pick the simplest path: env-var allowlist.
-   - Add `SUPER_ADMIN_EMAILS` to `.env.example` and Vercel env (comma-separated).
+2. **Super-admin gating.** Reuse the Optipeople role system instead of a
+   parallel allowlist.
    - Server-side helper `requireSuperAdmin(req)` in `src/lib/auth.ts`:
      - Reads `Authorization: Bearer <token>` from the request.
-     - Calls Optipeople `/api/User/Me` (or whatever the user-info endpoint is —
-       check the swagger linked from staging) to get the email.
-     - 403 if the email isn't in the allowlist.
+     - Calls Optipeople `/api/User/GetCurrentUser` to resolve the caller.
+     - 403 if `role.name !== "SuperAdmin"` (case-insensitive).
      - Caches results per-request only.
    - Used by every admin route handler. Belt-and-suspenders client side: hide
-     `/admin` from `UserMenu` unless the user's email is on the allowlist
-     (we already have email client-side via `AuthContext`).
+     `/admin` from `UserMenu` unless the user's role is SuperAdmin
+     (needs the role surfaced through `AuthContext` — see step 3).
 3. **List + detail pages (server components where possible):**
    - `app/admin/layout.tsx` — server component. Fetches the user via
      `requireSuperAdmin`. Renders a thin sidebar / header with "Admin —
@@ -252,20 +251,20 @@ default path becomes the UI.
 
 ### Open decisions before starting
 
-- **How to learn the user's email from a bearer token.** The current
-  `/auth-api/[...]` proxy doesn't peek inside the JWT — for iteration 1
-  we never needed to know who the request was from server-side. Two
-  options:
-  1. Look up the user via Optipeople `/api/User/Me` (or equivalent).
-     Adds one round trip per admin request; simple.
-  2. Decode the JWT locally, trusting the issuer. Faster but couples us
-     to Optipeople's signing key.
-  Recommendation: option 1 for iteration 2, revisit if it gets slow.
-- **Where to put `requireSuperAdmin`.** Probably `src/lib/auth.ts` so it's
-  the natural home when role logic gets richer.
 - **Admin UI design.** Stick with the same shadcn-style components and
   brand tokens — header in `--color-brand`, surfaces in `--color-surface`.
   No need for a fresh design system for an internal tool.
+
+### Resolved
+
+- **How to learn who the user is.** Lookup via Optipeople
+  `/api/User/GetCurrentUser` — confirmed in the swagger as the canonical
+  current-user endpoint, returns the full User shape (id, email, role).
+  One round trip per admin request, fine for an internal tool.
+- **What gates super-admin access.** `role.name === "SuperAdmin"` from
+  the GetCurrentUser response. Avoids maintaining a parallel email
+  allowlist and stays in sync with how Optipeople already manages staff.
+- **Where `requireSuperAdmin` lives.** `src/lib/auth.ts`.
 
 ### Suggested commit cadence
 

@@ -1,17 +1,21 @@
 // Server-side auth helpers for Optipeople bearer tokens.
 //
-// requireSuperAdmin is the gate for every /api/admin/* route. It looks up
-// the caller's email via Optipeople /api/User/GetCurrentUser and checks it
-// against SUPER_ADMIN_EMAILS (comma-separated, case-insensitive).
-//
-// We resolve the email through an upstream HTTP call rather than decoding
-// the JWT locally — see STATUS.md §3 "Open decisions". One round trip per
-// admin request is fine for an internal tool.
+// requireSuperAdmin is the gate for every /api/admin/* route. It resolves
+// the caller's role via Optipeople /api/User/GetCurrentUser and 403s if
+// role.name isn't "SuperAdmin". One round trip per admin request is fine
+// for an internal tool.
 
 const TARGET =
   process.env.OPTIPEOPLE_API_TARGET ?? "https://api-staging.optipeople.dk";
 
 const USER_ME_PATH = "/api/User/GetCurrentUser";
+const SUPER_ADMIN_ROLE = "superadmin";
+
+export type SuperAdmin = {
+  userId: string;
+  email: string;
+  roleName: string;
+};
 
 export class AuthError extends Error {
   constructor(
@@ -36,22 +40,18 @@ function getBearerToken(req: Request): string {
   return match[1].trim();
 }
 
-function parseAllowlist(raw: string | undefined): Set<string> {
-  if (!raw) return new Set();
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
+type CurrentUser = {
+  id: string;
+  email: string;
+  roleName: string;
+};
 
 // Per-request cache so multiple helpers within a single handler don't
 // double-fetch /api/User/GetCurrentUser. Keyed by the Request object,
 // which is a fresh instance per incoming request.
-const requestCache = new WeakMap<Request, Promise<string>>();
+const requestCache = new WeakMap<Request, Promise<CurrentUser>>();
 
-async function fetchCurrentUserEmail(token: string): Promise<string> {
+async function fetchCurrentUser(token: string): Promise<CurrentUser> {
   let upstream: Response;
   try {
     upstream = await fetch(new URL(USER_ME_PATH, TARGET), {
@@ -77,46 +77,43 @@ async function fetchCurrentUserEmail(token: string): Promise<string> {
     throw new AuthError(502, "Auth upstream returned non-JSON");
   }
 
-  // Optipeople wraps responses in { data, errors, meta }. The User shape
-  // (per swagger) carries `email` on data.
+  // Optipeople wraps responses in { data, errors, meta }. data is a User
+  // shape (per swagger): { id, email, role: { name, ... }, ... }.
   const data =
     body && typeof body === "object" && "data" in body
       ? (body as { data: unknown }).data
       : null;
-  const email =
-    data && typeof data === "object" && "email" in data
-      ? (data as { email: unknown }).email
-      : null;
-
-  if (typeof email !== "string" || !email) {
-    throw new AuthError(401, "Could not resolve user email from token");
+  if (!data || typeof data !== "object") {
+    throw new AuthError(401, "Could not resolve current user from token");
   }
-  return email.toLowerCase();
+
+  const obj = data as Record<string, unknown>;
+  const id = typeof obj.id === "string" ? obj.id : null;
+  const email = typeof obj.email === "string" ? obj.email : null;
+  const role =
+    obj.role && typeof obj.role === "object"
+      ? (obj.role as Record<string, unknown>)
+      : null;
+  const roleName = role && typeof role.name === "string" ? role.name : null;
+
+  if (!id || !email || !roleName) {
+    throw new AuthError(401, "Current user response missing id/email/role");
+  }
+  return { id, email, roleName };
 }
 
 // Throws AuthError on failure. Catch + .toResponse() in the route handler.
-export async function requireSuperAdmin(
-  req: Request,
-): Promise<{ email: string }> {
-  const allowlist = parseAllowlist(process.env.SUPER_ADMIN_EMAILS);
-  if (allowlist.size === 0) {
-    // Fail closed: no allowlist configured means nobody is admin.
-    throw new AuthError(
-      500,
-      "SUPER_ADMIN_EMAILS not configured on the server",
-    );
-  }
-
+export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
   let pending = requestCache.get(req);
   if (!pending) {
     const token = getBearerToken(req);
-    pending = fetchCurrentUserEmail(token);
+    pending = fetchCurrentUser(token);
     requestCache.set(req, pending);
   }
-  const email = await pending;
+  const user = await pending;
 
-  if (!allowlist.has(email)) {
+  if (user.roleName.toLowerCase() !== SUPER_ADMIN_ROLE) {
     throw new AuthError(403, "Not authorised");
   }
-  return { email };
+  return { userId: user.id, email: user.email, roleName: user.roleName };
 }
