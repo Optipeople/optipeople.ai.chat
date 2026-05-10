@@ -5,8 +5,22 @@ import type {
   AdminDocument,
   AdminMachineDetail,
 } from "@/app/api/admin/machines/[id]/route";
+import type { AdminConversationListItem } from "@/app/api/admin/machines/[id]/conversations/route";
+import type {
+  AdminChunkRef,
+  AdminConversationDetail,
+  AdminConversationMessage,
+} from "@/app/api/admin/conversations/[id]/route";
 
-export type { AdminDocument, AdminMachine, AdminMachineDetail };
+export type {
+  AdminChunkRef,
+  AdminConversationDetail,
+  AdminConversationListItem,
+  AdminConversationMessage,
+  AdminDocument,
+  AdminMachine,
+  AdminMachineDetail,
+};
 
 export async function getAdminMachines(): Promise<AdminMachine[]> {
   const res = await fetchWithAuth("/api/admin/machines");
@@ -119,6 +133,64 @@ export async function deleteAdminFolder(
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Kunne ikke slette mappe (${res.status})`);
   }
+}
+
+export async function listAdminConversations(
+  machineId: string,
+  page = 0,
+  perPage = 25,
+): Promise<{
+  conversations: AdminConversationListItem[];
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+}> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/conversations?page=${page}&perPage=${perPage}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente samtaler (${res.status})`);
+  }
+  return (await res.json()) as {
+    conversations: AdminConversationListItem[];
+    page: number;
+    perPage: number;
+    hasMore: boolean;
+  };
+}
+
+export async function getAdminConversation(
+  id: string,
+): Promise<AdminConversationDetail> {
+  const res = await fetchWithAuth(`/api/admin/conversations/${id}`);
+  if (res.status === 404) throw new Error("Samtalen findes ikke");
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente samtale (${res.status})`);
+  }
+  return (await res.json()) as AdminConversationDetail;
+}
+
+export type ReprocessResult = {
+  documentId: string;
+  chunkCount: number;
+  pageCount: number;
+  extractionSource: "pdf-parse" | "claude-ocr";
+};
+
+export async function reprocessAdminDocument(
+  id: string,
+  force: "ocr" | "pdf-parse" = "ocr",
+): Promise<ReprocessResult> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}/reprocess`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ force }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Reprocess fejlede (${res.status})`);
+  }
+  return (await res.json()) as ReprocessResult;
 }
 
 export async function deleteAdminDocument(id: string): Promise<void> {

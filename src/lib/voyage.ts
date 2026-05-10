@@ -79,12 +79,31 @@ async function embedBatch(
   }
 }
 
-export async function embedDocuments(texts: string[]): Promise<number[][]> {
+export type EmbedProgressHook = (
+  done: number,
+  total: number,
+) => void | Promise<void>;
+
+export async function embedDocuments(
+  texts: string[],
+  opts: { onBatchProgress?: EmbedProgressHook } = {},
+): Promise<number[][]> {
   const out: number[][] = [];
+  const totalBatches = Math.ceil(texts.length / MAX_BATCH);
+  let batchesDone = 0;
   for (let i = 0; i < texts.length; i += MAX_BATCH) {
     const slice = texts.slice(i, i + MAX_BATCH);
     const batch = await embedBatch(slice, "document");
     out.push(...batch);
+    batchesDone += 1;
+    if (opts.onBatchProgress) {
+      try {
+        await opts.onBatchProgress(batchesDone, totalBatches);
+      } catch (err) {
+        // Progress reporting is best-effort; never let it abort embedding.
+        console.warn("embedDocuments: onBatchProgress failed:", err);
+      }
+    }
   }
   return out;
 }

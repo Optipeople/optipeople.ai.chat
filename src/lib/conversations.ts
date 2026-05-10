@@ -14,6 +14,8 @@ export async function createConversation(args: {
   machineId: string;
   accountId: string;
   userId: string;
+  userEmail?: string | null;
+  userName?: string | null;
   entryMode?: EntryMode | null;
 }): Promise<string> {
   const supabase = getSupabaseServerClient();
@@ -23,6 +25,8 @@ export async function createConversation(args: {
       machine_id: args.machineId,
       account_id: args.accountId,
       user_id: args.userId,
+      user_email: args.userEmail ?? null,
+      user_name: args.userName ?? null,
       entry_mode: args.entryMode ?? "manual",
     })
     .select("id")

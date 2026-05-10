@@ -3,19 +3,19 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertCircle,
   ArrowLeft,
   Check,
-  CheckCircle2,
   ChevronRight,
   Download,
   Eye,
   Folder,
   FolderOpen,
   GripVertical,
+  History,
   Loader2,
   MessageSquare,
   Pencil,
+  RefreshCw,
   ScanEye,
   Trash2,
   Upload,
@@ -31,13 +31,15 @@ import {
   updateAdminDocumentFolder,
   updateAdminDocumentSummary,
   updateAdminMachineName,
-  uploadAdminDocument,
   type AdminDocument,
   type AdminMachineDetail,
-  type UploadResult,
 } from "@/admin/adminApi";
-import { filesFromDrop, type DroppedPdf } from "@/admin/dropFiles";
+import { filesFromDrop } from "@/admin/dropFiles";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  UploadQueueProvider,
+  useUploadQueue,
+} from "@/components/admin/uploadQueue";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
 
@@ -99,6 +101,22 @@ export function MachineDetail({ machineId }: { machineId: string }) {
     setData(detail);
   }, [machineId]);
 
+  // Auto-poll while any doc is in a non-terminal status. Picks up
+  // server-side progress (e.g. an in-flight reprocess kicked off in
+  // another tab) without manual refresh, and stops automatically once
+  // every doc lands in 'ready' or 'failed'.
+  useEffect(() => {
+    if (!data) return;
+    const inProgress = data.documents.some(
+      (d) => d.status !== "ready" && d.status !== "failed",
+    );
+    if (!inProgress) return;
+    const interval = setInterval(() => {
+      void reload();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [data, reload]);
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -115,30 +133,34 @@ export function MachineDetail({ machineId }: { machineId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <Link
-        href="/admin/machines"
-        className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Alle maskiner
-      </Link>
+    <UploadQueueProvider
+      machineId={machineId}
+      onChanged={reload}
+      processingDocs={data.documents.filter(
+        (d) => d.status !== "ready" && d.status !== "failed",
+      )}
+    >
+      <div className="flex flex-col gap-8">
+        <Link
+          href="/admin/machines"
+          className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Alle maskiner
+        </Link>
 
-      <MachineSummary machine={data} onChanged={reload} />
+        <MachineSummary machine={data} onChanged={reload} />
 
-      <UploadCard
-        machineId={machineId}
-        existingFolders={mergedFolders(data)}
-        onUploaded={reload}
-      />
+        <UploadCard existingFolders={mergedFolders(data)} />
 
-      <DocumentsTree
-        machineId={machineId}
-        documents={data.documents}
-        explicitFolders={data.folders}
-        onChanged={reload}
-      />
-    </div>
+        <DocumentsTree
+          machineId={machineId}
+          documents={data.documents}
+          explicitFolders={data.folders}
+          onChanged={reload}
+        />
+      </div>
+    </UploadQueueProvider>
   );
 }
 
@@ -259,139 +281,55 @@ function MachineSummary({
             </div>
           </dl>
         </div>
-        <a
-          href={chatHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(
-            "inline-flex shrink-0 items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-            "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-            "transition-colors hover:bg-[var(--color-muted)]",
-          )}
-          title="Åbn operatør-chat for denne maskine i ny fane"
-        >
-          <MessageSquare className="h-4 w-4" />
-          Test chat
-        </a>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <Link
+            href={`/admin/machines/${machine.machineId}/conversations`}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+              "transition-colors hover:bg-[var(--color-muted)]",
+            )}
+            title="Se alle samtaler for denne maskine"
+          >
+            <History className="h-4 w-4" />
+            Samtaler
+          </Link>
+          <a
+            href={chatHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+              "transition-colors hover:bg-[var(--color-muted)]",
+            )}
+            title="Åbn operatør-chat for denne maskine i ny fane"
+          >
+            <MessageSquare className="h-4 w-4" />
+            Test chat
+          </a>
+        </div>
       </div>
     </section>
   );
 }
 
-type QueueStatus = "pending" | "uploading" | "done" | "failed";
-
-type QueueItem = {
-  id: string;
-  file: File;
-  folderPath: string | null;
-  status: QueueStatus;
-  progress: number;
-  error?: string;
-  result?: UploadResult;
-};
-
 const NEW_FOLDER_SENTINEL = "__new__";
 const ROOT_FOLDER_SENTINEL = "__root__";
 
 function UploadCard({
-  machineId,
   existingFolders,
-  onUploaded,
 }: {
-  machineId: string;
   existingFolders: string[];
-  onUploaded: () => Promise<void>;
 }) {
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const { enqueueUploads } = useUploadQueue();
   const [dragActive, setDragActive] = useState(false);
-  // Folder selector for *picker-based* uploads. Drag-drop uploads use the
-  // captured folder paths from the dropped tree and ignore this.
+  // Folder selector for *picker-based* uploads. Drag-drop uploads use
+  // the captured folder paths from the dropped tree and ignore this.
   const [pickerFolder, setPickerFolder] = useState<string>(ROOT_FOLDER_SENTINEL);
   const [newFolderInput, setNewFolderInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const processingRef = useRef(false);
-  const queueRef = useRef<QueueItem[]>([]);
 
-  const update = useCallback(
-    (updater: (q: QueueItem[]) => QueueItem[]) => {
-      const next = updater(queueRef.current);
-      queueRef.current = next;
-      setQueue(next);
-    },
-    [],
-  );
-
-  const processNext = useCallback(async () => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      while (true) {
-        const next = queueRef.current.find((i) => i.status === "pending");
-        if (!next) break;
-
-        update((q) =>
-          q.map((i) =>
-            i.id === next.id ? { ...i, status: "uploading", progress: 0 } : i,
-          ),
-        );
-
-        try {
-          const result = await uploadAdminDocument({
-            machineId,
-            file: next.file,
-            folderPath: next.folderPath,
-            onProgress: (loaded, total) => {
-              const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-              update((q) =>
-                q.map((i) => (i.id === next.id ? { ...i, progress: pct } : i)),
-              );
-            },
-          });
-          update((q) =>
-            q.map((i) =>
-              i.id === next.id
-                ? { ...i, status: "done", progress: 100, result }
-                : i,
-            ),
-          );
-          await onUploaded();
-        } catch (e) {
-          update((q) =>
-            q.map((i) =>
-              i.id === next.id
-                ? {
-                    ...i,
-                    status: "failed",
-                    error: e instanceof Error ? e.message : "Upload fejlede",
-                  }
-                : i,
-            ),
-          );
-        }
-      }
-    } finally {
-      processingRef.current = false;
-    }
-  }, [machineId, onUploaded, update]);
-
-  const enqueueDropped = useCallback(
-    (pdfs: DroppedPdf[]) => {
-      if (pdfs.length === 0) return;
-      const items: QueueItem[] = pdfs.map(({ file, folderPath }) => ({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        file,
-        folderPath,
-        status: "pending",
-        progress: 0,
-      }));
-      update((q) => [...q, ...items]);
-      void processNext();
-    },
-    [processNext, update],
-  );
-
-  // Picker-based uploads can't infer a folder, so we apply the dropdown
-  // selection (or new-folder input) to every file in the picker batch.
   function pickerFolderPath(): string | null {
     if (pickerFolder === ROOT_FOLDER_SENTINEL) return null;
     if (pickerFolder === NEW_FOLDER_SENTINEL) {
@@ -404,31 +342,21 @@ function UploadCard({
   function handleFileInput(list: FileList | null) {
     if (!list || list.length === 0) return;
     const folderPath = pickerFolderPath();
-    const pdfs: DroppedPdf[] = Array.from(list)
+    const pdfs = Array.from(list)
       .filter(
         (f) =>
           f.type === "application/pdf" ||
           f.name.toLowerCase().endsWith(".pdf"),
       )
       .map((file) => ({ file, folderPath }));
-    enqueueDropped(pdfs);
+    enqueueUploads(pdfs);
     if (inputRef.current) inputRef.current.value = "";
   }
 
   async function handleDrop(dt: DataTransfer) {
     const pdfs = await filesFromDrop(dt);
-    enqueueDropped(pdfs);
+    enqueueUploads(pdfs);
   }
-
-  function clearFinished() {
-    update((q) => q.filter((i) => i.status !== "done"));
-  }
-
-  const pendingOrUploading = queue.some(
-    (i) => i.status === "pending" || i.status === "uploading",
-  );
-  const finishedCount = queue.filter((i) => i.status === "done").length;
-  const failedCount = queue.filter((i) => i.status === "failed").length;
 
   return (
     <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
@@ -436,8 +364,9 @@ function UploadCard({
         Upload manualer
       </h2>
       <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-        Træk én eller flere PDF&#39;er — eller en hel mappe — hertil. Mappestrukturen
-        bevares. Filerne køres igennem en ad gangen pga. embeddings-rate-limits.
+        Træk én eller flere PDF&#39;er — eller en hel mappe — hertil.
+        Mappestrukturen bevares. Filerne køres igennem en ad gangen pga.
+        embeddings-rate-limits.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -519,114 +448,8 @@ function UploadCard({
           onChange={(e) => handleFileInput(e.target.files)}
         />
       </div>
-
-      {queue.length > 0 && (
-        <div className="mt-4 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-[12px] text-[var(--color-muted-foreground)]">
-            <span>
-              {pendingOrUploading
-                ? `Behandler ${queue.length - finishedCount - failedCount} af ${queue.length}…`
-                : `${finishedCount} færdig${finishedCount === 1 ? "" : "e"}${
-                    failedCount > 0 ? `, ${failedCount} fejlet` : ""
-                  }`}
-            </span>
-            {!pendingOrUploading && finishedCount > 0 && (
-              <button
-                type="button"
-                onClick={clearFinished}
-                className="hover:text-[var(--color-foreground)]"
-              >
-                Ryd færdige
-              </button>
-            )}
-          </div>
-          <ul className="flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)]">
-            {queue.map((item) => (
-              <QueueRow key={item.id} item={item} />
-            ))}
-          </ul>
-        </div>
-      )}
     </section>
   );
-}
-
-function QueueRow({ item }: { item: QueueItem }) {
-  return (
-    <li className="flex items-center gap-3 bg-[var(--color-surface)] px-3 py-2 text-[13px]">
-      <QueueStatusIcon status={item.status} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium text-[var(--color-foreground)]">
-            {item.file.name}
-          </span>
-          <span className="shrink-0 text-[12px] text-[var(--color-muted-foreground)]">
-            {formatBytes(item.file.size)}
-          </span>
-          {item.folderPath && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-muted-foreground)]">
-              <Folder className="h-3 w-3" />
-              {item.folderPath}
-            </span>
-          )}
-          {item.result?.extractionSource === "claude-ocr" && (
-            <span
-              title="Tekst udvundet med Claude vision (OCR)"
-              className="inline-flex items-center"
-            >
-              <ScanEye
-                aria-label="Claude vision OCR"
-                className="h-3.5 w-3.5 text-violet-600"
-              />
-            </span>
-          )}
-        </div>
-        {item.status === "uploading" && (
-          <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-[var(--color-muted)]">
-            <div
-              className="h-full bg-[var(--color-brand)] transition-[width] duration-200"
-              style={{
-                width: `${item.progress < 100 ? item.progress : 100}%`,
-                opacity: item.progress < 100 ? 1 : 0.7,
-              }}
-            />
-          </div>
-        )}
-        {item.status === "uploading" && item.progress >= 100 && (
-          <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-            Behandler & embedder…
-          </p>
-        )}
-        {item.status === "done" && item.result && (
-          <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-            {item.result.chunkCount} chunks fra {item.result.pageCount} sider
-          </p>
-        )}
-        {item.status === "failed" && item.error && (
-          <p className="mt-0.5 truncate text-[12px] text-red-600">
-            {item.error}
-          </p>
-        )}
-      </div>
-    </li>
-  );
-}
-
-function QueueStatusIcon({ status }: { status: QueueStatus }) {
-  switch (status) {
-    case "pending":
-      return (
-        <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-[var(--color-hairline)]" />
-      );
-    case "uploading":
-      return (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
-      );
-    case "done":
-      return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />;
-    case "failed":
-      return <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />;
-  }
 }
 
 // ---- Tree model ----------------------------------------------------------
@@ -1090,6 +913,7 @@ function DocumentRow({
   isMoving: boolean;
 }) {
   const confirm = useConfirm();
+  const { enqueueReprocess } = useUploadQueue();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(document.summary);
   const [saving, setSaving] = useState(false);
@@ -1097,6 +921,21 @@ function DocumentRow({
   const [opening, setOpening] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function reprocess() {
+    const ok = await confirm({
+      title: `Kør "${document.title}" igennem Claude OCR?`,
+      description:
+        "Eksisterende chunks slettes og dokumentet behandles igen via vision. Det kan tage et minut og forbruger Claude tokens. Tidligere svar i samtaler påvirkes ikke, men nye søgninger vil bruge det nye indhold.",
+      confirmLabel: "Reprocesser",
+    });
+    if (!ok) return;
+    enqueueReprocess({
+      documentId: document.id,
+      documentTitle: document.title,
+      fileSize: document.byteSize,
+    });
+  }
 
   async function viewOriginal() {
     if (opening) return;
@@ -1329,6 +1168,14 @@ function DocumentRow({
           ) : (
             <Download className="h-4 w-4" />
           )}
+        </button>
+        <button
+          onClick={() => void reprocess()}
+          title="Kør igennem Claude OCR igen — kører i den fælles kø"
+          aria-label="Reprocesser med OCR"
+          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
+        >
+          <RefreshCw className="h-4 w-4" />
         </button>
         <button
           onClick={() => void remove()}

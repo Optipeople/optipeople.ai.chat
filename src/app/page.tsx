@@ -141,6 +141,7 @@ function ChatApp() {
   const pendingRef = useRef("");
   const streamDoneRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     // Switching machine = new conversation context. Drop any prior id
@@ -166,6 +167,7 @@ function ChatApp() {
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -214,10 +216,14 @@ function ChatApp() {
     streamDoneRef.current = false;
     startDrain();
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const res = await fetchWithAuth("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           accountId: currentAccount?.id ?? null,
           machineId: currentMachine?.id ?? null,
@@ -270,18 +276,25 @@ function ChatApp() {
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      pendingRef.current = "";
-      setMessages((prev) => {
-        const copy = [...prev];
-        copy[copy.length - 1] = {
-          role: "assistant",
-          content: `Fejl: ${msg}`,
-        };
-        return copy;
-      });
+      // Caller-initiated aborts (component unmount, machine switch) aren't
+      // errors — just stop quietly so the UI doesn't flash "Fejl: …".
+      if (controller.signal.aborted) {
+        pendingRef.current = "";
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        pendingRef.current = "";
+        setMessages((prev) => {
+          const copy = [...prev];
+          copy[copy.length - 1] = {
+            role: "assistant",
+            content: `Fejl: ${msg}`,
+          };
+          return copy;
+        });
+      }
     } finally {
       streamDoneRef.current = true;
+      if (abortRef.current === controller) abortRef.current = null;
     }
   }
 

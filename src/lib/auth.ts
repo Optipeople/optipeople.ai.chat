@@ -17,6 +17,9 @@ const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
 export type CurrentUserDetails = {
   userId: string;
   email: string;
+  // Display name from Optipeople. Null if the upstream payload didn't
+  // include it (older tokens). Audit views fall back to email when null.
+  name: string | null;
   roleName: string;
   permissionName: string;
 };
@@ -49,6 +52,7 @@ function getBearerToken(req: Request): string {
 type CurrentUser = {
   id: string;
   email: string;
+  name: string | null;
   roleName: string;
   permissionName: string;
 };
@@ -98,6 +102,7 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
   const obj = data as Record<string, unknown>;
   const id = typeof obj.id === "string" ? obj.id : null;
   const email = typeof obj.email === "string" ? obj.email : null;
+  const name = typeof obj.name === "string" ? obj.name : null;
   const roleName = typeof obj.roleName === "string" ? obj.roleName : null;
   const permissionName =
     typeof obj.permissionName === "string" ? obj.permissionName : null;
@@ -108,7 +113,7 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
       "Current user response missing id/email/roleName/permissionName",
     );
   }
-  return { id, email, roleName, permissionName };
+  return { id, email, name, roleName, permissionName };
 }
 
 // Resolves the current user from the request's bearer token. Throws
@@ -127,6 +132,7 @@ export async function resolveCurrentUser(
   return {
     userId: user.id,
     email: user.email,
+    name: user.name,
     roleName: user.roleName,
     permissionName: user.permissionName,
   };

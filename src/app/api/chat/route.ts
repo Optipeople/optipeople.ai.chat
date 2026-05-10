@@ -315,6 +315,8 @@ export async function POST(req: Request) {
             machineId,
             accountId,
             userId: user.userId,
+            userEmail: user.email,
+            userName: user.name,
           });
           send("conversation", { id: conversationId });
         }

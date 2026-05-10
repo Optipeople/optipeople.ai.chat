@@ -18,6 +18,8 @@ export type AdminDocument = {
   createdBy: string;
   extractionSource: "pdf-parse" | "claude-ocr" | null;
   folderPath: string | null;
+  progress: number | null;
+  progressLabel: string | null;
 };
 
 export type AdminMachineDetail = {
@@ -64,7 +66,7 @@ export async function GET(
     supabase
       .from("kb_documents")
       .select(
-        "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source, folder_path",
+        "id, title, summary, status, page_count, byte_size, created_at, created_by, extraction_source, folder_path, progress, progress_label",
       )
       .eq("machine_id", id)
       .order("created_at", { ascending: false }),
@@ -102,6 +104,8 @@ export async function GET(
         created_by: string;
         extraction_source: "pdf-parse" | "claude-ocr" | null;
         folder_path: string | null;
+        progress: number | null;
+        progress_label: string | null;
       };
       return {
         id: r.id,
@@ -114,6 +118,8 @@ export async function GET(
         createdBy: r.created_by,
         extractionSource: r.extraction_source ?? null,
         folderPath: r.folder_path ?? null,
+        progress: r.progress ?? null,
+        progressLabel: r.progress_label ?? null,
       };
     }),
   };
