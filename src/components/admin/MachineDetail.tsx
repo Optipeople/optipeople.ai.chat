@@ -14,6 +14,7 @@ import {
   FolderOpen,
   GripVertical,
   Loader2,
+  MessageSquare,
   Pencil,
   ScanEye,
   Trash2,
@@ -176,6 +177,8 @@ function MachineSummary({
     }
   }
 
+  const chatHref = `/?account=${encodeURIComponent(machine.accountId)}&machine=${encodeURIComponent(machine.machineId)}`;
+
   return (
     <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-start justify-between gap-4">
@@ -256,6 +259,20 @@ function MachineSummary({
             </div>
           </dl>
         </div>
+        <a
+          href={chatHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "inline-flex shrink-0 items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+            "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
+            "transition-colors hover:bg-[var(--color-muted)]",
+          )}
+          title="Åbn operatør-chat for denne maskine i ny fane"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Test chat
+        </a>
       </div>
     </section>
   );

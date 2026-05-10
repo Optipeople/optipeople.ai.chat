@@ -11,7 +11,77 @@ import { AccountSelectScreen } from "@/components/AccountSelectScreen";
 import { MachineSelectScreen } from "@/components/MachineSelectScreen";
 import { UserMenu } from "@/components/UserMenu";
 import { useAuth } from "@/auth/AuthContext";
+import { fetchWithAuth } from "@/auth/authApi";
 import { cn } from "@/lib/utils";
+
+// Deep-link helper: super-admins navigate from /admin/machines to a
+// pre-selected chat via /?account=…&machine=…. We watch the auth state,
+// pick the right account+machine once the relevant lists have loaded,
+// then strip the params from the URL so a refresh doesn't keep firing.
+function useDeepLinkSelection() {
+  const {
+    accounts,
+    machines,
+    currentAccount,
+    currentMachine,
+    selectAccount,
+    selectMachine,
+    isLoadingAccounts,
+    isLoadingMachines,
+  } = useAuth();
+
+  const [pending, setPending] = useState<{
+    account: string | null;
+    machine: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const account = params.get("account");
+    const machine = params.get("machine");
+    if (account || machine) {
+      setPending({ account, machine });
+      // Clean the URL once we've captured the intent.
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pending) return;
+    if (
+      pending.account &&
+      currentAccount?.id !== pending.account &&
+      !isLoadingAccounts &&
+      accounts.some((a) => a.id === pending.account)
+    ) {
+      selectAccount(pending.account);
+    }
+  }, [pending, accounts, currentAccount, isLoadingAccounts, selectAccount]);
+
+  useEffect(() => {
+    if (!pending) return;
+    if (
+      pending.machine &&
+      (!pending.account || currentAccount?.id === pending.account) &&
+      currentMachine?.id !== pending.machine &&
+      !isLoadingMachines &&
+      machines.some((m) => m.id === pending.machine)
+    ) {
+      selectMachine(pending.machine);
+      setPending(null);
+    } else if (pending && !pending.machine && currentAccount?.id === pending.account) {
+      setPending(null);
+    }
+  }, [
+    pending,
+    machines,
+    currentMachine,
+    currentAccount,
+    isLoadingMachines,
+    selectMachine,
+  ]);
+}
 
 type Role = "user" | "assistant";
 interface Message {
@@ -34,6 +104,7 @@ export default function Home() {
     currentMachine,
     machinesForbidden,
   } = useAuth();
+  useDeepLinkSelection();
 
   if (isInitializing) {
     return (
@@ -59,12 +130,24 @@ function ChatApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // Server creates a conversations row on the first request and streams
+  // its id back. We thread it on subsequent requests so all turns end up
+  // grouped together for the audit view. Reset whenever the operator
+  // switches machines so the new chat starts a fresh row.
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const pendingRef = useRef("");
   const streamDoneRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Switching machine = new conversation context. Drop any prior id
+    // and clear messages — operator likely wants a fresh slate.
+    setConversationId(null);
+    setMessages([]);
+  }, [currentMachine?.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -132,12 +215,13 @@ function ChatApp() {
     startDrain();
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetchWithAuth("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId: currentAccount?.id ?? null,
           machineId: currentMachine?.id ?? null,
+          conversationId,
           messages: next
             .slice(0, -1)
             .map(({ role, content }) => ({ role, content })),
@@ -170,6 +254,8 @@ function ChatApp() {
 
           if (event === "delta") {
             pendingRef.current += data.text;
+          } else if (event === "conversation") {
+            if (typeof data.id === "string") setConversationId(data.id);
           } else if (event === "error") {
             pendingRef.current = "";
             setMessages((prev) => {

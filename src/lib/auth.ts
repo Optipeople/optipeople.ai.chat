@@ -14,12 +14,14 @@ const USER_ME_PATH = "/api/User/GetCurrentUser";
 // drift across environments — permissionName won't.
 const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
 
-export type SuperAdmin = {
+export type CurrentUserDetails = {
   userId: string;
   email: string;
   roleName: string;
   permissionName: string;
 };
+
+export type SuperAdmin = CurrentUserDetails;
 
 export class AuthError extends Error {
   constructor(
@@ -109,8 +111,12 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
   return { id, email, roleName, permissionName };
 }
 
-// Throws AuthError on failure. Catch + .toResponse() in the route handler.
-export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
+// Resolves the current user from the request's bearer token. Throws
+// AuthError on missing/invalid token or upstream failure. Used by every
+// admin route + the chat route for audit attribution.
+export async function resolveCurrentUser(
+  req: Request,
+): Promise<CurrentUserDetails> {
   let pending = requestCache.get(req);
   if (!pending) {
     const token = getBearerToken(req);
@@ -118,14 +124,19 @@ export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
     requestCache.set(req, pending);
   }
   const user = await pending;
-
-  if (user.permissionName !== SUPER_ADMIN_PERMISSION) {
-    throw new AuthError(403, "Not authorised");
-  }
   return {
     userId: user.id,
     email: user.email,
     roleName: user.roleName,
     permissionName: user.permissionName,
   };
+}
+
+// Throws AuthError on failure. Catch + .toResponse() in the route handler.
+export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
+  const user = await resolveCurrentUser(req);
+  if (user.permissionName !== SUPER_ADMIN_PERMISSION) {
+    throw new AuthError(403, "Not authorised");
+  }
+  return user;
 }

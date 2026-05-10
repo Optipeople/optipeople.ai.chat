@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Loader2, Search } from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
 
@@ -94,6 +94,7 @@ export function MachinesList() {
                 <th className="px-4 py-3 font-medium">Konto ID</th>
                 <th className="px-4 py-3 text-right font-medium">Dokumenter</th>
                 <th className="w-10 px-4 py-3"></th>
+                <th className="w-10 px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
@@ -117,6 +118,19 @@ export function MachinesList() {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-[var(--color-foreground)]">
                     {m.documentCount}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <a
+                      href={`/?account=${encodeURIComponent(m.accountId)}&machine=${encodeURIComponent(m.machineId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title="Åbn chat i ny fane"
+                      aria-label="Åbn chat"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                    </a>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <ChevronRight className="ml-auto h-4 w-4 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]" />

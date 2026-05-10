@@ -5,6 +5,14 @@ import type {
   ToolResultBlockParam,
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
+import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  appendAssistantTurn,
+  appendToolMessage,
+  appendUserMessage,
+  createConversation,
+  validateConversation,
+} from "@/lib/conversations";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 
@@ -72,7 +80,19 @@ type ChatRequest = {
   messages?: ChatMessage[];
   accountId?: string | null;
   machineId?: string | null;
+  conversationId?: string | null;
 };
+
+// Helper: extract plain text from a user MessageParam. The client
+// always sends user content as a string, but defensively unpack a
+// content-block array too.
+function userMessageText(msg: MessageParam): string {
+  if (typeof msg.content === "string") return msg.content;
+  return msg.content
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .filter(Boolean)
+    .join("\n");
+}
 
 type DocumentManifest = {
   id: string;
@@ -108,12 +128,23 @@ ${manifest}
 `;
 }
 
+type ToolExecResult = {
+  // What goes back to the model as the tool_result content.
+  modelPayload: unknown;
+  // chunk_ids retrieved (search_kb only) — persisted alongside the
+  // tool message so audit views can show which snippets the AI saw.
+  chunkIds: string[];
+};
+
 async function executeSearchKb(
   machineId: string,
   input: { query?: unknown; top_k?: unknown },
-): Promise<unknown> {
+): Promise<ToolExecResult> {
   if (typeof input.query !== "string" || input.query.trim().length === 0) {
-    return { error: "query must be a non-empty string" };
+    return {
+      modelPayload: { error: "query must be a non-empty string" },
+      chunkIds: [],
+    };
   }
   const topK = Math.min(
     Math.max(typeof input.top_k === "number" ? input.top_k : 6, 1),
@@ -132,7 +163,7 @@ async function executeSearchKb(
   });
   if (error) {
     console.error("search_kb rpc error:", error);
-    return { error: error.message };
+    return { modelPayload: { error: error.message }, chunkIds: [] };
   }
 
   const rows = (data ?? []) as Array<{
@@ -159,14 +190,17 @@ async function executeSearchKb(
   }
 
   return {
-    results: rows.map((r) => ({
-      document_id: r.document_id,
-      title: titleByDoc.get(r.document_id) ?? "(unknown)",
-      page_from: r.page_from,
-      page_to: r.page_to,
-      score: r.rrf_score,
-      text: r.text,
-    })),
+    modelPayload: {
+      results: rows.map((r) => ({
+        document_id: r.document_id,
+        title: titleByDoc.get(r.document_id) ?? "(unknown)",
+        page_from: r.page_from,
+        page_to: r.page_to,
+        score: r.rrf_score,
+        text: r.text,
+      })),
+    },
+    chunkIds: rows.map((r) => r.chunk_id),
   };
 }
 
@@ -174,11 +208,14 @@ async function executeTool(
   name: string,
   input: unknown,
   machineId: string,
-): Promise<unknown> {
+): Promise<ToolExecResult> {
   if (name === "search_kb") {
     return executeSearchKb(machineId, input as Record<string, unknown>);
   }
-  return { error: `Unknown tool: ${name}` };
+  return {
+    modelPayload: { error: `Unknown tool: ${name}` },
+    chunkIds: [],
+  };
 }
 
 export async function POST(req: Request) {
@@ -198,6 +235,7 @@ export async function POST(req: Request) {
 
   const userMessages = body.messages;
   const machineId = body.machineId;
+  const accountId = body.accountId ?? null;
 
   if (!Array.isArray(userMessages) || userMessages.length === 0) {
     return Response.json(
@@ -212,8 +250,28 @@ export async function POST(req: Request) {
     );
   }
 
+  // Resolve operator identity for audit attribution. /api/chat is gated
+  // by login already (the page won't load without a token); this just
+  // gives us a stable user_id to pin conversations to.
+  let user;
+  try {
+    user = await resolveCurrentUser(req);
+  } catch (err) {
+    if (err instanceof AuthError) return err.toResponse();
+    throw err;
+  }
+
+  // Account ID is required for the conversations row. Operators always
+  // have one; reject otherwise so we don't ingest orphan rows.
+  if (!accountId) {
+    return Response.json(
+      { error: "accountId is required" },
+      { status: 400 },
+    );
+  }
+
   console.log(
-    `chat: account=${body.accountId ?? "-"} machine=${machineId} turns=${userMessages.length}`,
+    `chat: account=${accountId} machine=${machineId} user=${user.email} turns=${userMessages.length}`,
   );
 
   const anthropic = new Anthropic();
@@ -227,8 +285,52 @@ export async function POST(req: Request) {
         );
       };
 
+      // Audit persistence is best-effort: any failure logs but doesn't
+      // break the live chat for the operator.
+      async function safe<T>(label: string, fn: () => Promise<T>): Promise<void> {
+        try {
+          await fn();
+        } catch (err) {
+          console.error(`audit: ${label} failed:`, err);
+        }
+      }
+
       try {
         const systemPrompt = await buildSystemPrompt(machineId);
+
+        // Conversation lifecycle: client sends conversationId on
+        // follow-ups; we validate it. Otherwise we create a fresh row
+        // and stream the id back so the client can include it next time.
+        let conversationId: string | null = null;
+        if (body.conversationId) {
+          const ok = await validateConversation(
+            body.conversationId,
+            machineId,
+            user.userId,
+          );
+          if (ok) conversationId = body.conversationId;
+        }
+        if (!conversationId) {
+          conversationId = await createConversation({
+            machineId,
+            accountId,
+            userId: user.userId,
+          });
+          send("conversation", { id: conversationId });
+        }
+
+        // Persist the latest user turn (the rest of `userMessages` is
+        // history we already wrote on previous requests).
+        const latestUser = userMessages[userMessages.length - 1];
+        if (latestUser?.role === "user") {
+          const text = userMessageText(latestUser);
+          if (text.trim()) {
+            await safe("appendUserMessage", () =>
+              appendUserMessage(conversationId!, text),
+            );
+          }
+        }
+
         let conversation: MessageParam[] = userMessages;
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
         let lastStopReason: string | null = null;
@@ -251,12 +353,36 @@ export async function POST(req: Request) {
           s.on("text", (delta) => send("delta", { text: delta }));
 
           const final = await s.finalMessage();
-          totalUsage.input_tokens += final.usage.input_tokens ?? 0;
-          totalUsage.output_tokens += final.usage.output_tokens ?? 0;
+          const usageIn = final.usage.input_tokens ?? 0;
+          const usageOut = final.usage.output_tokens ?? 0;
+          const cacheHit =
+            (final.usage.cache_read_input_tokens ?? 0) > 0;
+          totalUsage.input_tokens += usageIn;
+          totalUsage.output_tokens += usageOut;
           lastStopReason = final.stop_reason;
 
           const toolUses = final.content.filter(
             (c): c is ToolUseBlock => c.type === "tool_use",
+          );
+
+          // Concatenate assistant text blocks for the audit row.
+          const assistantText = final.content
+            .map((b) => (b.type === "text" ? b.text : ""))
+            .filter(Boolean)
+            .join("\n");
+
+          await safe("appendAssistantTurn", () =>
+            appendAssistantTurn({
+              conversationId: conversationId!,
+              content: assistantText,
+              toolCalls: toolUses.map((t) => ({
+                name: t.name,
+                input: t.input,
+              })),
+              tokensIn: usageIn,
+              tokensOut: usageOut,
+              cacheHit,
+            }),
           );
 
           if (toolUses.length === 0) {
@@ -273,20 +399,43 @@ export async function POST(req: Request) {
           const toolResults: ToolResultBlockParam[] = await Promise.all(
             toolUses.map(async (tu) => {
               try {
-                const result = await executeTool(tu.name, tu.input, machineId);
+                const exec = await executeTool(tu.name, tu.input, machineId);
+                const payloadStr = JSON.stringify(exec.modelPayload);
+                await safe("appendToolMessage", () =>
+                  appendToolMessage({
+                    conversationId: conversationId!,
+                    toolName: tu.name,
+                    toolInput: tu.input,
+                    toolChunks: exec.chunkIds,
+                    // Truncate the audit copy — full chunk text is
+                    // already in kb_chunks via tool_chunks references.
+                    contentSummary:
+                      payloadStr.length > 4000
+                        ? payloadStr.slice(0, 4000) + "…[truncated]"
+                        : payloadStr,
+                  }),
+                );
                 return {
                   type: "tool_result" as const,
                   tool_use_id: tu.id,
-                  content: JSON.stringify(result),
+                  content: payloadStr,
                 };
               } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                await safe("appendToolMessage(error)", () =>
+                  appendToolMessage({
+                    conversationId: conversationId!,
+                    toolName: tu.name,
+                    toolInput: tu.input,
+                    toolChunks: [],
+                    contentSummary: JSON.stringify({ error: msg }),
+                  }),
+                );
                 return {
                   type: "tool_result" as const,
                   tool_use_id: tu.id,
                   is_error: true,
-                  content: JSON.stringify({
-                    error: err instanceof Error ? err.message : String(err),
-                  }),
+                  content: JSON.stringify({ error: msg }),
                 };
               }
             }),
