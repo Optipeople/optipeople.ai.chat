@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Loader2, Volume2, VolumeX } from "lucide-react";
 import { fetchWithAuth } from "@/auth/authApi";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ type Props = {
 // instance — no global player state — so two messages playing at once
 // just don't happen because the user can only click one button.
 export function SpeakButton({ text, className }: Props) {
+  const t = useTranslations("speakButton");
   const [state, setState] = useState<"idle" | "loading" | "playing" | "error">("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
@@ -71,12 +73,12 @@ export function SpeakButton({ text, className }: Props) {
 
   const label =
     state === "playing"
-      ? "Stop oplæsning"
+      ? t("stop")
       : state === "loading"
-        ? "Henter tale…"
+        ? t("loading")
         : state === "error"
-          ? "Oplæsning fejlede"
-          : "Læs op";
+          ? t("error")
+          : t("play");
 
   return (
     <button
@@ -88,7 +90,7 @@ export function SpeakButton({ text, className }: Props) {
       className={cn(
         "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-60",
         state === "playing" && "text-[var(--ds-blue-primary)]",
-        state === "error" && "text-[var(--color-destructive)]",
+        state === "error" && "text-[var(--ds-red)]",
         className,
       )}
     >

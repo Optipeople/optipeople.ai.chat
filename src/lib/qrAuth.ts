@@ -55,7 +55,7 @@ export async function resolveQrToken(
   return {
     userId: tokenToPseudoUserId(token),
     email: null,
-    name: row.display_name ?? "QR-operatør",
+    name: row.display_name ?? "QR operator",
     machineId: row.machine_id,
     accountId: row.account_id,
     machineName: row.display_name,

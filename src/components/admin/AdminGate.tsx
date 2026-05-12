@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 
 // Renders children only if the current user is a SuperAdministrator.
@@ -11,6 +12,7 @@ import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 // chrome before the API 403s.
 export function AdminGate({ children }: { children: ReactNode }) {
   const { user, isInitializing } = useAuth();
+  const t = useTranslations("admin.gate");
 
   if (isInitializing) {
     return (
@@ -24,16 +26,16 @@ export function AdminGate({ children }: { children: ReactNode }) {
     return (
       <div className="mx-auto max-w-md py-24 text-center">
         <h1 className="text-[20px] font-semibold text-[var(--color-foreground)]">
-          Du er ikke logget ind
+          {t("notLoggedInTitle")}
         </h1>
         <p className="mt-2 text-[15px] text-[var(--color-muted-foreground)]">
-          Log ind for at få adgang til admin-området.
+          {t("notLoggedInBody")}
         </p>
         <Link
           href="/"
           className="mt-6 inline-block text-[15px] font-medium text-[var(--color-brand)] hover:underline"
         >
-          Til login
+          {t("toLogin")}
         </Link>
       </div>
     );
@@ -43,17 +45,16 @@ export function AdminGate({ children }: { children: ReactNode }) {
     return (
       <div className="mx-auto max-w-md py-24 text-center">
         <h1 className="text-[20px] font-semibold text-[var(--color-foreground)]">
-          Ikke autoriseret
+          {t("unauthorizedTitle")}
         </h1>
         <p className="mt-2 text-[15px] text-[var(--color-muted-foreground)]">
-          Admin-området er forbeholdt SuperAdministrator-rollen. Din rolle:{" "}
-          {user.roleName ?? "ukendt"}.
+          {t("unauthorizedBody", { role: user.roleName ?? t("unknownRole") })}
         </p>
         <Link
           href="/"
           className="mt-6 inline-block text-[15px] font-medium text-[var(--color-brand)] hover:underline"
         >
-          Tilbage til chat
+          {t("backToChat")}
         </Link>
       </div>
     );

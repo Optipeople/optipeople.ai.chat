@@ -124,6 +124,20 @@ export async function updateAdminDocumentSummary(
   }
 }
 
+export async function updateAdminDocumentOperatorVisible(
+  id: string,
+  operatorVisible: boolean,
+): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operatorVisible }),
+  });
+  if (!res.ok) {
+    throw new Error(`Kunne ikke opdatere synlighed (${res.status})`);
+  }
+}
+
 export async function updateAdminDocumentFolder(
   id: string,
   folderPath: string | null,
@@ -370,11 +384,11 @@ function xhrFormUpload<T>(args: {
       } else {
         const message =
           (xhr.response as { error?: string } | null)?.error ??
-          `Upload fejlede (${xhr.status})`;
+          `Upload failed (${xhr.status})`;
         reject(new Error(message));
       }
     };
-    xhr.onerror = () => reject(new Error("Upload fejlede (netværk)"));
+    xhr.onerror = () => reject(new Error("Upload failed (network)"));
     xhr.send(form);
   });
 }

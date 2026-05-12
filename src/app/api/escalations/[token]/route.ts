@@ -6,6 +6,7 @@
 // channel/target metadata so the tech sees who the operator was trying
 // to reach.
 
+import { getTranslations } from "next-intl/server";
 import type { EscalationChannel, EscalationSnapshot } from "@/lib/escalation";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -28,8 +29,9 @@ export async function GET(
   ctx: { params: Promise<{ token: string }> },
 ) {
   const { token } = await ctx.params;
+  const t = await getTranslations("server");
   if (!token || token.length < 16) {
-    return Response.json({ error: "Invalid token" }, { status: 404 });
+    return Response.json({ error: t("escalation.invalidToken") }, { status: 404 });
   }
 
   const supabase = getSupabaseServerClient();
@@ -43,10 +45,10 @@ export async function GET(
 
   if (error) {
     console.error("escalation view lookup failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
   if (!data) {
-    return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json({ error: t("notFound") }, { status: 404 });
   }
 
   const row = data as {
@@ -65,13 +67,13 @@ export async function GET(
   // photographed link doesn't live indefinitely.
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
     return Response.json(
-      { error: "Link er udløbet" },
+      { error: t("escalation.linkExpired") },
       { status: 410 },
     );
   }
   if (!row.context_blob) {
     return Response.json(
-      { error: "Snapshot mangler" },
+      { error: t("escalation.snapshotMissing") },
       { status: 500 },
     );
   }

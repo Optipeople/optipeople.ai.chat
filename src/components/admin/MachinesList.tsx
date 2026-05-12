@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, Loader2, MessageSquare, Plus } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SearchField } from "@/components/ui/search-field";
@@ -11,6 +12,8 @@ import { AddMachineDialog } from "@/components/admin/AddMachineDialog";
 
 export function MachinesList() {
   const router = useRouter();
+  const t = useTranslations("admin.machinesList");
+  const tc = useTranslations("common");
   const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +35,7 @@ export function MachinesList() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
         setLoading(false);
       });
     return () => {
@@ -54,12 +57,12 @@ export function MachinesList() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
-            Maskiner
+            {t("heading")}
           </h1>
           <p className="mt-1 text-[14px] text-[var(--color-muted-foreground)]">
             {loading
-              ? "Henter maskiner…"
-              : `${machines.length} maskiner med vidensbase`}
+              ? t("loading")
+              : t("countLabel", { count: machines.length })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -67,7 +70,7 @@ export function MachinesList() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onClear={() => setQuery("")}
-            placeholder="Søg navn eller ID…"
+            placeholder={t("searchPlaceholder")}
             className="w-72"
           />
           <Button
@@ -76,7 +79,7 @@ export function MachinesList() {
             onClick={() => setAddOpen(true)}
           >
             <Plus className="mr-1.5 h-4 w-4" />
-            Tilføj maskine
+            {t("addMachine")}
           </Button>
         </div>
       </div>
@@ -99,19 +102,17 @@ export function MachinesList() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          {machines.length === 0
-            ? 'Tryk "Tilføj maskine" for at tilføje din første maskine.'
-            : "Ingen maskiner matcher din søgning."}
+          {machines.length === 0 ? t("emptyFirst") : t("emptySearch")}
         </div>
       ) : (
         <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
           <table className="w-full text-[14px]">
             <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
               <tr>
-                <th className="px-4 py-3 font-medium">Navn</th>
-                <th className="px-4 py-3 font-medium">Machine ID</th>
-                <th className="px-4 py-3 font-medium">Konto ID</th>
-                <th className="px-4 py-3 text-right font-medium">Dokumenter</th>
+                <th className="px-4 py-3 font-medium">{t("colName")}</th>
+                <th className="px-4 py-3 font-medium">{t("colMachineId")}</th>
+                <th className="px-4 py-3 font-medium">{t("colAccountId")}</th>
+                <th className="px-4 py-3 text-right font-medium">{t("colDocuments")}</th>
                 <th className="w-10 px-4 py-3"></th>
                 <th className="w-10 px-4 py-3"></th>
               </tr>
@@ -127,7 +128,7 @@ export function MachinesList() {
                   )}
                 >
                   <td className="px-4 py-3 font-medium text-[var(--color-foreground)] group-hover:underline">
-                    {m.displayName ?? "(uden navn)"}
+                    {m.displayName ?? t("noName")}
                   </td>
                   <td className="px-4 py-3 font-mono text-[12px] text-[var(--color-muted-foreground)]">
                     {m.machineId}
@@ -144,8 +145,8 @@ export function MachinesList() {
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      title="Åbn chat i ny fane"
-                      aria-label="Åbn chat"
+                      title={t("openChatTitle")}
+                      aria-label={t("openChatAria")}
                       className="inline-flex h-7 w-7 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
                     >
                       <MessageSquare className="h-4 w-4" />

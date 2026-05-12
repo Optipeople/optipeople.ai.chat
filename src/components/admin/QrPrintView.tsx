@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Download, Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { QRCodeSVG } from "qrcode.react";
 import { OptipeopleLogo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,8 @@ import { getAdminMachine, type AdminMachineDetail } from "@/admin/adminApi";
 import { downloadQrStickerPng } from "@/admin/qrSticker";
 
 export function QrPrintView({ machineId }: { machineId: string }) {
+  const t = useTranslations("admin.qrPrint");
+  const tc = useTranslations("common");
   const [data, setData] = useState<AdminMachineDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -24,7 +27,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
       });
     return () => {
       cancelled = true;
@@ -50,13 +53,13 @@ export function QrPrintView({ machineId }: { machineId: string }) {
   if (!data.qrToken) {
     return (
       <div className="mx-auto mt-12 max-w-md rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-center text-[14px]">
-        <p>Der er ingen aktiv QR-kode for denne maskine.</p>
+        <p>{t("noActive")}</p>
         <Link
           href={`/admin/machines/${machineId}`}
           className="mt-4 inline-flex items-center gap-1.5 text-[var(--color-brand)] hover:underline"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Tilbage til maskinen
+          {t("backToMachine")}
         </Link>
       </div>
     );
@@ -66,7 +69,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     typeof window !== "undefined"
       ? `${window.location.origin}/?qr=${encodeURIComponent(data.qrToken)}`
       : "";
-  const machineName = data.displayName ?? "(uden navn)";
+  const machineName = data.displayName ?? t("noName");
 
   async function onDownload() {
     setDownloading(true);
@@ -74,7 +77,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     try {
       await downloadQrStickerPng({ machineName, qrUrl: url });
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "Ukendt fejl");
+      setDownloadError(err instanceof Error ? err.message : tc("unknownError"));
     } finally {
       setDownloading(false);
     }
@@ -88,7 +91,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Tilbage
+          {t("back")}
         </Link>
         <Button
           size="sm"
@@ -100,7 +103,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           ) : (
             <Download className="mr-1.5 h-4 w-4" />
           )}
-          Download
+          {t("download")}
         </Button>
       </div>
 
@@ -114,7 +117,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
 
         <div className="flex flex-col gap-1">
           <p className="text-[18px] uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">
-            Scan & spørg
+            {t("scanAndAsk")}
           </p>
           <h1 className="text-[36px] font-semibold leading-tight tracking-tight text-[var(--color-foreground)]">
             {machineName}
@@ -126,8 +129,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
         </div>
 
         <p className="max-w-md text-[16px] leading-relaxed text-[var(--color-foreground)]">
-          Scan koden med kameraet på din telefon og stil dit spørgsmål
-          direkte til OptiAI for denne maskine.
+          {t("scanInstruction")}
         </p>
       </div>
 
@@ -140,8 +142,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
       )}
 
       <p className="max-w-md text-center text-[12px] text-[var(--color-muted-foreground)]">
-        PNG&#39;en er 1200×1500 px — egnet til print på A6 etiket eller
-        indsætning i Word-dokumenter inden printet.
+        {t("pngHint")}
       </p>
     </div>
   );

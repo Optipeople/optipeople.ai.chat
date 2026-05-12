@@ -4,6 +4,7 @@
 //                            Optipeople machine the admin picked.
 // Gated on Optipeople SuperAdministrator.
 
+import { getTranslations } from "next-intl/server";
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -45,7 +46,8 @@ export async function GET(req: Request) {
 
   if (mErr || dErr) {
     console.error("admin/machines query failed:", mErr, dErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    const t = await getTranslations("server");
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const counts = new Map<string, number>();
@@ -77,11 +79,13 @@ export async function POST(req: Request) {
   const denied = await gate(req);
   if (denied) return denied;
 
+  const t = await getTranslations("server");
+
   let body: { machineId?: unknown; accountId?: unknown; displayName?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
   const machineId =
@@ -95,7 +99,7 @@ export async function POST(req: Request) {
 
   if (!machineId || !accountId) {
     return Response.json(
-      { error: "machineId og accountId er påkrævet" },
+      { error: t("admin.machineFieldsRequired") },
       { status: 400 },
     );
   }
@@ -109,7 +113,7 @@ export async function POST(req: Request) {
     .maybeSingle();
   if (existing) {
     return Response.json(
-      { error: "Maskinen er allerede oprettet" },
+      { error: t("admin.machineAlreadyExists") },
       { status: 409 },
     );
   }
@@ -126,7 +130,7 @@ export async function POST(req: Request) {
 
   if (error || !data) {
     console.error("admin POST machine failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const row = data as {

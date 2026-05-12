@@ -1,9 +1,9 @@
-// Minimal search_kb implementation for the realtime voice tool.
+// search_kb implementation for the realtime voice tool.
 //
-// This is intentionally a separate, simpler path from the chat route's
-// in-line executor: voice doesn't render image thumbnails or source
-// chips, so we strip the asset-join logic and just return text snippets
-// the model can read aloud.
+// Mirrors the chat route's executor but kept as a separate module so the
+// voice path can evolve independently. Returns text snippets along with
+// the originating document id and an image flag so the model can cite
+// figures by description even though voice has no thumbnail UI.
 
 import { getSupabaseServerClient } from "./supabase";
 import { embedQuery, VOYAGE_MODEL } from "./voyage";
@@ -15,6 +15,8 @@ export type SearchKbHit = {
   page_to: number | null;
   score: number;
   text: string;
+  is_image: boolean;
+  image_alt: string | null;
 };
 
 export type SearchKbResult = {
@@ -52,26 +54,89 @@ export async function searchKb(args: {
   }>;
 
   const docIds = [...new Set(rows.map((r) => r.document_id))];
+  const chunkIds = rows.map((r) => r.chunk_id);
+  const [docTitles, chunkAssets] = await Promise.all([
+    docIds.length > 0
+      ? supabase.from("kb_documents").select("id, title").in("id", docIds)
+      : Promise.resolve({ data: [] }),
+    chunkIds.length > 0
+      ? supabase.from("kb_chunks").select("id, asset_id").in("id", chunkIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
   const titleByDoc = new Map<string, string>();
-  if (docIds.length > 0) {
-    const { data: docs } = await supabase
-      .from("kb_documents")
-      .select("id, title")
-      .in("id", docIds);
-    for (const d of (docs ?? []) as { id: string; title: string }[]) {
-      titleByDoc.set(d.id, d.title);
+  for (const d of (docTitles.data ?? []) as { id: string; title: string }[]) {
+    titleByDoc.set(d.id, d.title);
+  }
+  const assetByChunk = new Map<string, string>();
+  for (const c of (chunkAssets.data ?? []) as {
+    id: string;
+    asset_id: string | null;
+  }[]) {
+    if (c.asset_id) assetByChunk.set(c.id, c.asset_id);
+  }
+
+  const assetIds = [...new Set(assetByChunk.values())];
+  const altByAsset = new Map<string, string | null>();
+  if (assetIds.length > 0) {
+    const { data: assets } = await supabase
+      .from("kb_assets")
+      .select("id, alt_text, caption")
+      .in("id", assetIds);
+    for (const a of (assets ?? []) as {
+      id: string;
+      alt_text: string | null;
+      caption: string;
+    }[]) {
+      altByAsset.set(a.id, a.alt_text ?? a.caption.slice(0, 80));
     }
   }
 
   return {
-    results: rows.map((r) => ({
-      document_id: r.document_id,
-      title: titleByDoc.get(r.document_id) ?? "(unknown)",
-      page_from: r.page_from,
-      page_to: r.page_to,
-      score: r.rrf_score,
-      text: r.text,
-    })),
-    chunkIds: rows.map((r) => r.chunk_id),
+    results: rows.map((r) => {
+      const assetId = assetByChunk.get(r.chunk_id);
+      return {
+        document_id: r.document_id,
+        title: titleByDoc.get(r.document_id) ?? "(unknown)",
+        page_from: r.page_from,
+        page_to: r.page_to,
+        score: r.rrf_score,
+        text: r.text,
+        is_image: !!assetId,
+        image_alt: assetId ? altByAsset.get(assetId) ?? null : null,
+      };
+    }),
+    chunkIds,
   };
+}
+
+export type DocumentManifestEntry = {
+  document_id: string;
+  title: string;
+  summary: string;
+  page_count: number | null;
+};
+
+export async function listDocuments(
+  machineId: string,
+): Promise<DocumentManifestEntry[]> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_documents")
+    .select("id, title, summary, page_count")
+    .eq("machine_id", machineId)
+    .eq("status", "ready")
+    .order("title", { ascending: true });
+  if (error) throw new Error(`listDocuments: ${error.message}`);
+  return ((data ?? []) as Array<{
+    id: string;
+    title: string;
+    summary: string;
+    page_count: number | null;
+  }>).map((d) => ({
+    document_id: d.id,
+    title: d.title,
+    summary: d.summary,
+    page_count: d.page_count,
+  }));
 }

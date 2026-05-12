@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Loader2, Mic, MicOff, PhoneOff } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { AudioLines, Loader2, Mic, MicOff } from "lucide-react";
 import {
   useRealtimeVoice,
   type RealtimeTranscriptTurn,
 } from "@/lib/useRealtimeVoice";
+import { Button } from "@/components/ui/button";
+import { SourceChips } from "@/components/SourceChips";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -18,6 +21,7 @@ type Props = {
 // from open to close; never reused across mount cycles, so the hook
 // state is naturally scoped to a single conversation.
 export function VoiceConversation({ machineId, accountId, onClose }: Props) {
+  const t = useTranslations("voice");
   const { state, transcript, muted, start, stop, toggleMute } =
     useRealtimeVoice({
       machineId,
@@ -50,57 +54,23 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
 
   const statusLabel =
     state === "connecting"
-      ? "Forbinder…"
+      ? t("status.connecting")
       : state === "active"
         ? muted
-          ? "Mikrofon slået fra"
-          : "Lytter…"
+          ? t("status.muted")
+          : t("status.listening")
         : state === "ending"
-          ? "Afslutter…"
+          ? t("status.ending")
           : state === "error"
-            ? "Fejl — prøv igen"
-            : "Inaktiv";
+            ? t("status.error")
+            : t("status.idle");
 
   return (
     <div
       role="dialog"
-      aria-label="Stemme-samtale med OptiAI"
+      aria-label={t("dialogLabel")}
       className="fixed inset-0 z-50 flex flex-col bg-[var(--color-background)]"
     >
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
-        <div className="flex items-center gap-3">
-          <span
-            className={cn(
-              "inline-flex h-3 w-3 rounded-full",
-              state === "active" && !muted
-                ? "bg-[var(--ds-green-primary,#16a34a)] animate-pulse"
-                : state === "connecting"
-                  ? "bg-[var(--color-muted-foreground)] animate-pulse"
-                  : state === "error"
-                    ? "bg-[var(--color-destructive)]"
-                    : "bg-[var(--color-muted-foreground)]",
-            )}
-            aria-hidden
-          />
-          <div>
-            <div className="text-[15px] font-semibold text-[var(--color-foreground)]">
-              Stemme-samtale
-            </div>
-            <div className="text-[13px] text-[var(--color-muted-foreground)]">
-              {statusLabel}
-            </div>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={handleEnd}
-          className="inline-flex items-center gap-2 rounded-[4px] bg-[var(--color-destructive)] px-4 py-2 text-[14px] font-medium text-white transition-opacity hover:opacity-90"
-        >
-          <PhoneOff className="h-4 w-4" />
-          Afslut
-        </button>
-      </header>
-
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-6 py-8"
@@ -108,13 +78,13 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
         <div className="mx-auto flex max-w-2xl flex-col gap-4">
           {transcript.length === 0 && state !== "connecting" ? (
             <p className="text-center text-[15px] text-[var(--color-muted-foreground)]">
-              Sig hvad du har brug for hjælp til.
+              {t("sayPrompt")}
             </p>
           ) : null}
           {state === "connecting" ? (
             <div className="flex items-center justify-center gap-2 text-[15px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Forbinder til OptiAI…
+              {t("connectingHint")}
             </div>
           ) : null}
           {transcript.map((turn) => (
@@ -123,36 +93,89 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
         </div>
       </div>
 
+      <div className="flex items-center justify-center px-6 pb-4">
+        <VoiceStatusPill state={state} muted={muted} label={statusLabel} />
+      </div>
+
       <footer className="border-t border-[var(--color-border)] px-6 py-6">
-        <div className="mx-auto flex max-w-2xl items-center justify-center">
-          <button
-            type="button"
+        <div className="mx-auto flex max-w-2xl items-center justify-center gap-3">
+          <Button
+            variant={muted ? "destructive" : "secondary"}
+            size="lg"
+            className="gap-2"
             onClick={toggleMute}
             disabled={state !== "active"}
-            aria-label={muted ? "Slå mikrofon til" : "Slå mikrofon fra"}
-            className={cn(
-              "inline-flex h-16 w-16 items-center justify-center rounded-full border transition-colors",
-              "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
-              "hover:bg-[var(--color-muted)] disabled:opacity-50",
-              muted && "border-transparent bg-[var(--color-destructive)] text-white",
-            )}
+            aria-label={muted ? t("muteOn") : t("muteOff")}
           >
             {muted ? (
-              <MicOff className="h-7 w-7" />
+              <MicOff className="h-5 w-5" />
             ) : (
-              <Mic className="h-7 w-7" />
+              <Mic className="h-5 w-5" />
             )}
-          </button>
+            {muted ? t("muteOn") : t("muteOff")}
+          </Button>
+          <Button
+            variant="destructive"
+            size="lg"
+            className="gap-2"
+            onClick={handleEnd}
+            aria-label={t("end")}
+          >
+            <AudioLines className="h-5 w-5" />
+            {t("end")}
+          </Button>
         </div>
       </footer>
     </div>
   );
 }
 
+function VoiceStatusPill({
+  state,
+  muted,
+  label,
+}: {
+  state: ReturnType<typeof useRealtimeVoice>["state"];
+  muted: boolean;
+  label: string;
+}) {
+  const isListening = state === "active" && !muted;
+  const isConnecting = state === "connecting";
+  const isError = state === "error";
+
+  const tone = isListening
+    ? "text-[var(--ds-green-primary,#16a34a)]"
+    : isError
+      ? "text-[var(--color-destructive)]"
+      : "text-[var(--color-muted-foreground)]";
+
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-card,var(--color-background))] py-2 pl-3 pr-4 backdrop-blur",
+        isListening && "voice-pill-active border-[var(--ds-green-primary,#16a34a)]/40",
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      <span className={cn("voice-eq", (isListening || isConnecting) && "is-active", tone)} aria-hidden>
+        <span />
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="text-[13px] font-medium text-[var(--color-foreground)]">
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function TranscriptBubble({ turn }: { turn: RealtimeTranscriptTurn }) {
   const isUser = turn.role === "user";
+  const sources = !isUser ? turn.sources : undefined;
   return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
           "max-w-[80%] rounded-[8px] px-4 py-3 text-[16px] leading-[1.5] whitespace-pre-wrap",
@@ -164,6 +187,11 @@ function TranscriptBubble({ turn }: { turn: RealtimeTranscriptTurn }) {
       >
         {turn.text || (turn.final ? "" : "…")}
       </div>
+      {sources && sources.length > 0 && (
+        <div className="max-w-[80%]">
+          <SourceChips sources={sources} />
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@
 // escalations.machine_id isn't a column (the row references conversation
 // only) so the filter goes through a sub-select.
 
+import { getTranslations } from "next-intl/server";
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
 export type AdminEscalationListItem = {
   id: string;
   conversationId: string;
-  channel: "phone" | "email" | "service_ticket" | "webhook";
+  channel: "sms" | "email" | "service_ticket" | "webhook";
   target: string;
   note: string | null;
   createdBy: string | null;
@@ -63,7 +64,8 @@ export async function GET(
 
   if (error) {
     console.error("admin escalations list failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    const t = await getTranslations("server");
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const slice = (rows ?? []).slice(0, perPage) as Array<{

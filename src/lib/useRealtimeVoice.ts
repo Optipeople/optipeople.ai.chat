@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithAuth } from "@/auth/authApi";
+import type { SourceRef } from "@/components/SourceChips";
 
 // State machine for the conversation lifecycle. The UI maps these to
 // labels + icons; nothing else depends on them.
@@ -14,7 +15,13 @@ export type RealtimeState =
 
 export type RealtimeTranscriptTurn =
   | { id: string; role: "user"; text: string; final: boolean }
-  | { id: string; role: "assistant"; text: string; final: boolean };
+  | {
+      id: string;
+      role: "assistant";
+      text: string;
+      final: boolean;
+      sources?: SourceRef[];
+    };
 
 type Options = {
   machineId: string;
@@ -67,6 +74,16 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
   // Tracks pending assistant text per response_id so streaming deltas
   // accumulate into a single transcript turn.
   const assistantBufRef = useRef<Map<string, string>>(new Map());
+  // Best document hit per document_id, accumulated from search_kb tool
+  // returns. Flushed onto the next assistant turn when it begins
+  // streaming, so the model's spoken reply gets the right citations.
+  const pendingSourcesRef = useRef<Map<string, SourceRef & { score: number }>>(
+    new Map(),
+  );
+  // Response IDs that have already had pending sources attached. Lets us
+  // do the snapshot+clear safely outside setTranscript (whose callback
+  // may run twice under React strict mode).
+  const sourcedResponsesRef = useRef<Set<string>>(new Set());
 
   const handleError = useCallback(
     (msg: string) => {
@@ -120,6 +137,33 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
         };
         const output = data.output ?? { error: data.error ?? "Tool failed" };
 
+        // Extract source chips from search_kb results. Keep the
+        // highest-scoring chunk per document so the chip deep-links to
+        // the most relevant page.
+        if (name === "search_kb" && output && typeof output === "object") {
+          const results = (output as { results?: unknown }).results;
+          if (Array.isArray(results)) {
+            for (const r of results as Array<{
+              document_id?: string;
+              title?: string;
+              page_from?: number | null;
+              score?: number;
+            }>) {
+              if (!r.document_id || !r.title) continue;
+              const score = typeof r.score === "number" ? r.score : 0;
+              const existing = pendingSourcesRef.current.get(r.document_id);
+              if (!existing || score > existing.score) {
+                pendingSourcesRef.current.set(r.document_id, {
+                  id: r.document_id,
+                  title: r.title,
+                  pageFrom: r.page_from ?? null,
+                  score,
+                });
+              }
+            }
+          }
+        }
+
         // Persist the tool turn locally so the post-session writeback
         // captures it. Bound the JSON snapshot so a giant search payload
         // doesn't blow past the messages.content column.
@@ -169,17 +213,61 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
       const type = evt.type;
       if (!type) return;
 
+      // A new conversation item was created on the server. We use this
+      // to insert the user's bubble in the correct chronological
+      // position — input audio transcription completes asynchronously
+      // and can arrive AFTER the assistant has already started speaking,
+      // so relying on the transcription event for ordering produces a
+      // reversed transcript.
+      if (type === "conversation.item.created") {
+        const item = evt.item as
+          | {
+              id?: string;
+              role?: string;
+              type?: string;
+              content?: Array<{ type?: string; transcript?: string }>;
+            }
+          | undefined;
+        if (item?.role === "user" && item.type === "message" && item.id) {
+          const existingTranscript =
+            item.content?.find((c) => c?.type === "input_audio")?.transcript ??
+            "";
+          setTranscript((prev) => {
+            if (prev.some((t) => t.id === item.id)) return prev;
+            return [
+              ...prev,
+              {
+                id: item.id!,
+                role: "user",
+                text: existingTranscript,
+                final: !!existingTranscript,
+              },
+            ];
+          });
+        }
+        return;
+      }
+
       // User speech transcript — fired once per completed input audio
-      // item by the server-side transcription pass.
+      // item by the server-side transcription pass. Fills the
+      // placeholder turn we created at conversation.item.created.
       if (type === "conversation.item.input_audio_transcription.completed") {
         const itemId = (evt.item_id as string) ?? crypto.randomUUID();
         const text = ((evt.transcript as string) ?? "").trim();
         if (!text) return;
         turnsRef.current.push({ role: "user", content: text });
-        setTranscript((prev) => [
-          ...prev,
-          { id: itemId, role: "user", text, final: true },
-        ]);
+        setTranscript((prev) => {
+          const idx = prev.findIndex((t) => t.id === itemId);
+          if (idx === -1) {
+            return [
+              ...prev,
+              { id: itemId, role: "user", text, final: true },
+            ];
+          }
+          const copy = prev.slice();
+          copy[idx] = { ...copy[idx], role: "user", text, final: true };
+          return copy;
+        });
         return;
       }
 
@@ -192,6 +280,21 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
         const current = assistantBufRef.current.get(responseId) ?? "";
         const next = current + delta;
         assistantBufRef.current.set(responseId, next);
+
+        // Snapshot+clear pending sources exactly once per response, out
+        // here in the event handler — not inside setTranscript, which
+        // strict mode can call twice.
+        let sourcesToAttach: SourceRef[] | undefined;
+        if (!sourcedResponsesRef.current.has(responseId)) {
+          sourcedResponsesRef.current.add(responseId);
+          if (pendingSourcesRef.current.size > 0) {
+            sourcesToAttach = Array.from(pendingSourcesRef.current.values())
+              .sort((a, b) => b.score - a.score)
+              .map(({ id, title, pageFrom }) => ({ id, title, pageFrom }));
+            pendingSourcesRef.current.clear();
+          }
+        }
+
         setTranscript((prev) => {
           const idx = prev.findIndex(
             (t) => t.role === "assistant" && t.id === responseId,
@@ -199,11 +302,37 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
           if (idx === -1) {
             return [
               ...prev,
-              { id: responseId, role: "assistant", text: next, final: false },
+              {
+                id: responseId,
+                role: "assistant",
+                text: next,
+                final: false,
+                ...(sourcesToAttach && sourcesToAttach.length > 0
+                  ? { sources: sourcesToAttach }
+                  : {}),
+              },
             ];
           }
           const copy = prev.slice();
-          copy[idx] = { ...copy[idx], text: next };
+          const existing = copy[idx];
+          copy[idx] =
+            existing.role === "assistant"
+              ? {
+                  ...existing,
+                  text: next,
+                  // Late-arriving sources (e.g. a search_kb call that
+                  // returned after the first delta) — merge them in
+                  // rather than overwrite.
+                  ...(sourcesToAttach && sourcesToAttach.length > 0
+                    ? {
+                        sources: [
+                          ...(existing.sources ?? []),
+                          ...sourcesToAttach,
+                        ],
+                      }
+                    : {}),
+                }
+              : { ...existing, text: next };
           return copy;
         });
         return;
@@ -261,6 +390,8 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
     pcRef.current = null;
     micStreamRef.current = null;
     assistantBufRef.current.clear();
+    pendingSourcesRef.current.clear();
+    sourcedResponsesRef.current.clear();
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);
@@ -293,7 +424,7 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      handleError("Adgang til mikrofon blev nægtet");
+      handleError("permissionDenied");
       return;
     }
     micStreamRef.current = micStream;
@@ -325,7 +456,7 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") {
-        handleError("Forbindelsen blev afbrudt");
+        handleError("connectionLost");
       }
     };
 

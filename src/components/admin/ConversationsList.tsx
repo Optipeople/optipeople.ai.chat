@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
@@ -19,22 +20,25 @@ const PER_PAGE = 25;
 
 function resolutionBadge(
   resolution: string | null,
+  t: (key: string) => string,
 ): { label: string; variant: TagVariant } | null {
   switch (resolution) {
     case "resolved":
-      return { label: "Løst", variant: "positive" };
+      return { label: t("resolutionResolved"), variant: "positive" };
     case "unresolved":
-      return { label: "Uløst", variant: "issue" };
+      return { label: t("resolutionUnresolved"), variant: "issue" };
     case "escalated":
-      return { label: "Eskaleret", variant: "warning" };
+      return { label: t("resolutionEscalated"), variant: "warning" };
     case "unknown":
-      return { label: "Ukendt", variant: "default" };
+      return { label: t("resolutionUnknown"), variant: "default" };
     default:
       return null;
   }
 }
 
 export function ConversationsList({ machineId }: { machineId: string }) {
+  const t = useTranslations("admin.conversations");
+  const tc = useTranslations("common");
   const [items, setItems] = useState<AdminConversationListItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -52,7 +56,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
         setLoading(false);
       });
     return () => {
@@ -67,16 +71,15 @@ export function ConversationsList({ machineId }: { machineId: string }) {
         className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Tilbage til maskine
+        {t("back")}
       </Link>
 
       <div>
         <h1 className="text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
-          Samtaler
+          {t("heading")}
         </h1>
         <p className="mt-1 text-[14px] text-[var(--color-muted-foreground)]">
-          Audit af alle operatør-chats for denne maskine. Klik på en række
-          for at se hele forløbet og hvilke manualer AI&#39;en konsulterede.
+          {t("description")}
         </p>
       </div>
 
@@ -90,7 +93,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          Ingen samtaler endnu for denne maskine.
+          {t("empty")}
         </div>
       ) : (
         <>
@@ -98,17 +101,17 @@ export function ConversationsList({ machineId }: { machineId: string }) {
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Startet</th>
-                  <th className="px-4 py-3 font-medium">Operatør</th>
-                  <th className="px-4 py-3 text-right font-medium">Beskeder</th>
-                  <th className="px-4 py-3 font-medium">Sidste aktivitet</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">{t("colStarted")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colOperator")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("colMessages")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colLastActivity")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colStatus")}</th>
                   <th className="w-10 px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((c) => {
-                  const badge = resolutionBadge(c.resolution);
+                  const badge = resolutionBadge(c.resolution, t);
                   return (
                     <tr
                       key={c.id}
@@ -167,16 +170,16 @@ export function ConversationsList({ machineId }: { machineId: string }) {
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
-                ← Forrige
+                {t("prev")}
               </Button>
-              <span>Side {page + 1}</span>
+              <span>{t("pageLabel", { n: page + 1 })}</span>
               <Button
                 variant="secondary"
                 size="sm"
                 disabled={!hasMore}
                 onClick={() => setPage((p) => p + 1)}
               >
-                Næste →
+                {t("next")}
               </Button>
             </div>
           )}

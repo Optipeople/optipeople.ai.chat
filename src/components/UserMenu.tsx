@@ -1,16 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Check,
   ChevronDown,
+  Globe,
   LogOut,
   Repeat,
   Settings,
   Wrench,
 } from "lucide-react";
 import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
+import { locales, type Locale } from "@/i18n/config";
+import { persistLocale } from "@/i18n/localeApi";
 import { cn } from "@/lib/utils";
 
 export function UserMenu() {
@@ -24,8 +29,13 @@ export function UserMenu() {
     machines,
     selectMachine,
   } = useAuth();
+  const t = useTranslations("userMenu");
+  const locale = useLocale() as Locale;
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [expanded, setExpanded] = useState<"account" | "machine" | null>(null);
+  const [expanded, setExpanded] = useState<
+    "account" | "machine" | "language" | null
+  >(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +67,13 @@ export function UserMenu() {
     user.name ??
     (user.email.includes("@") ? user.email.split("@")[0] : user.email);
 
+  async function handleSelectLocale(next: Locale) {
+    setOpen(false);
+    if (next === locale) return;
+    await persistLocale(next, user?.email ?? null);
+    router.refresh();
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -72,7 +89,7 @@ export function UserMenu() {
         )}
       >
         <span className="text-[14px] leading-[14px] text-[#eaeeee] whitespace-nowrap">
-          Welcome, {displayName}
+          {t("welcome", { name: displayName })}
         </span>
         <span
           aria-hidden
@@ -104,13 +121,13 @@ export function UserMenu() {
         >
           <div className="px-4 py-3">
             <p className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Logget ind som
+              {t("loggedInAs")}
             </p>
             <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
               {user.email}
             </p>
             <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Rolle
+              {t("role")}
             </p>
             <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
               {user.roleName ?? "—"}
@@ -118,7 +135,7 @@ export function UserMenu() {
             {currentAccount && (
               <>
                 <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                  Konto
+                  {t("account")}
                 </p>
                 <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
                   {currentAccount.name}
@@ -128,7 +145,7 @@ export function UserMenu() {
             {currentMachine && (
               <>
                 <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                  Maskine
+                  {t("machine")}
                 </p>
                 <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
                   {currentMachine.name}
@@ -149,7 +166,7 @@ export function UserMenu() {
                 )}
               >
                 <Settings className="h-4 w-4" />
-                Admin
+                {t("admin")}
               </Link>
               <div className="h-px bg-[var(--color-hairline)]" />
             </>
@@ -157,7 +174,7 @@ export function UserMenu() {
           {accounts.length > 1 && (
             <>
               <SwitcherSection
-                label="Skift konto"
+                label={t("switchAccount")}
                 icon={<Repeat className="h-4 w-4" />}
                 isOpen={expanded === "account"}
                 onToggle={() =>
@@ -180,7 +197,7 @@ export function UserMenu() {
           {machines.length > 1 && (
             <>
               <SwitcherSection
-                label="Skift maskine"
+                label={t("switchMachine")}
                 icon={<Wrench className="h-4 w-4" />}
                 isOpen={expanded === "machine"}
                 onToggle={() =>
@@ -200,6 +217,23 @@ export function UserMenu() {
               <div className="h-px bg-[var(--color-hairline)]" />
             </>
           )}
+          <SwitcherSection
+            label={t("language")}
+            icon={<Globe className="h-4 w-4" />}
+            isOpen={expanded === "language"}
+            onToggle={() =>
+              setExpanded((prev) => (prev === "language" ? null : "language"))
+            }
+            items={locales.map((l) => ({
+              id: l,
+              name: t(`languages.${l}`),
+              isCurrent: l === locale,
+            }))}
+            onSelect={(id) => {
+              void handleSelectLocale(id as Locale);
+            }}
+          />
+          <div className="h-px bg-[var(--color-hairline)]" />
           <button
             type="button"
             role="menuitem"
@@ -213,7 +247,7 @@ export function UserMenu() {
             )}
           >
             <LogOut className="h-4 w-4" />
-            Log ud
+            {t("logout")}
           </button>
         </div>
       )}

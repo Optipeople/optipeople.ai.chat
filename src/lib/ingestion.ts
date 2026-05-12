@@ -146,7 +146,7 @@ async function writeProgress(
 const INGEST_BUDGET_MS = 270_000;
 
 const TIMEOUT_LABEL =
-  "Tidsgrænse på 5 min nået — del PDF'en op i mindre filer eller kontakt support@optipeople.dk";
+  "5-minute time limit reached — split the PDF into smaller files or contact support@optipeople.dk";
 
 export class IngestTimeoutError extends Error {
   constructor() {
@@ -201,7 +201,7 @@ async function withIngestBudget<T>(
 // — single conditional UPDATE per machine.
 const STUCK_THRESHOLD_MS = 6 * 60_000;
 const STUCK_LABEL =
-  "Behandlingen blev afbrudt (server-genstart eller timeout). Prøv igen.";
+  "Processing was interrupted (server restart or timeout). Try again.";
 
 export async function cleanupStuckDocuments(machineId: string): Promise<void> {
   try {
@@ -298,7 +298,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     created_by: input.createdBy ?? "cli",
     folder_path: folderPath,
     progress: 5,
-    progress_label: "Læser PDF",
+    progress_label: "Reading PDF",
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 
@@ -306,7 +306,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     const extracted = await extractPdfText(input.fileBuffer, {
       onPhaseStart: async (phase) => {
         if (phase === "claude-ocr") {
-          await writeProgress(documentId, 10, "Kører OCR (Claude vision)…");
+          await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
         }
       },
     });
@@ -355,7 +355,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
       embedding_model: VOYAGE_MODEL,
     }));
 
-    await writeProgress(documentId, 95, "Indsætter chunks");
+    await writeProgress(documentId, 95, "Inserting chunks");
     const BATCH = 50;
     for (let i = 0; i < rows.length; i += BATCH) {
       const slice = rows.slice(i, i + BATCH);
@@ -473,7 +473,7 @@ export async function reprocessPdf(args: {
     .update({
       status: "extracting",
       progress: 5,
-      progress_label: "Læser PDF",
+      progress_label: "Reading PDF",
       updated_at: new Date().toISOString(),
     })
     .eq("id", row.id);
@@ -497,7 +497,7 @@ export async function reprocessPdf(args: {
       force: args.force,
       onPhaseStart: async (phase) => {
         if (phase === "claude-ocr") {
-          await writeProgress(row.id, 10, "Kører OCR (Claude vision)…");
+          await writeProgress(row.id, 10, "Running OCR (Claude vision)…");
         }
       },
     });
@@ -543,7 +543,7 @@ export async function reprocessPdf(args: {
       embedding: embeddings[i],
       embedding_model: VOYAGE_MODEL,
     }));
-    await writeProgress(row.id, 95, "Indsætter chunks");
+    await writeProgress(row.id, 95, "Inserting chunks");
     const BATCH = 50;
     for (let i = 0; i < rows.length; i += BATCH) {
       const slice = rows.slice(i, i + BATCH);

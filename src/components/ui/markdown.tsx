@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -313,7 +316,11 @@ export function Markdown({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={plugins} components={components}>
+      <ReactMarkdown
+        remarkPlugins={plugins}
+        components={components}
+        urlTransform={(url) => (url === CALL_SERVICE_HREF ? url : defaultUrlTransform(url))}
+      >
         {children}
       </ReactMarkdown>
     </div>

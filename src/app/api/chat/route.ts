@@ -1,5 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getTranslations } from "next-intl/server";
 import type {
+  ContentBlockParam,
+  ImageBlockParam,
+  Message,
   MessageParam,
   Tool,
   ToolResultBlockParam,
@@ -30,30 +34,65 @@ const MODEL = "claude-sonnet-4-6";
 // calls; this is a safety net against pathological loops.
 const MAX_TOOL_ITERATIONS = 6;
 
-const SYSTEM_PREAMBLE = `Du er OptiAI, en assistent for operatører af træindustri-maskiner (CNC, nesting, boring, osv.).
+// Transient upstream failures we retry inside the agent loop. The
+// SDK's built-in retries don't always cover overloaded_error mid-stream,
+// so we wrap each stream call with our own short backoff.
+const MAX_STREAM_RETRIES = 2;
 
-SPROG: Svar altid på dansk, uanset hvilket sprog manualen eller spørgsmålet er på. Hold tekniske termer, alarmkoder, knapnavne og menupunkter på originalsproget hvis det er sådan de står på maskinen (f.eks. **RESET**, **M06**, **Alarm 731**). Brug naturligt, hverdagsligt dansk — operatørerne står på fabriksgulvet, ikke i et kontor.
+function isTransientAnthropicError(err: unknown): boolean {
+  if (err instanceof Anthropic.APIConnectionError) return true;
+  if (err instanceof Anthropic.APIError) {
+    const status = err.status ?? 0;
+    if (status === 408 || status === 429 || status === 529) return true;
+    if (status >= 500 && status < 600) return true;
+    const type = (err as { error?: { error?: { type?: string } } }).error
+      ?.error?.type;
+    if (type === "overloaded_error") return true;
+  }
+  return false;
+}
 
-Din opgave: Hjælp operatører med at få hurtige, pålidelige svar fra deres maskinmanualer, så de ikke skal lede gennem hundredvis af sider eller vente i timevis på support.
+// Map Anthropic SDK errors to translation keys for the user-facing
+// message. Anything we don't recognize falls through to a generic
+// "aiError" so we never leak raw JSON payloads to operators.
+function anthropicErrorKey(err: unknown): string {
+  if (err instanceof Anthropic.APIConnectionError) return "aiUnavailable";
+  if (err instanceof Anthropic.APIError) {
+    const status = err.status ?? 0;
+    const type = (err as { error?: { error?: { type?: string } } }).error
+      ?.error?.type;
+    if (type === "overloaded_error" || status === 529) return "aiOverloaded";
+    if (status === 429) return "aiRateLimited";
+    if (status >= 500 && status < 600) return "aiUnavailable";
+  }
+  return "aiError";
+}
 
-Regler:
-- Brug **search_kb** værktøjet for at finde information i maskinens manualer FØR du svarer på tekniske spørgsmål. Formuler søgningen kort og specifikt — f.eks. "alarm 731 reset" eller "værktøjsskift procedure".
-- Forankr hvert svar i resultaterne fra search_kb. Hvis intet relevant findes, så sig det ligeud og foreslå hvad operatøren skal tjekke eller hvem de skal kontakte.
-- Svar kort og præcist. Operatører står ved maskinen — de vil have løsningen, ikke et foredrag.
-- Når du citerer, så nævn dokumentets titel som det fremgår i søgeresultatet.
-- Hvis spørgsmålet er tvetydigt, så stil ét opklarende spørgsmål før du søger eller gætter.
-- For sikkerhedskritiske procedurer (lockout/tagout, højspænding, osv.), så mind altid operatøren om at følge stedets sikkerhedsprocedurer.
+const SYSTEM_PREAMBLE = `You are OptiAI, an assistant for operators of wood-industry machines (CNC, nesting, drilling, etc.).
 
-Formatering (svar vises som Markdown):
-- Start med ét sætnings direkte svar. Ingen indledning som "Godt spørgsmål" eller gentagelse af spørgsmålet.
-- Brug nummererede lister til trinvise procedurer, punktopstillinger til muligheder eller tjek.
-- Fremhæv (bold) vigtige værdier, varenumre, alarmkoder og knap-/menunavne (f.eks. **Alarm 731**, **RESET**, **M06**).
-- Brug korte overskrifter (### Overskrift) kun når svaret har 2+ adskilte dele (f.eks. "Årsag", "Løsning", "Hvis det fortsætter"). Spring overskrifter over ved korte svar.
-- Brug inline \`code\` til parameternavne, filstier og eksakte værdier.
-- Hold afsnit på 1–3 linjer. Foretræk lister frem for prosa ved alt flertrins-indhold.
-- Skriv IKKE en *Kilde:* linje selv — kildelinks tilføjes automatisk under svaret når du har brugt search_kb. Du kan referere til manualens titel i prosa hvis det hjælper, men ingen footer-citat.
-- Pak aldrig hele svaret ind i en code block.
-- Når et søgeresultat har \`is_image: true\`, er det en figur/diagram. Nævn kort i prosa hvad figuren viser ("se diagrammet over værktøjsskift-sekvensen nedenfor"). Operatøren ser thumbnaillen automatisk under dit svar — du skal IKKE prøve at indlejre billedet selv.
+Your job: help operators get fast, reliable answers from their machine manuals so they don't have to dig through hundreds of pages or wait hours for support. Use plain, everyday language — operators stand on the factory floor, not in an office. Keep technical terms, alarm codes, button names and menu items in the language they appear on the machine itself (e.g. **RESET**, **M06**, **Alarm 731**).
+
+Rules:
+- Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
+- Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
+- Be brief and to the point. Operators are at the machine — they want the solution, not a lecture.
+- When you cite a source, refer to the document title as it appears in the search result.
+- If the question is ambiguous, ask one clarifying question before searching or guessing.
+- For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
+
+Formatting (answers render as Markdown):
+- Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
+- Use numbered lists for step-by-step procedures, bullet lists for options or checks.
+- Bold important values, part numbers, alarm codes, and button/menu names (e.g. **Alarm 731**, **RESET**, **M06**).
+- Use short headings (### Heading) only when the answer has 2+ distinct parts (e.g. "Cause", "Fix", "If it persists"). Skip headings for short answers.
+- Use inline \`code\` for parameter names, file paths, and exact values.
+- Keep paragraphs to 1–3 lines. Prefer lists over prose for any multi-step content.
+- Do NOT write a *Source:* line yourself — source links are appended automatically below your answer when you have used search_kb. You may refer to a manual's title in prose if it helps, but no footer citation.
+- Never wrap the entire answer in a code block.
+- When a search result has \`is_image: true\`, it is a figure/diagram. Mention briefly in prose what the figure shows ("see the diagram of the tool-change sequence below"). The operator sees the thumbnail automatically below your reply — do NOT try to embed the image yourself.
+- The operator may attach photos to their message (HMI panel, alarm screen, damaged part, …). Read them carefully — they are first-hand evidence of what is happening at the machine. Use them to disambiguate (e.g. read the alarm code off the screen) and search the manual based on what you see. If a photo is unclear, ask the operator for a specific detail instead of guessing.
+
+LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
 `;
 
 const TOOLS: Tool[] = [
@@ -80,7 +119,14 @@ const TOOLS: Tool[] = [
   },
 ];
 
-type ChatMessage = MessageParam;
+// Client wire shape. User messages can include attachmentIds pointing at
+// rows in conversation_attachments — we re-sign each one per request so
+// the URLs stay valid across the agentic loop.
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  attachmentIds?: string[];
+};
 
 type ChatRequest = {
   messages?: ChatMessage[];
@@ -94,15 +140,91 @@ type ChatRequest = {
   qrToken?: string | null;
 };
 
-// Helper: extract plain text from a user MessageParam. The client
-// always sends user content as a string, but defensively unpack a
-// content-block array too.
-function userMessageText(msg: MessageParam): string {
-  if (typeof msg.content === "string") return msg.content;
-  return msg.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .filter(Boolean)
-    .join("\n");
+// Hard cap matching the client-side limit. Attachments beyond this are
+// silently dropped to keep the prompt sane.
+const MAX_ATTACHMENTS_PER_MESSAGE = 4;
+const ATTACHMENT_SIGNED_URL_TTL = 600;
+
+// Resolve attachmentIds → signed-URL image blocks for the user turns
+// that have them. Bad/missing/cross-machine refs are skipped silently
+// so a stale id in the client doesn't blow up the whole turn.
+async function buildConversation(
+  messages: ChatMessage[],
+  machineId: string,
+): Promise<MessageParam[]> {
+  const supabase = getSupabaseServerClient();
+  const out: MessageParam[] = [];
+
+  // One-shot lookup of every referenced attachment so we don't do a
+  // round trip per image. Same machine_id scope as the linking step.
+  const ids = Array.from(
+    new Set(
+      messages
+        .filter((m) => m.role === "user" && Array.isArray(m.attachmentIds))
+        .flatMap((m) => m.attachmentIds!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)),
+    ),
+  );
+  type AttRow = {
+    id: string;
+    storage_path: string;
+    mime_type: string;
+    machine_id: string;
+  };
+  const rowsById = new Map<string, AttRow>();
+  if (ids.length > 0) {
+    const { data, error } = await supabase
+      .from("conversation_attachments")
+      .select("id, storage_path, mime_type, machine_id")
+      .in("id", ids);
+    if (error) {
+      console.error("attachment lookup failed:", error);
+    } else {
+      for (const r of (data ?? []) as AttRow[]) {
+        if (r.machine_id === machineId) rowsById.set(r.id, r);
+      }
+    }
+  }
+
+  for (const m of messages) {
+    if (m.role !== "user") {
+      out.push({ role: "assistant", content: m.content });
+      continue;
+    }
+    const refs = (m.attachmentIds ?? []).slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
+    if (refs.length === 0) {
+      out.push({ role: "user", content: m.content });
+      continue;
+    }
+    const blocks: ContentBlockParam[] = [];
+    if (m.content.trim()) {
+      blocks.push({ type: "text", text: m.content });
+    }
+    for (const id of refs) {
+      const row = rowsById.get(id);
+      if (!row) continue;
+      const { data: signed, error: signErr } = await supabase.storage
+        .from("chat-attachments")
+        .createSignedUrl(row.storage_path, ATTACHMENT_SIGNED_URL_TTL);
+      if (signErr || !signed) {
+        console.error("attachment signed url failed:", signErr);
+        continue;
+      }
+      const block: ImageBlockParam = {
+        type: "image",
+        source: { type: "url", url: signed.signedUrl },
+      };
+      blocks.push(block);
+    }
+    // If we somehow ended up with zero blocks (e.g. all sign URLs
+    // failed and no text), fall back to a placeholder so the API call
+    // doesn't reject the message.
+    if (blocks.length === 0) {
+      out.push({ role: "user", content: m.content || "(no content)" });
+    } else {
+      out.push({ role: "user", content: blocks });
+    }
+  }
+  return out;
 }
 
 type DocumentManifest = {
@@ -125,16 +247,16 @@ async function buildSystemPrompt(machineId: string): Promise<string> {
 
   const manifest =
     docs.length === 0
-      ? "Ingen manualer er tilgængelige for denne maskine endnu."
+      ? "No manuals are available for this machine yet."
       : docs
           .map(
             (d) =>
-              `- **${d.title}**${d.page_count ? ` (${d.page_count} sider)` : ""}: ${d.summary}`,
+              `- **${d.title}**${d.page_count ? ` (${d.page_count} pages)` : ""}: ${d.summary}`,
           )
           .join("\n");
 
   return `${SYSTEM_PREAMBLE}
-Tilgængelige dokumenter for denne maskine (brug search_kb til at finde indhold):
+Available documents for this machine (use search_kb to find content):
 ${manifest}
 `;
 }
@@ -356,6 +478,8 @@ async function executeTool(
 }
 
 export async function POST(req: Request) {
+  const t = await getTranslations("server");
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return Response.json(
       { error: "Server misconfigured: ANTHROPIC_API_KEY missing" },
@@ -367,7 +491,7 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as ChatRequest;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
   const userMessages = body.messages;
@@ -376,7 +500,7 @@ export async function POST(req: Request) {
 
   if (!Array.isArray(userMessages) || userMessages.length === 0) {
     return Response.json(
-      { error: "messages must be a non-empty array" },
+      { error: t("missingField", { field: "messages" }) },
       { status: 400 },
     );
   }
@@ -406,7 +530,7 @@ export async function POST(req: Request) {
     qrSession = await resolveQrToken(qrToken);
     if (!qrSession) {
       return Response.json(
-        { error: "Invalid or revoked QR token" },
+        { error: t("invalidQrToken") },
         { status: 401 },
       );
     }
@@ -423,7 +547,7 @@ export async function POST(req: Request) {
     entryMode = "qr";
   } else {
     return Response.json(
-      { error: "Missing or malformed Authorization header" },
+      { error: t("missingAuthHeader") },
       { status: 401 },
     );
   }
@@ -432,13 +556,13 @@ export async function POST(req: Request) {
   // have one; reject otherwise so we don't ingest orphan rows.
   if (!resolvedAccountId) {
     return Response.json(
-      { error: "accountId is required" },
+      { error: t("missingField", { field: "accountId" }) },
       { status: 400 },
     );
   }
   if (!resolvedMachineId) {
     return Response.json(
-      { error: "machineId is required" },
+      { error: t("missingField", { field: "machineId" }) },
       { status: 400 },
     );
   }
@@ -499,15 +623,48 @@ export async function POST(req: Request) {
         // history we already wrote on previous requests).
         const latestUser = userMessages[userMessages.length - 1];
         if (latestUser?.role === "user") {
-          const text = userMessageText(latestUser);
-          if (text.trim()) {
+          const text = latestUser.content ?? "";
+          if (text.trim() || (latestUser.attachmentIds?.length ?? 0) > 0) {
             await safe("appendUserMessage", () =>
               appendUserMessage(conversationId!, text),
             );
           }
         }
 
-        let conversation: MessageParam[] = userMessages;
+        // Link any attachments referenced by user turns to this
+        // conversation. Idempotent — already-linked rows are filtered out
+        // by the conversation_id IS NULL clause. Cross-machine refs are
+        // rejected to keep QR sessions strictly scoped.
+        const allAttachmentIds = Array.from(
+          new Set(
+            userMessages
+              .filter((m) => m.role === "user" && Array.isArray(m.attachmentIds))
+              .flatMap((m) => m.attachmentIds!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)),
+          ),
+        );
+        if (allAttachmentIds.length > 0) {
+          await safe("linkAttachments", async () => {
+            const supabase = getSupabaseServerClient();
+            await supabase
+              .from("conversation_attachments")
+              .update({ conversation_id: conversationId })
+              .in("id", allAttachmentIds)
+              .is("conversation_id", null)
+              .eq("machine_id", resolvedMachineId);
+          });
+        }
+
+        // Convert each ChatMessage into a MessageParam the SDK expects.
+        // For user messages with attachments we build a content-block
+        // array: one text block followed by one image block per
+        // attachment. Each image source is a freshly-signed URL — they
+        // expire after a few minutes, which is fine for the synchronous
+        // request lifetime but means we have to re-sign on every turn
+        // (handled here per request).
+        let conversation: MessageParam[] = await buildConversation(
+          userMessages,
+          resolvedMachineId,
+        );
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
         let lastStopReason: string | null = null;
         // Accumulate the best hit per document across all search_kb
@@ -520,23 +677,52 @@ export async function POST(req: Request) {
         const imageHits = new Map<string, ImageHit>();
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-          const s = anthropic.messages.stream({
-            model: MODEL,
-            max_tokens: 2048,
-            system: [
-              {
-                type: "text",
-                text: systemPrompt,
-                cache_control: { type: "ephemeral", ttl: "1h" },
-              },
-            ],
-            tools: TOOLS,
-            messages: conversation,
-          });
+          // Retry the stream on overloaded/5xx/connection errors. We
+          // only retry if no tokens have streamed yet — once the client
+          // has started rendering text we can't cleanly restart.
+          let final: Message | null = null;
+          for (let attempt = 0; ; attempt++) {
+            const s = anthropic.messages.stream({
+              model: MODEL,
+              max_tokens: 2048,
+              system: [
+                {
+                  type: "text",
+                  text: systemPrompt,
+                  cache_control: { type: "ephemeral", ttl: "1h" },
+                },
+              ],
+              tools: TOOLS,
+              messages: conversation,
+            });
 
-          s.on("text", (delta) => send("delta", { text: delta }));
+            let streamed = false;
+            s.on("text", (delta) => {
+              streamed = true;
+              send("delta", { text: delta });
+            });
 
-          const final = await s.finalMessage();
+            try {
+              final = await s.finalMessage();
+              break;
+            } catch (err) {
+              if (
+                !streamed &&
+                attempt < MAX_STREAM_RETRIES &&
+                isTransientAnthropicError(err)
+              ) {
+                const delay = 600 * 2 ** attempt + Math.floor(Math.random() * 250);
+                console.warn(
+                  `chat: transient Anthropic error (attempt ${attempt + 1}), retrying in ${delay}ms:`,
+                  err instanceof Error ? err.message : err,
+                );
+                await new Promise((r) => setTimeout(r, delay));
+                continue;
+              }
+              throw err;
+            }
+          }
+          if (!final) throw new Error("stream produced no final message");
           const usageIn = final.usage.input_tokens ?? 0;
           const usageOut = final.usage.output_tokens ?? 0;
           const cacheHit =
@@ -669,9 +855,17 @@ export async function POST(req: Request) {
         controller.close();
       } catch (err) {
         console.error("Chat error:", err);
-        send("error", {
-          message: err instanceof Error ? err.message : "Unknown error",
-        });
+        // For Anthropic API errors, surface a clean translated message
+        // rather than leaking the raw JSON payload to the operator.
+        const isAnthropic =
+          err instanceof Anthropic.APIError ||
+          err instanceof Anthropic.APIConnectionError;
+        const message = isAnthropic
+          ? t(anthropicErrorKey(err) as never)
+          : err instanceof Error
+            ? err.message
+            : "Unknown error";
+        send("error", { message });
         controller.close();
       }
     },

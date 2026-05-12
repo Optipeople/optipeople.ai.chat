@@ -191,17 +191,18 @@ export async function applyAutoOrganize(
   return { applied };
 }
 
-const SYSTEM_PROMPT = `Du klassificerer dokumenter til en operatør-vidensbase for træindustri-maskiner.
+const SYSTEM_PROMPT = `You classify documents for an operator knowledge base for wood-industry machines.
 
-Du får en liste af mapper og en liste af dokumenter (titel + kort beskrivelse). Du skal foreslå hvilken mappe hvert dokument bedst hører til.
+You receive a list of folders and a list of documents (title + short description). Suggest which folder each document best belongs to.
 
-Regler:
-- Vælg PRÆCIS én af de tilgængelige mapper, eller null hvis du ikke er sikker.
-- Sæt folder til null hvis dokumentet ikke klart passer i nogen mappe — det er bedre at lade et dokument ligge end at gætte.
-- Et dokument der dækker flere områder placeres i den mest specifikke mappe (alarmer → Fejlfinding, ikke Drift).
-- Vedligeholdsplaner → Vedligehold. Alarmkoder/fejlsøgning → Fejlfinding. Sikkerhedsblade/CE → Sikkerhed. Reservedelslister/datablade → Reservedele.
+Rules:
+- Pick EXACTLY one of the available folders, or null if you are not sure.
+- Set folder to null if the document does not clearly fit any folder — it is better to leave a document alone than to guess.
+- A document that covers several areas goes in the most specific folder (alarms → Fejlfinding, not Drift).
+- Maintenance plans → Vedligehold. Alarm codes / troubleshooting → Fejlfinding. Safety data sheets / CE → Sikkerhed. Spare-parts lists / datasheets → Reservedele.
+- The folder names ("Opsætning", "Drift", "Vedligehold", "Fejlfinding", "Sikkerhed", "Reservedele") are fixed identifiers — use them verbatim regardless of the document language.
 
-Returnér PRÆCIS et JSON-array med ét objekt per dokument: [{"id": "...", "folder": "Vedligehold"}, ...]. Intet andet — ingen forklaring, ingen markdown, kun arrayet.`;
+Return EXACTLY a JSON array with one object per document: [{"id": "...", "folder": "Vedligehold"}, ...]. Nothing else — no explanation, no markdown, just the array.`;
 
 type Assignment = { id: string; folder: string | null };
 
@@ -214,19 +215,19 @@ async function classifyWithClaude(
 
   const docList = candidates
     .map((c) => {
-      const current = c.currentFolder ? c.currentFolder : "rod";
-      return `(id=${c.id}) "${truncate(c.title, 160)}" — ${truncate(c.summary, 300)} [nuværende: ${current}]`;
+      const current = c.currentFolder ? c.currentFolder : "root";
+      return `(id=${c.id}) "${truncate(c.title, 160)}" — ${truncate(c.summary, 300)} [current: ${current}]`;
     })
     .join("\n");
 
   const userPrompt = [
-    "Tilgængelige mapper:",
+    "Available folders:",
     folderList,
     "",
-    `Dokumenter at klassificere (${candidates.length}):`,
+    `Documents to classify (${candidates.length}):`,
     docList,
     "",
-    "Returnér JSON-arrayet nu.",
+    "Return the JSON array now.",
   ].join("\n");
 
   const anthropic = new Anthropic();

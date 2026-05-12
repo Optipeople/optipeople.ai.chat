@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, ExternalLink, Loader2, Wrench } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
@@ -17,21 +18,22 @@ const DA_DT = new Intl.DateTimeFormat("da-DK", {
 
 const PER_PAGE = 25;
 
-const CHANNEL_LABEL: Record<AdminEscalationListItem["channel"], string> = {
-  phone: "Telefon",
-  email: "E-mail",
-  service_ticket: "Service-ticket",
-  webhook: "Webhook",
-};
-
 const CHANNEL_VARIANT: Record<AdminEscalationListItem["channel"], TagVariant> = {
-  phone: "default",
+  sms: "default",
   email: "default",
   service_ticket: "warning",
   webhook: "positive",
 };
 
 export function EscalationsList({ machineId }: { machineId: string }) {
+  const t = useTranslations("admin.escalations");
+  const tc = useTranslations("common");
+  const CHANNEL_LABEL: Record<AdminEscalationListItem["channel"], string> = {
+    sms: t("channelSms"),
+    email: t("channelEmail"),
+    service_ticket: t("channelServiceTicket"),
+    webhook: t("channelWebhook"),
+  };
   const [items, setItems] = useState<AdminEscalationListItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -49,7 +51,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
         setLoading(false);
       });
     return () => {
@@ -64,17 +66,15 @@ export function EscalationsList({ machineId }: { machineId: string }) {
         className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Tilbage til maskine
+        {t("back")}
       </Link>
 
       <div>
         <h1 className="text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
-          Eskaleringer
+          {t("heading")}
         </h1>
         <p className="mt-1 text-[14px] text-[var(--color-muted-foreground)]">
-          Audit af alle service-tilkald for denne maskine. Klik på en
-          række for at se den fulde samtale, eller åbn tekniker-linket
-          for at se det samme som modtageren.
+          {t("description")}
         </p>
       </div>
 
@@ -88,7 +88,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          Ingen eskaleringer endnu for denne maskine.
+          {t("empty")}
         </div>
       ) : (
         <>
@@ -96,12 +96,12 @@ export function EscalationsList({ machineId }: { machineId: string }) {
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Tidspunkt</th>
-                  <th className="px-4 py-3 font-medium">Kanal</th>
-                  <th className="px-4 py-3 font-medium">Modtager</th>
-                  <th className="px-4 py-3 font-medium">Operatør</th>
-                  <th className="px-4 py-3 font-medium">Beskrivelse</th>
-                  <th className="px-4 py-3 font-medium">Tekniker-link</th>
+                  <th className="px-4 py-3 font-medium">{t("colTime")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colChannel")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colRecipient")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colOperator")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colDescription")}</th>
+                  <th className="px-4 py-3 font-medium">{t("colTechnicianLink")}</th>
                   <th className="w-10 px-4 py-3"></th>
                 </tr>
               </thead>
@@ -145,7 +145,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                           onClick={(ev) => ev.stopPropagation()}
                           className="inline-flex items-center gap-1 text-[13px] text-amber-800 underline hover:text-amber-900"
                         >
-                          Åbn
+                          {t("open")}
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
@@ -171,16 +171,16 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
-                ← Forrige
+                {t("prev")}
               </Button>
-              <span>Side {page + 1}</span>
+              <span>{t("pageLabel", { n: page + 1 })}</span>
               <Button
                 variant="secondary"
                 size="sm"
                 disabled={!hasMore}
                 onClick={() => setPage((p) => p + 1)}
               >
-                Næste →
+                {t("next")}
               </Button>
             </div>
           )}

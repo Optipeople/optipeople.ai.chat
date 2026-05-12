@@ -16,16 +16,16 @@ const MODEL = "claude-haiku-4-5-20251001";
 const TARGET_COUNT = 3;
 const MAX_DOC_SUMMARIES = 30;
 
-const SYSTEM_PROMPT = `Du genererer korte starter-spørgsmål til en chat-assistent for operatører af træindustri-maskiner.
+const SYSTEM_PROMPT = `You generate short starter questions for a chat assistant used by operators of wood-industry machines.
 
-Operatøren står ved maskinen og vil have hurtige, konkrete svar fra manualen. Dine spørgsmål skal være:
-- På dansk, hverdagsligt sprog (operatørerne står på fabriksgulvet).
-- Korte — maksimalt 8 ord hver.
-- Konkrete og forskellige — undgå overlap. Dæk forskellige områder: alarmer, procedurer, vedligehold, indstillinger, fejlfinding.
-- Forankret i maskinens faktiske manual-indhold. Hvis manualen nævner en specifik alarmkode, knap eller komponent, så brug den.
-- Tekniske termer, alarmkoder og knapnavne forbliver på originalsproget (f.eks. "Alarm 731", "M06", "RESET").
+The operator is at the machine and wants fast, concrete answers from the manual. Your questions must be:
+- Written in the same language the manuals are written in (detect the language from the document summaries below). Use plain, everyday phrasing — operators stand on the factory floor.
+- Short — at most 8 words each.
+- Concrete and different — avoid overlap. Cover different areas: alarms, procedures, maintenance, settings, troubleshooting.
+- Grounded in the machine's actual manual content. Use ONLY alarm codes, button names, or components that explicitly appear in the manual extracts below — never invent codes or names.
+- Technical terms, alarm codes, and button names stay in the original language as they appear in the manual.
 
-Du skal returnere PRÆCIS ${TARGET_COUNT} spørgsmål som et JSON-array af strenge. Intet andet — ingen forklaring, ingen markdown, kun arrayet.`;
+Return EXACTLY ${TARGET_COUNT} questions as a JSON array of strings. Nothing else — no explanation, no markdown, just the array.`;
 
 type DocSummaryRow = {
   title: string | null;
@@ -70,22 +70,22 @@ export async function regenerateSuggestedQuestions(
 
   const corpus = ready
     .map((d, i) => {
-      const title = d.title?.trim() || `Dokument ${i + 1}`;
-      const summary = d.summary?.trim() || "(ingen beskrivelse)";
+      const title = d.title?.trim() || `Document ${i + 1}`;
+      const summary = d.summary?.trim() || "(no description)";
       return `[${i + 1}] ${title}\n${summary}`;
     })
     .join("\n\n");
 
   const userPrompt = [
     machineName
-      ? `Maskinens navn: ${machineName}`
-      : "Maskinens navn er ikke angivet.",
+      ? `Machine name: ${machineName}`
+      : "Machine name is not provided.",
     "",
-    `Maskinens manualer (${ready.length} dokumenter):`,
+    `Machine manuals (${ready.length} documents):`,
     "",
     corpus,
     "",
-    `Generér ${TARGET_COUNT} korte starter-spørgsmål som JSON-array.`,
+    `Generate ${TARGET_COUNT} short starter questions as a JSON array.`,
   ].join("\n");
 
   const anthropic = new Anthropic();

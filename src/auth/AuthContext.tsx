@@ -22,6 +22,7 @@ import {
   type Machine,
 } from "./machinesApi";
 import { getRegisteredSets } from "./registeredApi";
+import { fetchStoredLocale, persistLocale } from "@/i18n/localeApi";
 import {
   clearCurrentAccount,
   clearCurrentMachine,
@@ -82,6 +83,21 @@ export type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+async function applyStoredLocale(email: string): Promise<void> {
+  try {
+    const stored = await fetchStoredLocale(email);
+    if (!stored) return;
+    await persistLocale(stored, email);
+    // Re-render with the new cookie. Done at the document level since
+    // AuthContext doesn't have access to next/navigation router here
+    // without becoming server-coupled, and a full reload is fine
+    // immediately after a fresh login.
+    if (typeof window !== "undefined") window.location.reload();
+  } catch {
+    // ignore — user keeps the default locale
+  }
+}
 
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
@@ -303,12 +319,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoginError(null);
       try {
         const res = await apiLogin(email, password);
+        const resolvedEmail = res.user_name ?? email;
         setUser({
-          email: res.user_name ?? email,
+          email: resolvedEmail,
           name: null,
           roleName: null,
           permissionName: null,
         });
+        // Apply the user's stored language preference before the rest of
+        // the app re-renders. Best-effort: if the lookup fails we leave
+        // the existing cookie alone.
+        void applyStoredLocale(resolvedEmail);
         await Promise.all([reloadAccounts(), refreshRole()]);
       } catch (err) {
         setLoginError(err instanceof Error ? err.message : "Login failed");

@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2, Pencil, Phone, Trash2, Wrench, X } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  MessageSquare,
+  Pencil,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tag } from "@/components/ui/tag";
@@ -13,18 +22,12 @@ import {
   saveAdminEscalationTarget,
   type AdminEscalationTarget,
 } from "@/admin/adminApi";
+import { getAccounts } from "@/auth/accountsApi";
 
 type Channel = AdminEscalationTarget["channel"];
 
-const CHANNEL_LABEL: Record<Channel, string> = {
-  phone: "Telefon",
-  email: "E-mail",
-  service_ticket: "Service-ticket (URL)",
-  webhook: "Webhook (HTTPS POST)",
-};
-
 const CHANNEL_PLACEHOLDER: Record<Channel, string> = {
-  phone: "+45 12 34 56 78",
+  sms: "+4512345678",
   email: "service@leverandør.dk",
   service_ticket: "https://leverandør.dk/ticket/new",
   webhook: "https://api.helpdesk.dk/optipeople/escalate",
@@ -36,13 +39,16 @@ function formatTarget(t: AdminEscalationTarget): string {
 
 export function MachineEscalationCard({
   accountId,
-  accountLabel,
 }: {
   accountId: string;
-  // Display-friendly label for "this account is shared between machines".
-  // Falls back to accountId if the caller hasn't resolved it.
-  accountLabel?: string | null;
 }) {
+  const t = useTranslations("admin.machineEscalation");
+  const CHANNEL_LABEL: Record<Channel, string> = {
+    sms: t("channels.sms"),
+    email: t("channels.email"),
+    service_ticket: t("channels.service_ticket"),
+    webhook: t("channels.webhook"),
+  };
   const confirm = useConfirm();
   const [target, setTarget] = useState<AdminEscalationTarget | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +56,11 @@ export function MachineEscalationCard({
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Optipeople-registered account name. Best-effort; falls back to the
+  // account id in the few UI strings that need a display label. Operator-
+  // role admins can hit getAccounts but the network may also fail, in
+  // which case we silently degrade.
+  const [accountName, setAccountName] = useState<string | null>(null);
 
   const [channel, setChannel] = useState<Channel>("email");
   const [targetInput, setTargetInput] = useState("");
@@ -70,8 +81,23 @@ export function MachineEscalationCard({
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setErr(e instanceof Error ? e.message : "Kunne ikke hente");
+        setErr(e instanceof Error ? e.message : t("fetchFailed"));
         setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAccounts()
+      .then((accounts) => {
+        if (cancelled) return;
+        setAccountName(accounts.find((a) => a.id === accountId)?.name ?? null);
+      })
+      .catch(() => {
+        // Silent — UI degrades to the account id where a name is needed.
       });
     return () => {
       cancelled = true;
@@ -101,7 +127,7 @@ export function MachineEscalationCard({
   async function save() {
     const trimmed = targetInput.trim();
     if (!trimmed) {
-      setErr("Target må ikke være tom");
+      setErr(t("targetRequired"));
       return;
     }
     setSaving(true);
@@ -115,7 +141,7 @@ export function MachineEscalationCard({
       setTarget(saved);
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setSaving(false);
     }
@@ -124,10 +150,9 @@ export function MachineEscalationCard({
   async function remove() {
     if (!target) return;
     const ok = await confirm({
-      title: "Fjern service-target?",
-      description:
-        "Operatører kan ikke længere bruge 'Tilkald service'-knappen før der konfigureres en ny target. Tidligere escalations påvirkes ikke.",
-      confirmLabel: "Fjern",
+      title: t("removeConfirmTitle"),
+      description: t("removeConfirmBody"),
+      confirmLabel: t("removeConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -138,7 +163,7 @@ export function MachineEscalationCard({
       setTarget(null);
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setRemoving(false);
     }
@@ -151,72 +176,19 @@ export function MachineEscalationCard({
           <div className="flex items-center gap-2">
             <Wrench className="h-5 w-5 text-[var(--color-foreground)]" />
             <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
-              Service-eskalering
+              {t("heading")}
             </h2>
           </div>
           <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-            Når operatøren trykker &laquo;Tilkald service&raquo; sendes en
-            besked til denne kontakt med et midlertidigt link til samtalen.
+            {t("description")}
             <span className="mt-1 block">
-              Indstillingen deles på tværs af alle maskiner under{" "}
+              {t("sharedAcrossPrefix")}{" "}
               <span className="font-medium text-[var(--color-foreground)]">
-                {accountLabel ?? accountId}
+                {accountName ?? accountId}
               </span>
               .
             </span>
           </p>
-
-          {loading ? (
-            <div className="mt-4 flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Henter…
-            </div>
-          ) : editing ? (
-            <EditForm
-              channel={channel}
-              setChannel={setChannel}
-              targetInput={targetInput}
-              setTargetInput={setTargetInput}
-              labelInput={labelInput}
-              setLabelInput={setLabelInput}
-              saving={saving}
-              onSave={save}
-              onCancel={cancelEdit}
-            />
-          ) : target ? (
-            <div className="mt-4 flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <Tag variant="positive" size="small">
-                  Aktiv
-                </Tag>
-                <span className="text-[12px] text-[var(--color-muted-foreground)]">
-                  {CHANNEL_LABEL[target.channel]}
-                </span>
-              </div>
-              <p className="font-mono text-[14px] text-[var(--color-foreground)]">
-                {formatTarget(target)}
-              </p>
-              {target.updatedBy && (
-                <p className="text-[12px] text-[var(--color-muted-foreground)]">
-                  Sidst opdateret af {target.updatedBy}
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="mt-4">
-              <Tag variant="default" size="small">
-                Ikke konfigureret
-              </Tag>
-              <p className="mt-2 text-[13px] text-[var(--color-muted-foreground)]">
-                Operatører ser knappen, men får en hint om at bede admin
-                konfigurere kontakten først.
-              </p>
-            </div>
-          )}
-
-          {err && (
-            <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
-          )}
         </div>
 
         {!editing && !loading && (
@@ -228,7 +200,7 @@ export function MachineEscalationCard({
               disabled={saving}
             >
               <Pencil className="mr-1.5 h-4 w-4" />
-              {target ? "Redigér" : "Konfigurér"}
+              {target ? t("edit") : t("configure")}
             </Button>
             {target && (
               <Button
@@ -242,12 +214,64 @@ export function MachineEscalationCard({
                 ) : (
                   <Trash2 className="mr-1.5 h-4 w-4" />
                 )}
-                Fjern
+                {t("remove")}
               </Button>
             )}
           </div>
         )}
       </div>
+
+      {loading ? (
+        <div className="mt-4 flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {t("loading")}
+        </div>
+      ) : editing ? (
+        <EditForm
+          channel={channel}
+          setChannel={setChannel}
+          targetInput={targetInput}
+          setTargetInput={setTargetInput}
+          labelInput={labelInput}
+          setLabelInput={setLabelInput}
+          accountName={accountName}
+          saving={saving}
+          onSave={save}
+          onCancel={cancelEdit}
+        />
+      ) : target ? (
+        <div className="mt-4 flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <Tag variant="positive" size="small">
+              {t("active")}
+            </Tag>
+            <span className="text-[12px] text-[var(--color-muted-foreground)]">
+              {CHANNEL_LABEL[target.channel]}
+            </span>
+          </div>
+          <p className="font-mono text-[14px] text-[var(--color-foreground)]">
+            {formatTarget(target)}
+          </p>
+          {target.updatedBy && (
+            <p className="text-[12px] text-[var(--color-muted-foreground)]">
+              {t("lastUpdatedBy", { by: target.updatedBy })}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4">
+          <Tag variant="default" size="small">
+            {t("notConfigured")}
+          </Tag>
+          <p className="mt-2 text-[13px] text-[var(--color-muted-foreground)]">
+            {t("notConfiguredHint")}
+          </p>
+        </div>
+      )}
+
+      {err && (
+        <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
+      )}
     </section>
   );
 }
@@ -259,6 +283,7 @@ function EditForm({
   setTargetInput,
   labelInput,
   setLabelInput,
+  accountName,
   saving,
   onSave,
   onCancel,
@@ -269,23 +294,31 @@ function EditForm({
   setTargetInput: (v: string) => void;
   labelInput: string;
   setLabelInput: (v: string) => void;
+  accountName: string | null;
   saving: boolean;
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations("admin.machineEscalation");
+  const CHANNEL_LABEL: Record<Channel, string> = {
+    sms: t("channels.sms"),
+    email: t("channels.email"),
+    service_ticket: t("channels.service_ticket"),
+    webhook: t("channels.webhook"),
+  };
   const targetLabel =
-    channel === "phone"
-      ? "Telefonnummer"
+    channel === "sms"
+      ? t("targetSms")
       : channel === "email"
-        ? "E-mail-adresse"
+        ? t("targetEmail")
         : channel === "webhook"
-          ? "Webhook-URL"
-          : "URL til ticket-system";
+          ? t("targetWebhook")
+          : t("targetServiceTicket");
 
   return (
     <div className="mt-4 flex flex-col gap-3">
       <label className="block text-[14px] leading-[21px] text-[var(--ds-grey-medium-04)]">
-        Kanal
+        {t("channelLabel")}
         <select
           value={channel}
           onChange={(e) => setChannel(e.target.value as Channel)}
@@ -297,7 +330,7 @@ function EditForm({
             "disabled:bg-[var(--ds-bg-disabled)] disabled:cursor-not-allowed",
           )}
         >
-          <option value="phone">{CHANNEL_LABEL.phone}</option>
+          <option value="sms">{CHANNEL_LABEL.sms}</option>
           <option value="email">{CHANNEL_LABEL.email}</option>
           <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
           <option value="webhook">{CHANNEL_LABEL.webhook}</option>
@@ -310,7 +343,7 @@ function EditForm({
         placeholder={CHANNEL_PLACEHOLDER[channel]}
         disabled={saving}
         inputMode={
-          channel === "phone"
+          channel === "sms"
             ? "tel"
             : channel === "email"
               ? "email"
@@ -320,10 +353,14 @@ function EditForm({
       />
 
       <TextField
-        label="Etiket (valgfrit — vises operatøren)"
+        label={t("labelLabel")}
         value={labelInput}
         onChange={(e) => setLabelInput(e.target.value)}
-        placeholder="F.eks. Felder service-hotline"
+        placeholder={
+          accountName
+            ? t("labelPlaceholderForAccount", { account: accountName })
+            : t("labelPlaceholderDefault")
+        }
         disabled={saving}
       />
 
@@ -335,7 +372,7 @@ function EditForm({
           disabled={saving}
         >
           <X className="mr-1.5 h-4 w-4" />
-          Annullér
+          {t("cancel")}
         </Button>
         <Button
           size="sm"
@@ -344,12 +381,12 @@ function EditForm({
         >
           {saving ? (
             <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-          ) : channel === "phone" ? (
-            <Phone className="mr-1.5 h-4 w-4" />
+          ) : channel === "sms" ? (
+            <MessageSquare className="mr-1.5 h-4 w-4" />
           ) : (
             <Check className="mr-1.5 h-4 w-4" />
           )}
-          Gem
+          {t("save")}
         </Button>
       </div>
     </div>

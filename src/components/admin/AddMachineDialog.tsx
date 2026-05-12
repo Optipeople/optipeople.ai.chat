@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
@@ -21,6 +22,7 @@ export function AddMachineDialog({
   onClose: () => void;
   onCreated: () => Promise<void> | void;
 }) {
+  const t = useTranslations("admin.addMachine");
   // Step 1: accounts loaded once on mount.
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [accountsErr, setAccountsErr] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function AddMachineDialog({
       .catch((err: unknown) => {
         if (!cancelled) {
           setAccountsErr(
-            err instanceof Error ? err.message : "Kunne ikke hente konti",
+            err instanceof Error ? err.message : t("accountsFetchFailed"),
           );
           setAccounts([]);
         }
@@ -79,7 +81,7 @@ export function AddMachineDialog({
       .catch((err: unknown) => {
         if (!cancelled) {
           setMachinesErr(
-            err instanceof Error ? err.message : "Kunne ikke hente maskiner",
+            err instanceof Error ? err.message : t("machinesFetchFailed"),
           );
           setMachines([]);
         }
@@ -126,7 +128,7 @@ export function AddMachineDialog({
       await onCreated();
       onClose();
     } catch (err) {
-      setSubmitErr(err instanceof Error ? err.message : "Kunne ikke oprette");
+      setSubmitErr(err instanceof Error ? err.message : t("submitFailed"));
       setSubmitting(false);
     }
   }
@@ -135,7 +137,7 @@ export function AddMachineDialog({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Tilføj maskine"
+      aria-label={t("dialogAria")}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();
@@ -145,18 +147,17 @@ export function AddMachineDialog({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
-              Tilføj maskine
+              {t("heading")}
             </h2>
             <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-              Vælg først en konto, derefter en maskine. Vi opretter en tom
-              vidensbase som du kan fylde med manualer bagefter.
+              {t("description")}
             </p>
           </div>
           <button
             type="button"
             onClick={() => !submitting && onClose()}
             disabled={submitting}
-            aria-label="Luk"
+            aria-label={t("closeAria")}
             className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
           >
             <X className="h-4 w-4" />
@@ -164,10 +165,12 @@ export function AddMachineDialog({
         </div>
 
         <Combobox
-          label="Konto"
+          label={t("accountLabel")}
           placeholder={
-            accounts === null ? "Henter konti…" : "Søg konto…"
+            accounts === null ? t("accountsLoading") : t("accountsPlaceholder")
           }
+          noMatchLabel={t("noMatch")}
+          clearAriaLabel={t("clearAria")}
           loading={accounts === null}
           loadErr={accountsErr}
           options={accounts ?? []}
@@ -181,21 +184,23 @@ export function AddMachineDialog({
         />
 
         <Combobox
-          label="Maskine"
+          label={t("machineLabel")}
           placeholder={
             !account
-              ? "Vælg konto først"
+              ? t("machinePickAccountFirst")
               : machines === null
-                ? "Henter maskiner…"
-                : "Søg maskine…"
+                ? t("machinesLoading")
+                : t("machinesPlaceholder")
           }
+          noMatchLabel={t("noMatch")}
+          clearAriaLabel={t("clearAria")}
           loading={!!account && machines === null}
           loadErr={machinesErr}
           options={machines ?? []}
           getKey={(m) => m.id}
           getLabel={(m) => m.name}
           getSubLabel={(m) =>
-            existingMachineIds.has(m.id) ? "Allerede oprettet" : null
+            existingMachineIds.has(m.id) ? t("alreadyCreated") : null
           }
           isDisabledOption={(m) => existingMachineIds.has(m.id)}
           selected={machine}
@@ -204,10 +209,10 @@ export function AddMachineDialog({
         />
 
         <TextField
-          label="Visningsnavn"
+          label={t("displayNameLabel")}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Bruges i admin og chat-overskrifter"
+          placeholder={t("displayNamePlaceholder")}
           disabled={!machine || submitting}
         />
 
@@ -222,7 +227,7 @@ export function AddMachineDialog({
             onClick={() => !submitting && onClose()}
             disabled={submitting}
           >
-            Annullér
+            {t("cancel")}
           </Button>
           <Button
             size="sm"
@@ -234,7 +239,7 @@ export function AddMachineDialog({
             ) : (
               <Check className="mr-1.5 h-4 w-4" />
             )}
-            Opret vidensbase
+            {t("submit")}
           </Button>
         </div>
       </div>
@@ -258,6 +263,8 @@ function Combobox<T>({
   selected,
   onSelect,
   disabled,
+  noMatchLabel,
+  clearAriaLabel,
 }: {
   label: string;
   placeholder: string;
@@ -271,6 +278,8 @@ function Combobox<T>({
   selected: T | null;
   onSelect: (item: T) => void;
   disabled: boolean;
+  noMatchLabel: string;
+  clearAriaLabel: string;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -344,7 +353,7 @@ function Combobox<T>({
           <button
             type="button"
             onClick={clear}
-            aria-label="Ryd valg"
+            aria-label={clearAriaLabel}
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
           >
             <X className="h-3.5 w-3.5" />
@@ -358,7 +367,7 @@ function Combobox<T>({
         <div className="absolute z-10 mt-1 max-h-72 w-full overflow-auto rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-lg">
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[13px] text-[var(--color-muted-foreground)]">
-              {loadErr ?? "Ingen match"}
+              {loadErr ?? noMatchLabel}
             </div>
           ) : (
             filtered.map((o) => {

@@ -7,6 +7,7 @@
 
 import { notFound } from "next/navigation";
 import { Wrench } from "lucide-react";
+import { getLocale, getTranslations } from "next-intl/server";
 import { Markdown } from "@/components/ui/markdown";
 import { OptipeopleLogo } from "@/components/logo";
 import type {
@@ -18,21 +19,9 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DA_DT = new Intl.DateTimeFormat("da-DK", {
-  dateStyle: "long",
-  timeStyle: "short",
-});
-
-const TIME = new Intl.DateTimeFormat("da-DK", {
-  timeStyle: "short",
-});
-
-const CHANNEL_LABEL: Record<EscalationChannel, string> = {
-  phone: "Telefon",
-  email: "E-mail",
-  service_ticket: "Service-ticket",
-  webhook: "Webhook",
-};
+function localeTag(locale: string): string {
+  return locale === "da" ? "da-DK" : "en-US";
+}
 
 type EscalationRow = {
   id: string;
@@ -82,9 +71,18 @@ export default async function EscalationPage({
   if (!result.context_blob) notFound();
 
   const snapshot = result.context_blob;
+  const t = await getTranslations("escalationPage");
+  const locale = await getLocale();
+  const tag = localeTag(locale);
+  const dt = new Intl.DateTimeFormat(tag, {
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+  const time = new Intl.DateTimeFormat(tag, { timeStyle: "short" });
+  const channelLabel = t(`channels.${result.channel}`);
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <div className="flex min-h-screen flex-col bg-[var(--color-background)]">
       <header
         className="sticky top-0 z-10 border-b border-[var(--color-hairline)]"
         style={{ backgroundColor: "var(--color-brand)" }}
@@ -92,29 +90,33 @@ export default async function EscalationPage({
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-6 py-3">
           <OptipeopleLogo
             className="h-7 w-auto text-white"
-            aria-label="Optipeople"
+            aria-label={t("logoLabel")}
           />
           <div className="flex items-center gap-2 text-[13px] font-medium text-white/90">
             <Wrench className="h-4 w-4" />
-            Service-anmodning
+            {t("serviceRequest")}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-8">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-8">
         <section className="rounded-[var(--radius)] border border-amber-200 bg-amber-50 p-5">
           <h1 className="text-[20px] font-semibold tracking-tight text-amber-900">
-            {snapshot.machineName ?? "Ukendt maskine"}
+            {snapshot.machineName ?? t("unknownMachine")}
           </h1>
           <p className="mt-1 text-[13px] text-amber-900/80">
-            Tilkaldt {DA_DT.format(new Date(result.created_at))} — sendt til{" "}
-            {CHANNEL_LABEL[result.channel]}{" "}
-            <span className="font-mono">{result.target}</span>
+            {t.rich("calledAt", {
+              date: dt.format(new Date(result.created_at)),
+              channel: channelLabel,
+              target: () => (
+                <span className="font-mono">{result.target}</span>
+              ),
+            })}
           </p>
           {result.note && (
             <div className="mt-4 rounded-[var(--radius)] border border-amber-200 bg-white p-3 text-[14px]">
               <p className="text-[12px] font-medium uppercase tracking-wide text-amber-800">
-                Operatørens beskrivelse
+                {t("operatorDescription")}
               </p>
               <p className="mt-1 whitespace-pre-wrap text-[var(--color-foreground)]">
                 {result.note}
@@ -126,7 +128,7 @@ export default async function EscalationPage({
         <section className="mt-6 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-5">
           <dl className="grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-3">
             <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Operatør</dt>
+              <dt className="text-[var(--color-muted-foreground)]">{t("operator")}</dt>
               <dd className="text-[var(--color-foreground)]">
                 {snapshot.operator.name ?? snapshot.operator.email ?? "—"}
                 {snapshot.operator.name && snapshot.operator.email && (
@@ -138,14 +140,14 @@ export default async function EscalationPage({
             </div>
             <div className="flex gap-2">
               <dt className="text-[var(--color-muted-foreground)]">
-                Samtalen startet
+                {t("conversationStarted")}
               </dt>
               <dd className="text-[var(--color-foreground)]">
-                {DA_DT.format(new Date(snapshot.startedAt))}
+                {dt.format(new Date(snapshot.startedAt))}
               </dd>
             </div>
             <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Beskeder</dt>
+              <dt className="text-[var(--color-muted-foreground)]">{t("messages")}</dt>
               <dd className="text-[var(--color-foreground)]">
                 {snapshot.messages.length}
               </dd>
@@ -155,41 +157,55 @@ export default async function EscalationPage({
 
         <section className="mt-6 flex flex-col gap-4">
           <h2 className="text-[14px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            Samtale
+            {t("conversation")}
           </h2>
           {snapshot.messages.length === 0 ? (
             <p className="text-[14px] italic text-[var(--color-muted-foreground)]">
-              Ingen beskeder i samtalen.
+              {t("noMessages")}
             </p>
           ) : (
             snapshot.messages.map((m, i) => (
-              <TranscriptRow key={i} message={m} />
+              <TranscriptRow
+                key={i}
+                message={m}
+                time={time.format(new Date(m.createdAt))}
+                operatorLabel={t("operatorRoleLabel")}
+              />
             ))
           )}
         </section>
 
         {result.expires_at && (
           <p className="mt-8 text-center text-[12px] text-[var(--color-muted-foreground)]">
-            Linket udløber {DA_DT.format(new Date(result.expires_at))}.
+            {t("linkExpiresAt", { date: dt.format(new Date(result.expires_at)) })}
           </p>
         )}
       </main>
+
+      <div className="brand-stripe" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </div>
     </div>
   );
 }
 
 function TranscriptRow({
   message,
+  time,
+  operatorLabel,
 }: {
   message: EscalationSnapshot["messages"][number];
+  time: string;
+  operatorLabel: string;
 }) {
-  const time = TIME.format(new Date(message.createdAt));
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
         <div className="flex max-w-[80%] flex-col items-end gap-1">
           <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            Operatør · {time}
+            {operatorLabel} · {time}
           </span>
           <div
             className="rounded-[var(--radius-lg)] rounded-br-[10px] px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-[var(--shadow-sm)]"
@@ -216,18 +232,26 @@ function TranscriptRow({
   );
 }
 
-function ExpiredView() {
+async function ExpiredView() {
+  const t = await getTranslations("escalationPage");
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)] p-6">
-      <div className="max-w-md rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-8 text-center">
-        <Wrench className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)]" />
-        <h1 className="mt-3 text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
-          Linket er udløbet
-        </h1>
-        <p className="mt-2 text-[14px] text-[var(--color-muted-foreground)]">
-          Service-anmodningen er over 30 dage gammel og er ikke længere
-          tilgængelig. Kontakt operatøren for en ny anmodning.
-        </p>
+    <div className="flex min-h-screen flex-col bg-[var(--color-background)]">
+      <div className="flex flex-1 items-center justify-center p-6">
+        <div className="max-w-md rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-8 text-center">
+          <Wrench className="mx-auto h-8 w-8 text-[var(--color-muted-foreground)]" />
+          <h1 className="mt-3 text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
+            {t("expiredTitle")}
+          </h1>
+          <p className="mt-2 text-[14px] text-[var(--color-muted-foreground)]">
+            {t("expiredBody")}
+          </p>
+        </div>
+      </div>
+
+      <div className="brand-stripe" aria-hidden>
+        <span />
+        <span />
+        <span />
       </div>
     </div>
   );

@@ -1,16 +1,18 @@
 // POST /api/chat/escalate
 //   Body: { conversationId, note?, qrToken? }
 //
-// Operator hits "Tilkald service". We snapshot the conversation, mint a
+// Operator hits "Call service". We snapshot the conversation, mint a
 // share token, write an `escalations` row and stamp the conversation
 // with resolution='escalated'. Returns the configured channel/target so
-// the client can open tel:/mailto: or render the share URL for copy.
+// the client can confirm what was sent, or render the share URL for copy.
 //
 // Auth dual-path (bearer or QR), mirrors the feedback route. The
 // snapshot is stored on the row so the tech's view doesn't depend on
 // the live `messages` table — escalation is a frozen handoff.
 
 import { randomUUID } from "node:crypto";
+import { getLocale, getTranslations } from "next-intl/server";
+import { defaultLocale, type Locale } from "@/i18n/config";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
 import { EmailError, sendEmail } from "@/lib/email";
 import {
@@ -23,6 +25,12 @@ import {
   type EscalationWebhookPayload,
 } from "@/lib/escalation";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
+import {
+  SmsError,
+  getRecipientLocale,
+  renderEscalationSms,
+  sendSms,
+} from "@/lib/sms";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -43,22 +51,27 @@ export type EscalateResponse = {
   shareToken: string;
   shareUrl: string;
   expiresAt: string;
-  // 'email'         : server-sent via Resend; client should not open mailto.
-  // 'phone'         : client opens tel:.
+  // 'email'         : server-sent via Resend.
+  // 'sms'           : server-sent via Twilio.
   // 'service_ticket': client surfaces the share URL for copy.
   // 'webhook'       : server POSTs JSON to the configured URL.
   emailSent: boolean;
   emailId: string | null;
+  smsSent: boolean;
+  smsId: string | null;
   webhookSent: boolean;
   webhookStatus: number | null;
 };
 
 export async function POST(req: Request) {
+  const t = await getTranslations("server");
+  const userLocale = (await getLocale()) as Locale;
+
   let body: Body;
   try {
     body = (await req.json()) as Body;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
   const hasBearer = !!req.headers.get("authorization");
@@ -77,7 +90,7 @@ export async function POST(req: Request) {
     const session = await resolveQrToken(qrToken);
     if (!session) {
       return Response.json(
-        { error: "Invalid or revoked QR token" },
+        { error: t("invalidQrToken") },
         { status: 401 },
       );
     }
@@ -88,7 +101,7 @@ export async function POST(req: Request) {
     };
   } else {
     return Response.json(
-      { error: "Missing or malformed Authorization header" },
+      { error: t("missingAuthHeader") },
       { status: 401 },
     );
   }
@@ -96,7 +109,7 @@ export async function POST(req: Request) {
   const conversationId = body.conversationId;
   if (typeof conversationId !== "string" || conversationId.length === 0) {
     return Response.json(
-      { error: "conversationId is required" },
+      { error: t("missingField", { field: "conversationId" }) },
       { status: 400 },
     );
   }
@@ -115,7 +128,7 @@ export async function POST(req: Request) {
     .maybeSingle();
   if (convErr) {
     console.error("escalate: conversation lookup failed:", convErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
   const conversation = convRow as
     | {
@@ -127,7 +140,7 @@ export async function POST(req: Request) {
       }
     | null;
   if (!conversation || conversation.user_id !== userIdentity.userId) {
-    return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json({ error: t("notFound") }, { status: 404 });
   }
 
   // Pull the configured target for the conversation's account. Without
@@ -140,7 +153,7 @@ export async function POST(req: Request) {
     .maybeSingle();
   if (targetErr) {
     console.error("escalate: target lookup failed:", targetErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
   const target = targetRow as
     | { channel: EscalationChannel; target: string; label: string | null }
@@ -148,8 +161,7 @@ export async function POST(req: Request) {
   if (!target) {
     return Response.json(
       {
-        error:
-          "Service-eskalering er ikke konfigureret for denne konto. Bed en admin om at sætte den op.",
+        error: t("escalation.noTarget"),
         code: "no_target",
       },
       { status: 409 },
@@ -175,7 +187,7 @@ export async function POST(req: Request) {
     ]);
   if (msgErr) {
     console.error("escalate: messages lookup failed:", msgErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const snapshot: EscalationSnapshot = {
@@ -221,23 +233,32 @@ export async function POST(req: Request) {
     ? `${proto}://${host}/escalation/${shareToken}`
     : `/escalation/${shareToken}`;
 
-  // Send the email FIRST for the 'email' channel — if Resend fails we
-  // refuse to create the escalations row (per the explicit "hard fail"
-  // policy: the operator should know mail didn't go out, not discover
-  // a stranded row in audit). For phone / service_ticket channels mail
-  // isn't part of the contract; the row is the contract.
+  // Send the email/SMS/webhook FIRST for the active channels — if the
+  // delivery fails we refuse to create the escalations row (per the
+  // explicit "hard fail" policy: the operator should know nothing went
+  // out, not discover a stranded row in audit). For service_ticket the
+  // row IS the contract; nothing leaves the server.
   // Mint the escalationId up-front so the webhook payload can include
   // a stable id (the downstream system needs it to dedupe retries).
   // We use the same id when inserting the row a few lines down.
   const escalationId = randomUUID();
 
   let emailId: string | null = null;
+  let smsId: string | null = null;
   let webhookStatus: number | null = null;
   if (target.channel === "email") {
-    const subject = `Service-anmodning${
-      snapshot.machineName ? ` — ${snapshot.machineName}` : ""
-    }`;
-    const body = renderEscalationEmail({
+    // Email goes to a technician — use the recipient's locale, not the
+    // operator's. Falls back to English when no preference is stored.
+    const recipientLocale = await getRecipientLocale(target.target);
+    const tEmail = await getTranslations({
+      locale: recipientLocale,
+      namespace: "server.escalation",
+    });
+    const subject = snapshot.machineName
+      ? tEmail("emailSubjectWithMachine", { machine: snapshot.machineName })
+      : tEmail("emailSubjectBase");
+    const emailBody = await renderEscalationEmail({
+      locale: recipientLocale,
       machineName: snapshot.machineName,
       operatorName: snapshot.operator.name,
       operatorEmail: snapshot.operator.email,
@@ -249,18 +270,48 @@ export async function POST(req: Request) {
       const sent = await sendEmail({
         to: target.target,
         subject,
-        text: body,
+        text: emailBody,
         replyTo: snapshot.operator.email ?? null,
       });
       emailId = sent.id;
     } catch (err) {
       const detail =
-        err instanceof EmailError ? err.message : "Ukendt mail-fejl";
+        err instanceof EmailError
+          ? err.message
+          : t("escalation.unknownEmailError");
       console.error("escalate: email send failed:", err);
       return Response.json(
         {
-          error: `Kunne ikke sende e-mail: ${detail}`,
+          error: t("escalation.emailFailed", { detail }),
           code: "email_failed",
+        },
+        { status: 502 },
+      );
+    }
+  }
+
+  if (target.channel === "sms") {
+    // SMS recipient is identified by phone — we don't have an email to
+    // look up. Use default locale ('en') unless a future schema change
+    // ties phones to preferences.
+    const smsBody = await renderEscalationSms({
+      machineName: snapshot.machineName,
+      shareUrl,
+      locale: defaultLocale,
+    });
+    try {
+      const sent = await sendSms({ to: target.target, body: smsBody });
+      smsId = sent.id;
+    } catch (err) {
+      const detail =
+        err instanceof SmsError
+          ? err.message
+          : t("escalation.unknownSmsError");
+      console.error("escalate: sms send failed:", err);
+      return Response.json(
+        {
+          error: t("escalation.smsFailed", { detail }),
+          code: "sms_failed",
         },
         { status: 502 },
       );
@@ -287,11 +338,13 @@ export async function POST(req: Request) {
       webhookStatus = sent.status;
     } catch (err) {
       const detail =
-        err instanceof WebhookError ? err.message : "Ukendt webhook-fejl";
+        err instanceof WebhookError
+          ? err.message
+          : t("escalation.unknownWebhookError");
       console.error("escalate: webhook send failed:", err);
       return Response.json(
         {
-          error: `Kunne ikke sende webhook: ${detail}`,
+          error: t("escalation.webhookFailed", { detail }),
           code: "webhook_failed",
         },
         { status: 502 },
@@ -315,7 +368,7 @@ export async function POST(req: Request) {
     });
   if (insErr) {
     console.error("escalate: insert failed:", insErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const { error: updErr } = await supabase
@@ -330,6 +383,11 @@ export async function POST(req: Request) {
     // Best-effort — the escalation row landed, which is what the tech needs.
   }
 
+  // userLocale is currently only used implicitly by getTranslations("server")
+  // above — kept named for clarity that operator-facing errors render in
+  // the operator's cookie locale.
+  void userLocale;
+
   const result: EscalateResponse = {
     ok: true,
     escalationId,
@@ -341,42 +399,51 @@ export async function POST(req: Request) {
     expiresAt: expiresAt.toISOString(),
     emailSent: emailId !== null,
     emailId,
+    smsSent: smsId !== null,
+    smsId,
     webhookSent: webhookStatus !== null,
     webhookStatus,
   };
   return Response.json(result);
 }
 
-const DA_DT = new Intl.DateTimeFormat("da-DK", {
-  dateStyle: "long",
-  timeStyle: "short",
-});
-
-function renderEscalationEmail(args: {
+async function renderEscalationEmail(args: {
+  locale: Locale;
   machineName: string | null;
   operatorName: string | null;
   operatorEmail: string | null;
   note: string | null;
   shareUrl: string;
   expiresAt: Date;
-}): string {
-  const machine = args.machineName ?? "(ukendt maskine)";
-  const operator =
-    args.operatorName ?? args.operatorEmail ?? "(ukendt operatør)";
+}): Promise<string> {
+  const t = await getTranslations({
+    locale: args.locale,
+    namespace: "server.escalation",
+  });
+  // Format the expiry timestamp in the recipient's locale.
+  const dtLocale = args.locale === "da" ? "da-DK" : "en-US";
+  const dt = new Intl.DateTimeFormat(dtLocale, {
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+
+  const machine = args.machineName ?? t("emailUnknownMachine");
+  const operatorBase =
+    args.operatorName ?? args.operatorEmail ?? t("emailUnknownOperator");
   const operatorLine = args.operatorEmail
-    ? `${operator} (${args.operatorEmail})`
-    : operator;
+    ? `${operatorBase} (${args.operatorEmail})`
+    : operatorBase;
   const noteSection = args.note
-    ? `Operatørens beskrivelse:\n${args.note}\n\n`
+    ? `${t("emailNoteHeading")}\n${args.note}\n\n`
     : "";
   return (
-    `Hej,\n\n` +
-    `En operatør har bedt om service via OptiAI.\n\n` +
-    `Maskine: ${machine}\n` +
-    `Operatør: ${operatorLine}\n\n` +
+    `${t("emailGreeting")}\n\n` +
+    `${t("emailIntro")}\n\n` +
+    `${t("emailMachineLine", { machine })}\n` +
+    `${t("emailOperatorLine", { operator: operatorLine })}\n\n` +
     noteSection +
-    `Læs hele samtalen her (gyldig til ${DA_DT.format(args.expiresAt)}):\n` +
+    `${t("emailLinkIntro", { expires: dt.format(args.expiresAt) })}\n` +
     `${args.shareUrl}\n\n` +
-    `— OptiAI`
+    `${t("emailSignature")}`
   );
 }

@@ -28,18 +28,19 @@ export async function PATCH(
   if (denied) return denied;
 
   const { id } = await ctx.params;
-  let body: { title?: unknown; summary?: unknown; folderPath?: unknown };
+  let body: {
+    title?: unknown;
+    summary?: unknown;
+    folderPath?: unknown;
+    operatorVisible?: unknown;
+  };
   try {
-    body = (await req.json()) as {
-      title?: unknown;
-      summary?: unknown;
-      folderPath?: unknown;
-    };
+    body = (await req.json()) as typeof body;
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const update: Record<string, string | null> = {};
+  const update: Record<string, string | boolean | null> = {};
   if (typeof body.title === "string" && body.title.trim()) {
     update.title = body.title.trim();
   }
@@ -53,9 +54,15 @@ export async function PATCH(
     const cleaned = body.folderPath.trim();
     update.folder_path = cleaned || null;
   }
+  if (typeof body.operatorVisible === "boolean") {
+    update.operator_visible = body.operatorVisible;
+  }
   if (Object.keys(update).length === 0) {
     return Response.json(
-      { error: "Nothing to update — provide title, summary or folderPath" },
+      {
+        error:
+          "Nothing to update — provide title, summary, folderPath or operatorVisible",
+      },
       { status: 400 },
     );
   }

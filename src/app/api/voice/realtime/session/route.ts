@@ -1,4 +1,12 @@
+import { cookies } from "next/headers";
+import { getTranslations } from "next-intl/server";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  defaultLocale,
+  isLocale,
+  LOCALE_COOKIE,
+  type Locale,
+} from "@/i18n/config";
 import {
   readQrTokenFromRequest,
   resolveQrToken,
@@ -14,22 +22,34 @@ const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime";
 // via env if you want to A/B another voice without a deploy.
 const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE ?? "cedar";
 
-const VOICE_SYSTEM_PREAMBLE = `Du er OptiAI, en stemme-assistent for operatører af træindustri-maskiner (CNC, nesting, boring, osv.).
+const LANGUAGE_NAME: Record<Locale, string> = {
+  en: "English",
+  da: "Danish",
+};
 
-Du taler med operatøren via stemme. Det betyder:
-- Svar altid på naturligt, talt dansk. Korte sætninger. Ingen markdown, ingen overskrifter, ingen punktopstillinger.
-- Tekniske termer, alarmkoder, knapnavne og menupunkter siges som de står på maskinen (f.eks. "alarm syv-tre-en", "tryk RESET").
-- Hold svarene korte — operatøren står ved maskinen og kan ikke læse en lang tekst op.
+function voiceSystemPreamble(locale: Locale): string {
+  const language = LANGUAGE_NAME[locale];
+  return `You are OptiAI, a voice assistant for operators of wood-industry machines (CNC, nesting, drilling, etc.).
 
-Din opgave: hjælp operatøren med at få hurtige, pålidelige svar fra deres maskinmanualer.
+You speak with the operator via voice. That means:
+- Reply in natural, spoken language. Short sentences. No markdown, no headings, no bullet lists.
+- Technical terms, alarm codes, button names, and menu items are said the way they appear on the machine (e.g. "alarm seven-three-one", "press RESET").
+- Keep answers short — the operator is at the machine and cannot read along.
 
-Regler:
-- Brug **search_kb** værktøjet for at finde information i maskinens manualer FØR du svarer på tekniske spørgsmål. Formuler søgningen kort og specifikt.
-- Forankr hvert svar i søgeresultaterne. Hvis intet relevant findes, så sig det ligeud og foreslå hvad operatøren skal tjekke eller hvem de skal kontakte.
-- Hvis spørgsmålet er tvetydigt, så stil ét opklarende spørgsmål før du søger.
-- For sikkerhedskritiske procedurer (lockout/tagout, højspænding, osv.), så mind altid operatøren om at følge stedets sikkerhedsprocedurer.
-- Når du har fundet svaret, så nævn kort hvilken manual det kommer fra, så operatøren ved hvor det er fra.
+Your job: help the operator get fast, reliable answers from their machine manuals.
+
+Rules:
+- For technical questions about the machine, use **search_kb** to look up content inside the manuals BEFORE answering. Phrase the query short and specific (e.g. "alarm 731 reset", "spindle bearing replacement"). search_kb is a content search — it returns text snippets from the manuals, not a list of documents.
+- If the operator asks which manuals exist, what documentation is available, where to find a specific manual, or anything about the manuals themselves rather than their content, call **list_documents** instead. It returns the catalog of manuals for this machine. Do NOT use search_kb for "do I have a maintenance manual?"-style questions.
+- Ground every answer in tool results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
+- If the question is ambiguous, ask one clarifying question before searching.
+- For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
+- When you have found the answer, briefly mention which manual it comes from so the operator knows the source.
+- If a search_kb result has is_image: true, it is a figure or diagram. You cannot show it over voice, but you can describe what it depicts and tell the operator which page to look at.
+
+LANGUAGE: Always respond in ${language}, regardless of what language the operator's speech sounds like. The factory floor is noisy and transcription can misidentify language — the operator has explicitly chosen ${language} as their interface language. Keep machine-specific technical terms (alarm codes, button labels, menu names) verbatim as they appear on the machine.
 `;
+}
 
 type DocumentManifest = {
   id: string;
@@ -38,7 +58,10 @@ type DocumentManifest = {
   page_count: number | null;
 };
 
-async function buildVoiceInstructions(machineId: string): Promise<string> {
+async function buildVoiceInstructions(
+  machineId: string,
+  locale: Locale,
+): Promise<string> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kb_documents")
@@ -51,18 +74,24 @@ async function buildVoiceInstructions(machineId: string): Promise<string> {
 
   const manifest =
     docs.length === 0
-      ? "Ingen manualer er tilgængelige for denne maskine endnu."
+      ? "No manuals are available for this machine yet."
       : docs
           .map(
             (d) =>
-              `- ${d.title}${d.page_count ? ` (${d.page_count} sider)` : ""}: ${d.summary}`,
+              `- ${d.title}${d.page_count ? ` (${d.page_count} pages)` : ""}: ${d.summary}`,
           )
           .join("\n");
 
-  return `${VOICE_SYSTEM_PREAMBLE}
-Tilgængelige dokumenter for denne maskine (brug search_kb til at finde indhold):
+  return `${voiceSystemPreamble(locale)}
+Available documents for this machine (use search_kb to find content):
 ${manifest}
 `;
+}
+
+async function resolveLocale(): Promise<Locale> {
+  const store = await cookies();
+  const raw = store.get(LOCALE_COOKIE)?.value;
+  return isLocale(raw) ? raw : defaultLocale;
 }
 
 type SessionRequest = {
@@ -72,6 +101,8 @@ type SessionRequest = {
 };
 
 export async function POST(req: Request) {
+  const t = await getTranslations("server");
+
   if (!process.env.OPENAI_API_KEY) {
     return Response.json(
       { error: "OPENAI_API_KEY not configured" },
@@ -83,7 +114,7 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as SessionRequest;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
   const hasBearer = !!req.headers.get("authorization");
@@ -103,12 +134,12 @@ export async function POST(req: Request) {
   } else {
     const qrToken = readQrTokenFromRequest(req, body);
     if (!qrToken) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+      return Response.json({ error: t("unauthorized") }, { status: 401 });
     }
     qrSession = await resolveQrToken(qrToken);
     if (!qrSession) {
       return Response.json(
-        { error: "Invalid or revoked QR token" },
+        { error: t("invalidQrToken") },
         { status: 401 },
       );
     }
@@ -123,15 +154,23 @@ export async function POST(req: Request) {
   }
 
   if (!resolvedMachineId) {
-    return Response.json({ error: "machineId is required" }, { status: 400 });
+    return Response.json(
+      { error: t("missingField", { field: "machineId" }) },
+      { status: 400 },
+    );
   }
   if (!resolvedAccountId) {
-    return Response.json({ error: "accountId is required" }, { status: 400 });
+    return Response.json(
+      { error: t("missingField", { field: "accountId" }) },
+      { status: 400 },
+    );
   }
+
+  const locale = await resolveLocale();
 
   let instructions: string;
   try {
-    instructions = await buildVoiceInstructions(resolvedMachineId);
+    instructions = await buildVoiceInstructions(resolvedMachineId, locale);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Manifest failed";
     return Response.json({ error: message }, { status: 500 });
@@ -156,14 +195,17 @@ export async function POST(req: Request) {
         instructions,
         // Whisper-style transcription of the operator's mic audio so we
         // can render their words live and persist the transcript.
-        input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
+        input_audio_transcription: {
+          model: "gpt-4o-mini-transcribe",
+          language: locale,
+        },
         turn_detection: { type: "server_vad" },
         tools: [
           {
             type: "function",
             name: "search_kb",
             description:
-              "Search this machine's knowledge base (manuals, instructions, alarm references). Returns ranked text snippets with their source document title and page numbers when available. Use this for any technical question before answering.",
+              "Search the CONTENT of this machine's manuals. Returns ranked text snippets from inside the documents, with their source title and page numbers. Use this for technical questions whose answer is somewhere in the manuals (procedures, alarm codes, settings). DO NOT use this to check whether a manual exists — use list_documents for that.",
             parameters: {
               type: "object",
               properties: {
@@ -178,6 +220,16 @@ export async function POST(req: Request) {
                 },
               },
               required: ["query"],
+            },
+          },
+          {
+            type: "function",
+            name: "list_documents",
+            description:
+              "List the manuals available for this machine. Returns each document's title, a short summary, and its page count. Use this when the operator asks which manuals exist, whether a specific manual is available, or for an overview of the documentation. Does NOT search inside the documents.",
+            parameters: {
+              type: "object",
+              properties: {},
             },
           },
         ],

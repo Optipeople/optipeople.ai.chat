@@ -181,6 +181,108 @@ a[data-button] {
   animation: dialog-panel-in 220ms var(--ease-apple) both;
 }
 
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.drawer-in {
+  animation: drawer-in 260ms var(--ease-apple) both;
+}
+
+/* Shimmering "thinking" text — used by WorkingRow while waiting for the
+   first assistant token. The mask sweeps a brighter band across the text
+   so it reads as alive without a spinner. */
+@keyframes text-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted-foreground) 0%,
+    var(--color-muted-foreground) 35%,
+    var(--color-foreground) 50%,
+    var(--color-muted-foreground) 65%,
+    var(--color-muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+
+/* Streaming caret — blinking block at the end of in-flight assistant text. */
+@keyframes stream-caret {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.stream-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--color-accent, var(--color-foreground));
+  border-radius: 1px;
+  animation: stream-caret 1s steps(1, end) infinite;
+}
+
+/* Suggestion chip entrance — staggered fade/rise. Index supplied inline. */
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.chip-in {
+  animation: chip-in 850ms var(--ease-apple) both;
+  animation-delay: calc(500ms + var(--chip-index, 0) * 220ms);
+}
+
+/* Send-button invite — gentle nudge when input has text waiting. */
+@keyframes send-nudge {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(1.5px); }
+}
+.send-nudge {
+  animation: send-nudge 1.8s ease-in-out infinite;
+}
+
+/* Voice status equalizer */
+@keyframes voice-bar {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+.voice-eq {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+}
+.voice-eq > span {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 9999px;
+  background: currentColor;
+  transform-origin: center;
+  transform: scaleY(0.35);
+}
+.voice-eq.is-active > span {
+  animation: voice-bar 900ms ease-in-out infinite;
+}
+.voice-eq.is-active > span:nth-child(1) { animation-delay: -200ms; }
+.voice-eq.is-active > span:nth-child(2) { animation-delay: -600ms; }
+.voice-eq.is-active > span:nth-child(3) { animation-delay: -400ms; }
+.voice-eq.is-active > span:nth-child(4) { animation-delay: -800ms; }
+
+@keyframes voice-pill-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.16 145 / 0.35); }
+  50%      { box-shadow: 0 0 0 6px oklch(0.72 0.16 145 / 0); }
+}
+.voice-pill-active {
+  animation: voice-pill-glow 2.2s ease-out infinite;
+}
+
 /* Scrollbar */
 .scroll-area {
   scrollbar-width: thin;

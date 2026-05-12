@@ -1,6 +1,6 @@
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
-import { searchKb } from "@/lib/searchKb";
+import { listDocuments, searchKb } from "@/lib/searchKb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +48,23 @@ export async function POST(req: Request) {
     return Response.json({ error: "machineId is required" }, { status: 400 });
   }
 
+  if (body.name === "list_documents") {
+    try {
+      const docs = await listDocuments(resolvedMachineId);
+      return Response.json({
+        output: {
+          documents: docs,
+          count: docs.length,
+        },
+        chunkIds: [],
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "list_documents failed";
+      console.error("Realtime list_documents error:", err);
+      return Response.json({ output: { error: message } }, { status: 200 });
+    }
+  }
+
   if (body.name !== "search_kb") {
     return Response.json({ error: `Unknown tool: ${body.name}` }, { status: 400 });
   }
@@ -71,10 +88,13 @@ export async function POST(req: Request) {
     return Response.json({
       output: {
         results: result.results.map((r) => ({
+          document_id: r.document_id,
           title: r.title,
           page_from: r.page_from,
           page_to: r.page_to,
           text: r.text,
+          is_image: r.is_image,
+          image_alt: r.image_alt,
         })),
       },
       chunkIds: result.chunkIds,

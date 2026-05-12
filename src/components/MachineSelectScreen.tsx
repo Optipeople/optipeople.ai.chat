@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Loader2, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { OptipeopleLogo } from "@/components/logo";
 import { UserMenu } from "@/components/UserMenu";
@@ -19,6 +20,8 @@ export function MachineSelectScreen() {
     reloadMachines,
     clearSelectedAccount,
   } = useAuth();
+  const t = useTranslations("machineSelect");
+  const tc = useTranslations("common");
 
   const [query, setQuery] = useState("");
 
@@ -54,18 +57,18 @@ export function MachineSelectScreen() {
           )}
         >
           <h1 className="mb-1 text-[22px] font-semibold text-[var(--color-foreground)]">
-            Vælg maskine
+            {t("heading")}
           </h1>
           <p className="mb-6 text-[15px] text-[var(--color-muted-foreground)]">
             {currentAccount
-              ? `Maskiner i ${currentAccount.name}. Vælg den du arbejder ved.`
-              : "Vælg den maskine du arbejder ved."}
+              ? t("subtitleForAccount", { account: currentAccount.name })
+              : t("subtitleNoAccount")}
           </p>
 
           {isLoadingMachines && machines.length === 0 && (
             <div className="flex items-center gap-2 py-6 text-[15px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-5 w-5 animate-spin" />
-              Indlæser maskiner…
+              {t("loading")}
             </div>
           )}
 
@@ -81,7 +84,7 @@ export function MachineSelectScreen() {
                 {isLoadingMachines ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  "Prøv igen"
+                  tc("retry")
                 )}
               </Button>
             </div>
@@ -89,15 +92,16 @@ export function MachineSelectScreen() {
 
           {!isLoadingMachines && !machinesError && machines.length === 0 && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-              Der er ingen maskiner tilføjet i Opti Assist på denne konto. Skriv
-              til{" "}
-              <a
-                href="mailto:support@optipeople.dk"
-                className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
-              >
-                support@optipeople.dk
-              </a>{" "}
-              for hjælp med at få maskinerne tilføjet.
+              {t.rich("empty", {
+                email: () => (
+                  <a
+                    href={`mailto:${tc("supportEmail")}`}
+                    className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
+                  >
+                    {tc("supportEmail")}
+                  </a>
+                ),
+              })}
             </p>
           )}
 
@@ -116,14 +120,14 @@ export function MachineSelectScreen() {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Søg efter maskiner…"
+                    placeholder={t("search")}
                     className="h-11 flex-1 bg-transparent text-[15px] text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-muted-foreground)]"
                   />
                   {query && (
                     <button
                       type="button"
                       onClick={() => setQuery("")}
-                      aria-label="Ryd søgning"
+                      aria-label={tc("clearSearch")}
                       className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]"
                     >
                       <X className="h-4 w-4" />
@@ -134,7 +138,7 @@ export function MachineSelectScreen() {
 
               {filtered.length === 0 ? (
                 <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-                  Ingen resultater.
+                  {tc("noResults")}
                 </p>
               ) : (
                 <ul className="flex max-h-[min(60vh,480px)] flex-col gap-2 overflow-y-auto pr-1">
@@ -176,7 +180,7 @@ export function MachineSelectScreen() {
               )}
             >
               <ChevronLeft className="h-4 w-4" />
-              Skift konto
+              {t("switchAccount")}
             </button>
           )}
         </div>

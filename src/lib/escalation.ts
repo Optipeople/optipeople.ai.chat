@@ -3,9 +3,10 @@
 // signed-link transcript endpoint.
 
 import { randomBytes } from "node:crypto";
+import { getTranslations } from "next-intl/server";
 
 export type EscalationChannel =
-  | "phone"
+  | "sms"
   | "email"
   | "service_ticket"
   | "webhook";
@@ -106,15 +107,16 @@ export async function sendEscalationWebhook(
       signal: controller.signal,
     });
   } catch (err) {
+    const t = await getTranslations("server.webhook");
     if (err instanceof Error && err.name === "AbortError") {
       throw new WebhookError(
-        `Webhook timeout efter ${WEBHOOK_TIMEOUT_MS / 1000}s`,
+        t("timeout", { seconds: WEBHOOK_TIMEOUT_MS / 1000 }),
         0,
         null,
       );
     }
     throw new WebhookError(
-      err instanceof Error ? err.message : "Ukendt netværksfejl",
+      err instanceof Error ? err.message : t("networkError"),
       0,
       null,
     );
@@ -123,8 +125,9 @@ export async function sendEscalationWebhook(
   }
   if (!res.ok) {
     const body = await res.text().catch(() => null);
+    const t = await getTranslations("server.webhook");
     throw new WebhookError(
-      `Webhook svarede med ${res.status}`,
+      t("responseStatus", { status: res.status }),
       res.status,
       body ? body.slice(0, 500) : null,
     );

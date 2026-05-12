@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Hanken_Grotesk } from "next/font/google";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages, getTranslations } from "next-intl/server";
 import "./globals.css";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -10,23 +12,30 @@ const hankenGrotesk = Hanken_Grotesk({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "OptiAI",
-  description:
-    "AI-assistent for operatører i træindustrien — hurtige svar fra maskinens manualer.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations("metadata");
+  return {
+    title: t("title"),
+    description: t("description"),
+  };
+}
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  const messages = await getMessages();
+
   return (
-    <html lang="da" className={`h-full ${hankenGrotesk.variable}`}>
+    <html lang={locale} className={`h-full ${hankenGrotesk.variable}`}>
       <body className="min-h-full">
-        <AuthProvider>
-          <ConfirmProvider>{children}</ConfirmProvider>
-        </AuthProvider>
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          <AuthProvider>
+            <ConfirmProvider>{children}</ConfirmProvider>
+          </AuthProvider>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   CheckCircle2,
   Copy,
-  ExternalLink,
   FileText,
+  ImagePlus,
   Loader2,
   Mic,
   AudioLines,
@@ -23,9 +24,11 @@ import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
 import { AccountSelectScreen } from "@/components/AccountSelectScreen";
 import { MachineSelectScreen } from "@/components/MachineSelectScreen";
+import { KnowledgeDrawer } from "@/components/KnowledgeDrawer";
 import { SpeakButton } from "@/components/SpeakButton";
 import { VoiceConversation } from "@/components/VoiceConversation";
-import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
+import { SourceChips, type SourceRef } from "@/components/SourceChips";
+import { useLiveTranscription } from "@/lib/useLiveTranscription";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchWithAuth } from "@/auth/authApi";
 import {
@@ -113,11 +116,6 @@ function useDeepLinkSelection() {
 }
 
 type Role = "user" | "assistant";
-type SourceRef = {
-  id: string;
-  title: string;
-  pageFrom: number | null;
-};
 // One image-caption hit. The chat client resolves assetId → signed URL
 // on demand via /api/assets/<assetId>/url. For PDF-figure assets the
 // signed URL is the parent PDF — combined with pageFrom we deep-link
@@ -130,20 +128,42 @@ type ImageSourceRef = {
   pageFrom: number | null;
   mimeType: string;
 };
+// User-uploaded image attached to a message. The id refers to a
+// conversation_attachments row; previewUrl is an object URL we hold for
+// instant rendering after upload. Once the message is fully sent we
+// could swap to a signed URL via /api/chat/attachments/[id]/url, but
+// the object URL stays valid for the session so we just keep using it.
+type ChatAttachment = {
+  id: string;
+  previewUrl: string;
+  mimeType: string;
+};
+
 interface Message {
   role: Role;
   content: string;
   sources?: SourceRef[];
   images?: ImageSourceRef[];
+  attachments?: ChatAttachment[];
 }
 
-// Shown when the machine's KB is empty (or the suggestions fetch fails).
-// Intentionally broad so they make sense even without manual content.
-const FALLBACK_QUESTIONS = [
-  "Hvad kan du hjælpe med?",
-  "Hvilke dokumenter har du adgang til?",
-  "Hvor finder jeg manualen?",
-];
+// Local-only state for an attachment the operator is in the middle of
+// uploading. Once `status === "ready"`, the id is filled in and the
+// pending entry is promoted to a real ChatAttachment when send() fires.
+type PendingAttachment = {
+  // Stable client id for the React list and removal handler.
+  localId: string;
+  previewUrl: string;
+  file: File;
+  status: "uploading" | "ready" | "error";
+  // Set when status === "ready".
+  id?: string;
+  errorMessage?: string;
+};
+
+const MAX_ATTACHMENTS = 4;
+const ATTACHMENT_ACCEPT = "image/png,image/jpeg,image/webp";
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 type ChatTarget = {
   account: { id: string; name: string };
@@ -151,6 +171,8 @@ type ChatTarget = {
 };
 
 export default function Home() {
+  const tQrError = useTranslations("qrError");
+  const tCommon = useTranslations("common");
   const [qrPhase, setQrPhase] = useState<
     | { kind: "checking" }
     | { kind: "active"; target: ChatTarget }
@@ -202,8 +224,8 @@ export default function Home() {
         if (!res.ok) {
           throw new Error(
             res.status === 404
-              ? "QR-koden er ugyldig eller er blevet inaktiveret."
-              : `Fejl ved QR-opslag (${res.status})`,
+              ? tQrError("invalid")
+              : tQrError("lookupFailed", { status: res.status }),
           );
         }
         const body = (await res.json()) as {
@@ -235,7 +257,7 @@ export default function Home() {
         clearQrSession();
         setQrPhase({
           kind: "error",
-          message: err instanceof Error ? err.message : "Ukendt fejl",
+          message: err instanceof Error ? err.message : tCommon("unknownError"),
         });
       }
     })();
@@ -299,13 +321,14 @@ export default function Home() {
 }
 
 function QrErrorScreen({ message }: { message: string }) {
+  const t = useTranslations("qrError");
   return (
     <div className="flex h-full items-center justify-center bg-[var(--color-background)] p-6">
       <div className="max-w-md rounded-[var(--radius-lg)] border border-red-200 bg-red-50 p-6 text-center">
-        <p className="text-[16px] font-medium text-red-800">QR-koden virker ikke</p>
+        <p className="text-[16px] font-medium text-red-800">{t("heading")}</p>
         <p className="mt-2 text-[14px] text-red-700">{message}</p>
         <p className="mt-4 text-[12px] text-red-700/80">
-          Bed en super-admin om at generere en ny QR-kode for maskinen.
+          {t("askAdmin")}
         </p>
       </div>
     </div>
@@ -327,8 +350,9 @@ type FeedbackState =
 
 // Operator-side escalation flow. The "Tilkald service" pill button
 // transitions hidden → confirm. On submit we POST /api/chat/escalate,
-// move to submitting, and on success either auto-open tel:/mailto: or
-// land on `done` with the share URL for copy.
+// move to submitting, then land on `done` — for SMS/email/webhook the
+// server has already delivered to the tech; for service_ticket the
+// done view exposes the share URL for copy.
 type EscalateState =
   | { phase: "hidden" }
   | { phase: "confirm"; note: string }
@@ -349,6 +373,14 @@ function ChatApp({
   account: { id: string; name: string } | null;
   machine: { id: string; name: string } | null;
 }) {
+  const tChat = useTranslations("chat");
+  // Shown when the machine's KB is empty (or the suggestions fetch fails).
+  // Intentionally broad so they make sense even without manual content.
+  const FALLBACK_QUESTIONS = [
+    tChat("fallbackQuestions.q1"),
+    tChat("fallbackQuestions.q2"),
+    tChat("fallbackQuestions.q3"),
+  ];
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -360,8 +392,11 @@ function ChatApp({
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
   const [escalate, setEscalate] = useState<EscalateState>({ phase: "hidden" });
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pendingRef = useRef("");
   const streamDoneRef = useRef(false);
@@ -371,17 +406,51 @@ function ChatApp({
 
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceConvOpen, setVoiceConvOpen] = useState(false);
-  const voice = useVoiceRecorder({
-    onTranscript: (text) => {
-      // Append rather than overwrite so a user who'd already typed
-      // doesn't lose what they have. Trim joining whitespace.
-      setInput((prev) => (prev ? `${prev.trim()} ${text}` : text));
+  const tVoiceErrors = useTranslations("server.voiceErrors");
+  // Whatever the user had typed before they hit record. The live
+  // transcript is appended onto this so already-typed text isn't lost.
+  const voicePrefixRef = useRef("");
+  const liveTranscribe = useLiveTranscription({
+    onChange: (text) => {
+      const prefix = voicePrefixRef.current;
+      setInput(prefix ? `${prefix} ${text}` : text);
+    },
+    onFinal: (text) => {
+      const prefix = voicePrefixRef.current;
+      const merged = prefix ? `${prefix} ${text}`.trim() : text.trim();
+      setInput(merged);
       setVoiceError(null);
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    onError: (message) => setVoiceError(message),
+    onError: (message) => {
+      const known = [
+        "permissionDenied",
+        "unsupported",
+        "emptyRecording",
+        "noSpeech",
+        "transcriptionFailed",
+        "connectionLost",
+      ];
+      setVoiceError(known.includes(message) ? tVoiceErrors(message) : message);
+    },
   });
 
+  // The recorder button JSX was written against a tri-state shape
+  // (idle/recording/transcribing). Map the richer live-transcription
+  // states onto it so the surrounding markup stays untouched.
+  const voiceState: "idle" | "recording" | "transcribing" =
+    liveTranscribe.state === "listening" || liveTranscribe.state === "connecting"
+      ? "recording"
+      : liveTranscribe.state === "finalizing"
+        ? "transcribing"
+        : "idle";
+  const startVoice = useCallback(() => {
+    voicePrefixRef.current = input.trim();
+    void liveTranscribe.start();
+  }, [input, liveTranscribe]);
+  const stopVoice = useCallback(() => {
+    void liveTranscribe.stop();
+  }, [liveTranscribe]);
   useEffect(() => {
     // Switching machine = new conversation context. Drop any prior id
     // and clear messages — operator likely wants a fresh slate. This
@@ -393,6 +462,11 @@ function ChatApp({
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
     setSuggestions([]);
+    setPendingAttachments((prev) => {
+      for (const p of prev) URL.revokeObjectURL(p.previewUrl);
+      return [];
+    });
+    setAttachmentError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [machine?.id]);
 
@@ -445,6 +519,18 @@ function ChatApp({
     };
   }, []);
 
+  // Revoke object URLs for any pending (un-sent) attachments when the
+  // component unmounts. Sent messages keep their own object URLs alive
+  // via the messages array — those are revoked implicitly on tab close.
+  useEffect(() => {
+    return () => {
+      for (const p of pendingAttachments) URL.revokeObjectURL(p.previewUrl);
+    };
+    // We intentionally only want this on unmount, not on every change —
+    // mid-session removal already revokes in removeAttachment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Idle prompt: arm a timer when the chat is settled (we have a
   // conversation, no streaming, no card already showing). Clear on any
   // activity. When it fires, surface the resolution card.
@@ -464,6 +550,118 @@ function ChatApp({
       idleTimerRef.current = null;
     }
   }, []);
+
+  // Upload a single image file. The pending entry is added immediately
+  // so the operator sees a thumbnail with a spinner; on success we fill
+  // in the server-side id, on failure we leave it as "error" so the X
+  // is the only meaningful affordance.
+  const uploadAttachment = useCallback(
+    async (file: File) => {
+      const localId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`;
+      const previewUrl = URL.createObjectURL(file);
+      setPendingAttachments((prev) => [
+        ...prev,
+        { localId, previewUrl, file, status: "uploading" },
+      ]);
+      try {
+        if (!machine?.id) throw new Error("Missing machine");
+        const form = new FormData();
+        form.append("machineId", machine.id);
+        form.append("file", file);
+        const res = await fetchWithAuth("/api/chat/attachments", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `Upload failed (${res.status})`);
+        }
+        const data = (await res.json()) as { id: string };
+        setPendingAttachments((prev) =>
+          prev.map((p) =>
+            p.localId === localId ? { ...p, status: "ready", id: data.id } : p,
+          ),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setPendingAttachments((prev) =>
+          prev.map((p) =>
+            p.localId === localId
+              ? { ...p, status: "error", errorMessage: msg }
+              : p,
+          ),
+        );
+        setAttachmentError(msg);
+      }
+    },
+    [machine],
+  );
+
+  const addAttachments = useCallback(
+    (files: File[]) => {
+      setAttachmentError(null);
+      const slotsLeft = MAX_ATTACHMENTS - pendingAttachments.length;
+      if (slotsLeft <= 0) {
+        setAttachmentError(tChat("attachments.tooMany", { max: MAX_ATTACHMENTS }));
+        return;
+      }
+      const accepted: File[] = [];
+      let rejected = false;
+      for (const f of files.slice(0, slotsLeft)) {
+        const mimeOk = f.type === "image/png" || f.type === "image/jpeg" || f.type === "image/webp";
+        if (!mimeOk) {
+          rejected = true;
+          continue;
+        }
+        if (f.size > ATTACHMENT_MAX_BYTES) {
+          rejected = true;
+          continue;
+        }
+        accepted.push(f);
+      }
+      if (rejected) {
+        setAttachmentError(tChat("attachments.unsupported"));
+      }
+      if (files.length > slotsLeft) {
+        setAttachmentError(tChat("attachments.tooMany", { max: MAX_ATTACHMENTS }));
+      }
+      for (const f of accepted) void uploadAttachment(f);
+    },
+    [pendingAttachments.length, tChat, uploadAttachment],
+  );
+
+  const removeAttachment = useCallback((localId: string) => {
+    setPendingAttachments((prev) => {
+      const next = prev.filter((p) => {
+        if (p.localId === localId) {
+          URL.revokeObjectURL(p.previewUrl);
+          return false;
+        }
+        return true;
+      });
+      return next;
+    });
+  }, []);
+
+  // Paste handler: turns clipboard images into attachments. Only active
+  // while the textarea is focused so we don't fight other paste targets.
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const files = items
+        .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => !!f);
+      if (files.length > 0) {
+        e.preventDefault();
+        addAttachments(files);
+      }
+    },
+    [addAttachments],
+  );
 
   useEffect(() => {
     if (
@@ -551,13 +749,9 @@ function ChatApp({
       }
       const data = (await res.json()) as EscalateResponse;
 
-      // Phone channel: open tel: from the click-handler descendant.
-      // Email channel: server already sent via Resend — no client open.
-      // Service-ticket: nothing to open; the `done` view exposes the
-      // share URL for copy.
-      if (data.channel === "phone") {
-        window.location.href = `tel:${data.target}`;
-      }
+      // All active channels (sms / email / webhook) are server-sent;
+      // service_ticket exposes the share URL on the `done` view for the
+      // operator to copy. Nothing to open client-side.
 
       // Lock the chat (escalate.phase === "done" hides the feedback
       // prompt and locks the input bar) so the operator doesn't keep
@@ -607,19 +801,41 @@ function ChatApp({
 
   async function send(textOverride?: string) {
     const text = (textOverride ?? input).trim();
-    if (!text || streaming) return;
+    // Snapshot ready attachments at send-time. Anything still uploading
+    // or errored is left in the tray — the operator can either wait or
+    // remove it; we don't drop spinners silently into the sent message.
+    const readyAttachments = pendingAttachments.filter((p) => p.status === "ready");
+    const hasAttachments = readyAttachments.length > 0;
+    if ((!text && !hasAttachments) || streaming) return;
     // Any send means the operator isn't done — drop the idle prompt
     // (and any in-flight feedback state) so it doesn't sit there stale.
     clearIdleTimer();
     if (feedback.phase !== "hidden") setFeedback({ phase: "hidden" });
 
+    const userAttachments: ChatAttachment[] = readyAttachments.map((p) => ({
+      id: p.id!,
+      previewUrl: p.previewUrl,
+      mimeType: p.file.type,
+    }));
+
     const next: Message[] = [
       ...messages,
-      { role: "user", content: text },
+      {
+        role: "user",
+        content: text,
+        attachments: hasAttachments ? userAttachments : undefined,
+      },
       { role: "assistant", content: "" },
     ];
     setMessages(next);
     setInput("");
+    // Clear only the attachments we just sent. Leave any in-flight
+    // uploads or errors so the operator notices them. Keep the object
+    // URLs alive — the message thumbnails are still pointing at them.
+    setPendingAttachments((prev) =>
+      prev.filter((p) => !readyAttachments.some((r) => r.localId === p.localId)),
+    );
+    setAttachmentError(null);
     setStreaming(true);
     pendingRef.current = "";
     streamDoneRef.current = false;
@@ -637,9 +853,11 @@ function ChatApp({
           accountId: account?.id ?? null,
           machineId: machine?.id ?? null,
           conversationId,
-          messages: next
-            .slice(0, -1)
-            .map(({ role, content }) => ({ role, content })),
+          messages: next.slice(0, -1).map((m) => ({
+            role: m.role,
+            content: m.content,
+            attachmentIds: m.attachments?.map((a) => a.id),
+          })),
         }),
       });
 
@@ -698,7 +916,7 @@ function ChatApp({
               const copy = [...prev];
               copy[copy.length - 1] = {
                 role: "assistant",
-                content: `Fejl: ${data.message}`,
+                content: tChat("errorPrefix", { message: data.message }),
               };
               return copy;
             });
@@ -717,7 +935,7 @@ function ChatApp({
           const copy = [...prev];
           copy[copy.length - 1] = {
             role: "assistant",
-            content: `Fejl: ${msg}`,
+            content: tChat("errorPrefix", { message: msg }),
           };
           return copy;
         });
@@ -741,7 +959,18 @@ function ChatApp({
   );
   const inputLocked =
     streaming || feedback.phase === "thanks" || escalate.phase === "done";
-  const canSend = !inputLocked && input.trim().length > 0;
+  const hasReadyAttachment = pendingAttachments.some((p) => p.status === "ready");
+  const isUploadingAttachment = pendingAttachments.some(
+    (p) => p.status === "uploading",
+  );
+  const canSend =
+    !inputLocked &&
+    !isUploadingAttachment &&
+    (input.trim().length > 0 || hasReadyAttachment);
+  const canAttach =
+    !inputLocked &&
+    !!machine?.id &&
+    pendingAttachments.length < MAX_ATTACHMENTS;
   const showActionButtons =
     !!conversationId &&
     hasAssistantReply &&
@@ -757,11 +986,10 @@ function ChatApp({
             + solid panel containing the input bar, optional "Afslut
             samtale" pill, and feedback card). Without enough room here,
             content scrolls under the panel. */}
-        <div className="mx-auto max-w-3xl px-6 pt-12 pb-56">
+        <div className="mx-auto max-w-3xl px-6 pt-12 pb-72">
           {isEmpty ? (
             <p className="msg-in max-w-2xl text-[22px] leading-[1.55] tracking-[-0.005em] text-[var(--color-foreground)]">
-              Spørg om installation, vedligeholdelse, værktøjsskift, alarmer
-              eller hvad som helst i din maskines manual.
+              {tChat("emptyPrompt")}
             </p>
           ) : (
             <div className="flex flex-col gap-8">
@@ -769,6 +997,7 @@ function ChatApp({
                 <MessageRow
                   key={i}
                   message={m}
+                  isStreaming={streaming && i === messages.length - 1}
                   onCallService={() =>
                     setEscalate({ phase: "confirm", note: "" })
                   }
@@ -785,7 +1014,7 @@ function ChatApp({
             lifting of hiding scroll content. */}
         <div
           aria-hidden
-          className="pointer-events-none h-6 w-full"
+          className="pointer-events-none h-30 w-full"
           style={{
             background:
               "linear-gradient(to top, var(--color-background) 0%, oklch(from var(--color-background) l c h / 0%) 100%)",
@@ -801,13 +1030,14 @@ function ChatApp({
             <div className="msg-in mb-10 flex items-end gap-2">
               <div className="flex flex-1 flex-wrap gap-2">
                 {(suggestions.length > 0 ? suggestions : FALLBACK_QUESTIONS).map(
-                  (q) => (
+                  (q, i) => (
                     <Button
                       key={q}
                       variant="secondary"
                       onClick={() => send(q)}
                       disabled={streaming}
-                      className="rounded-full"
+                      className="chip-in rounded-full"
+                      style={{ ["--chip-index" as string]: i }}
                     >
                       {q}
                     </Button>
@@ -820,24 +1050,24 @@ function ChatApp({
                 tabIndex={-1}
                 className="invisible pointer-events-none"
               >
-                Send
+                {tChat("send")}
               </Button>
             </div>
           )}
           {showActionButtons && (
-            <div className="msg-in mb-3 flex justify-end gap-2">
+            <div className="msg-in mb-6 flex justify-end gap-2">
               <Button
                 variant="secondary"
                 onClick={() => setEscalate({ phase: "confirm", note: "" })}
               >
                 <Wrench className="mr-1.5 h-4 w-4" />
-                Tilkald service
+                {tChat("callService")}
               </Button>
               <Button
                 variant="secondary"
                 onClick={() => setFeedback({ phase: "prompt" })}
               >
-                Afslut samtale
+                {tChat("endConversation")}
               </Button>
             </div>
           )}
@@ -884,12 +1114,44 @@ function ChatApp({
           {voiceError && (
             <div
               className="mb-2 text-[14px]"
-              style={{ color: "var(--color-destructive)" }}
+              style={{ color: "var(--ds-red)" }}
               role="status"
             >
               {voiceError}
             </div>
           )}
+          {pendingAttachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {pendingAttachments.map((p) => (
+                <AttachmentChip
+                  key={p.localId}
+                  attachment={p}
+                  onRemove={() => removeAttachment(p.localId)}
+                />
+              ))}
+            </div>
+          )}
+          {attachmentError && (
+            <div
+              className="mb-2 text-[13px]"
+              style={{ color: "var(--ds-red)" }}
+              role="status"
+            >
+              {attachmentError}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length > 0) addAttachments(files);
+              e.target.value = "";
+            }}
+          />
           <div
             className={cn(
               "flex items-end gap-2",
@@ -900,58 +1162,66 @@ function ChatApp({
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={onPaste}
               onKeyDown={onKeyDown}
               placeholder={
                 feedback.phase === "thanks"
-                  ? "Samtalen er afsluttet. Start en ny ovenfor."
-                  : voice.state === "recording"
-                    ? "Optager… tryk på stop når du er færdig."
-                    : voice.state === "transcribing"
-                      ? "Transskriberer…"
-                      : "Skriv dit spørgsmål her…"
+                  ? tChat("endedPlaceholder")
+                  : voiceState === "recording"
+                    ? tChat("recordingPlaceholder")
+                    : voiceState === "transcribing"
+                      ? tChat("transcribingPlaceholder")
+                      : tChat("inputPlaceholder")
               }
               rows={2}
-              disabled={inputLocked || voice.state !== "idle"}
+              disabled={inputLocked || voiceState !== "idle"}
               autoGrow
               size="medium"
               className="flex-1"
             />
-            <Button size="lg" onClick={() => send()} disabled={!canSend}>
+            <Button
+              size="lg"
+              onClick={() => send()}
+              disabled={!canSend}
+              className="h-[52px]"
+            >
               {streaming ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
-                "Send"
+                <span className={cn("inline-block", canSend && "send-nudge")}>
+                  {tChat("send")}
+                </span>
               )}
             </Button>
             <button
               type="button"
               onClick={() =>
-                voice.state === "recording" ? voice.stop() : voice.start()
+                voiceState === "recording" ? stopVoice() : startVoice()
               }
-              disabled={inputLocked || voice.state === "transcribing"}
+              disabled={inputLocked || voiceState === "transcribing"}
               aria-label={
-                voice.state === "recording"
-                  ? "Stop optagelse"
-                  : voice.state === "transcribing"
-                    ? "Transskriberer"
-                    : "Optag stemme"
+                voiceState === "recording"
+                  ? tChat("voiceLabels.stopRecording")
+                  : voiceState === "transcribing"
+                    ? tChat("voiceLabels.transcribing")
+                    : tChat("voiceLabels.recordVoice")
               }
               title={
-                voice.state === "recording"
-                  ? "Stop optagelse"
-                  : "Optag stemme"
+                voiceState === "recording"
+                  ? tChat("voiceLabels.stopRecording")
+                  : tChat("voiceLabels.recordVoice")
               }
               className={cn(
                 "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
                 "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
                 "hover:bg-[var(--color-muted)] disabled:opacity-60",
-                voice.state === "recording" &&
-                  "border-transparent bg-[var(--color-destructive)] text-white animate-pulse",
+                voiceState === "recording" &&
+                  "border-transparent bg-[var(--ds-red)] text-white hover:bg-[var(--ds-red-dark)] animate-pulse",
               )}
             >
-              {voice.state === "transcribing" ? (
+              {voiceState === "transcribing" ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
-              ) : voice.state === "recording" ? (
+              ) : voiceState === "recording" ? (
                 <Square className="h-5 w-5" fill="currentColor" />
               ) : (
                 <Mic className="h-5 w-5" />
@@ -962,12 +1232,12 @@ function ChatApp({
               onClick={() => setVoiceConvOpen(true)}
               disabled={
                 inputLocked ||
-                voice.state !== "idle" ||
+                voiceState !== "idle" ||
                 !machine?.id ||
                 !account?.id
               }
-              aria-label="Start samtale"
-              title="Start samtale"
+              aria-label={tChat("voiceLabels.startConversation")}
+              title={tChat("voiceLabels.startConversation")}
               className={cn(
                 "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
                 "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
@@ -975,6 +1245,20 @@ function ChatApp({
               )}
             >
               <AudioLines className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!canAttach}
+              aria-label={tChat("attachments.addAria")}
+              title={tChat("attachments.addAria")}
+              className={cn(
+                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
+                "hover:bg-[var(--color-muted)] disabled:opacity-60",
+              )}
+            >
+              <ImagePlus className="h-5 w-5" />
             </button>
           </div>
         </div>
@@ -985,6 +1269,7 @@ function ChatApp({
           <span />
         </div>
       </footer>
+      {machine?.id ? <KnowledgeDrawer machineId={machine.id} /> : null}
       {voiceConvOpen && machine?.id && account?.id ? (
         <VoiceConversation
           machineId={machine.id}
@@ -998,48 +1283,138 @@ function ChatApp({
 
 function MessageRow({
   message,
+  isStreaming,
   onCallService,
 }: {
   message: Message;
+  isStreaming?: boolean;
   onCallService?: () => void;
 }) {
   if (message.role === "user") {
+    const hasAttachments =
+      !!message.attachments && message.attachments.length > 0;
+    const hasText = message.content.length > 0;
     return (
-      <div className="msg-in flex justify-end">
-        <div
-          className="max-w-[78%] rounded-[4px] px-5 py-3 text-[19px] leading-[1.55] whitespace-pre-wrap shadow-[var(--shadow-sm)]"
-          style={{
-            backgroundColor: "var(--color-accent)",
-            color: "var(--color-primary-foreground)",
-          }}
-        >
-          {message.content}
-        </div>
+      <div className="msg-in flex flex-col items-end gap-2">
+        {hasAttachments && (
+          <div className="flex max-w-[78%] flex-wrap justify-end gap-2">
+            {message.attachments!.map((a) => (
+              <a
+                key={a.id}
+                href={a.previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block h-28 w-28 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={a.previewUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        )}
+        {hasText && (
+          <div
+            className="max-w-[78%] rounded-[4px] px-5 py-3 text-[19px] leading-[1.55] whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+            style={{
+              backgroundColor: "var(--color-accent)",
+              color: "var(--color-primary-foreground)",
+            }}
+          >
+            {message.content}
+          </div>
+        )}
       </div>
     );
   }
 
   if (!message.content) {
-    return (
-      <div className="msg-in flex items-center gap-2.5 text-[18px] text-[var(--color-muted-foreground)]">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        Arbejder…
-      </div>
-    );
+    return <WorkingRow />;
   }
 
   return (
     <div className="msg-in flex flex-col gap-3">
-      <Markdown onCallService={onCallService}>{message.content}</Markdown>
-      <div className="-mt-1 flex items-center">
-        <SpeakButton text={message.content} />
+      <div className="relative">
+        <Markdown onCallService={onCallService}>{message.content}</Markdown>
+        {isStreaming && (
+          <span className="stream-caret -ml-0.5 align-baseline" aria-hidden />
+        )}
       </div>
+      {!isStreaming && (
+        <div className="-mt-1 flex items-center">
+          <SpeakButton text={message.content} />
+        </div>
+      )}
       {message.images && message.images.length > 0 && (
         <ImageSources images={message.images} />
       )}
       {message.sources && message.sources.length > 0 && (
         <SourceChips sources={message.sources} />
       )}
+    </div>
+  );
+}
+
+// Pre-send thumbnail with status overlay (spinner while uploading,
+// red border on error). The X button is always available so the
+// operator can clear a failed upload without retrying.
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: PendingAttachment;
+  onRemove: () => void;
+}) {
+  const tCommon = useTranslations("common");
+  const tChat = useTranslations("chat");
+  return (
+    <div
+      className={cn(
+        "relative h-20 w-20 overflow-hidden rounded-[6px] border bg-[var(--color-muted)] shadow-[var(--shadow-sm)]",
+        attachment.status === "error"
+          ? "border-[var(--ds-red)]"
+          : "border-[var(--color-hairline)]",
+      )}
+      title={
+        attachment.status === "error"
+          ? attachment.errorMessage ?? tChat("attachments.failed")
+          : attachment.file.name
+      }
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={attachment.previewUrl}
+        alt=""
+        className={cn(
+          "h-full w-full object-cover",
+          attachment.status !== "ready" && "opacity-60",
+        )}
+      />
+      {attachment.status === "uploading" && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+          <Loader2 className="h-5 w-5 animate-spin text-white" />
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={tCommon("close")}
+        className="absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+function WorkingRow() {
+  const t = useTranslations("chat");
+  return (
+    <div className="msg-in flex items-center gap-2.5 text-[18px]">
+      <span className="text-shimmer font-medium">{t("working")}</span>
     </div>
   );
 }
@@ -1059,6 +1434,7 @@ function ImageSources({ images }: { images: ImageSourceRef[] }) {
 }
 
 function ImageSourceCard({ image }: { image: ImageSourceRef }) {
+  const tCommon = useTranslations("common");
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const isPdfFigure = image.mimeType === "application/pdf";
@@ -1096,7 +1472,7 @@ function ImageSourceCard({ image }: { image: ImageSourceRef }) {
   }
 
   const pageLabel =
-    image.pageFrom != null ? ` · s. ${image.pageFrom}` : "";
+    image.pageFrom != null ? ` · ${tCommon("page", { n: image.pageFrom })}` : "";
 
   return (
     <button
@@ -1141,88 +1517,6 @@ function ImageSourceCard({ image }: { image: ImageSourceRef }) {
   );
 }
 
-function SourceChips({ sources }: { sources: SourceRef[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 pt-1">
-      <span className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-        Kilder
-      </span>
-      {sources.map((s) => (
-        <SourceChip key={s.id} source={s} />
-      ))}
-    </div>
-  );
-}
-
-function SourceChip({ source }: { source: SourceRef }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function open() {
-    if (loading) return;
-    setError(null);
-    setLoading(true);
-    // We pop a placeholder window synchronously so the click counts as
-    // user-initiated; popup blockers won't fire after the await.
-    const popup =
-      typeof window !== "undefined" ? window.open("", "_blank") : null;
-    try {
-      const res = await fetchWithAuth(
-        `/api/documents/${encodeURIComponent(source.id)}/url`,
-      );
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Server error ${res.status}${txt ? `: ${txt}` : ""}`);
-      }
-      const body = (await res.json()) as { url?: string };
-      if (!body.url) throw new Error("Manglende URL i svaret");
-      const target =
-        source.pageFrom != null
-          ? `${body.url}#page=${source.pageFrom}`
-          : body.url;
-      if (popup) popup.location.href = target;
-      else window.open(target, "_blank");
-    } catch (err: unknown) {
-      if (popup) popup.close();
-      setError(err instanceof Error ? err.message : "Kunne ikke åbne dokument");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const pageLabel = source.pageFrom != null ? ` · s. ${source.pageFrom}` : "";
-
-  return (
-    <button
-      type="button"
-      onClick={open}
-      disabled={loading}
-      title={error ?? `Åbn ${source.title}${pageLabel} i ny fane`}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3 py-1 text-[12px] text-[var(--color-foreground)]",
-        "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
-        "transition-colors hover:border-[var(--color-brand)]/40 hover:bg-[var(--color-muted)]/40",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-        "disabled:opacity-60",
-        error && "border-red-300 text-red-700",
-      )}
-    >
-      {loading ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <FileText className="h-3 w-3" />
-      )}
-      <span className="max-w-[260px] truncate">{source.title}</span>
-      {source.pageFrom != null && (
-        <span className="text-[var(--color-muted-foreground)]">
-          s. {source.pageFrom}
-        </span>
-      )}
-      <ExternalLink className="h-3 w-3 text-[var(--color-muted-foreground)]" />
-    </button>
-  );
-}
-
 function FeedbackCard({
   state,
   onAnswerYes,
@@ -1240,6 +1534,8 @@ function FeedbackCard({
   onDismiss: () => void;
   onStartNew: () => void;
 }) {
+  const t = useTranslations("feedback");
+  const tCommon = useTranslations("common");
   if (state.phase === "thanks") {
     return (
       <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
@@ -1250,16 +1546,14 @@ function FeedbackCard({
           />
           <div className="flex-1">
             <p className="text-[15px] font-medium text-[var(--color-foreground)]">
-              Tak for din feedback.
+              {t("thanksTitle")}
             </p>
             <p className="mt-0.5 text-[13px] text-[var(--color-muted-foreground)]">
-              {state.resolved
-                ? "Markeret som løst. Det hjælper næste operatør med samme problem."
-                : "Markeret som uløst. Vi kigger på det."}
+              {state.resolved ? t("thanksResolved") : t("thanksUnresolved")}
             </p>
           </div>
           <Button variant="secondary" size="sm" onClick={onStartNew}>
-            Start ny samtale
+            {t("startNew")}
           </Button>
         </div>
       </div>
@@ -1271,14 +1565,14 @@ function FeedbackCard({
       <div className="rounded-[4px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-medium">Kunne ikke gemme feedback</p>
+            <p className="font-medium">{t("errorTitle")}</p>
             <p className="mt-0.5 text-[13px]">{state.message}</p>
           </div>
           <button
             type="button"
             onClick={onDismiss}
             className="text-red-700/70 hover:text-red-700"
-            aria-label="Luk"
+            aria-label={tCommon("close")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -1296,11 +1590,10 @@ function FeedbackCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[15px] font-medium text-[var(--color-foreground)]">
-            Var dette nyttigt?
+            {t("prompt")}
           </p>
           <p className="mt-0.5 text-[13px] text-[var(--color-muted-foreground)]">
-            Hjælp den næste operatør ved at fortælle os om svaret løste dit
-            problem.
+            {t("promptHint")}
           </p>
         </div>
         <button
@@ -1308,7 +1601,7 @@ function FeedbackCard({
           onClick={onDismiss}
           disabled={submitting}
           className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
-          aria-label="Luk"
+          aria-label={tCommon("close")}
         >
           <X className="h-4 w-4" />
         </button>
@@ -1318,7 +1611,7 @@ function FeedbackCard({
         <div className="mt-3 flex items-center gap-2">
           <Button size="sm" onClick={onAnswerYes} disabled={submitting}>
             <ThumbsUp className="mr-1.5 h-4 w-4" />
-            Ja, det løste det
+            {t("yes")}
           </Button>
           <Button
             variant="secondary"
@@ -1327,7 +1620,7 @@ function FeedbackCard({
             disabled={submitting}
           >
             <ThumbsDown className="mr-1.5 h-4 w-4" />
-            Nej
+            {t("no")}
           </Button>
           {submitting && (
             <Loader2 className="ml-1 h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
@@ -1359,13 +1652,14 @@ function YesSolutionForm({
   onSubmit: () => void;
   onSkip: () => void;
 }) {
+  const t = useTranslations("feedback");
   return (
     <div className="mt-3 flex flex-col gap-2">
       <label
         htmlFor="solution"
         className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]"
       >
-        Hvad virkede? (valgfrit — bliver delt med næste operatør)
+        {t("solutionLabel")}
       </label>
       <Textarea
         id="solution"
@@ -1373,7 +1667,7 @@ function YesSolutionForm({
         onChange={(e) => onChange(e.target.value)}
         rows={3}
         disabled={submitting}
-        placeholder="F.eks. RESET-knappen + genstart styringen efter alarm-koden var læst."
+        placeholder={t("solutionPlaceholder")}
       />
       <div className="flex justify-end gap-2">
         <Button
@@ -1382,10 +1676,10 @@ function YesSolutionForm({
           onClick={onSkip}
           disabled={submitting}
         >
-          Spring over
+          {t("skip")}
         </Button>
         <Button size="sm" onClick={onSubmit} disabled={submitting}>
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : t("submit")}
         </Button>
       </div>
     </div>
@@ -1405,30 +1699,32 @@ function EscalateCard({
   onCancel: () => void;
   onStartNew: () => void;
 }) {
+  const t = useTranslations("escalate");
   if (state.phase === "done") {
+    const target = state.label ?? state.target;
     return (
       <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-4 shadow-[var(--shadow-md)]">
         <div className="flex items-start gap-3">
           <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
           <div className="flex-1">
             <p className="text-[15px] font-medium text-amber-900">
-              Service tilkaldt
+              {t("doneTitle")}
             </p>
             <p className="mt-0.5 text-[13px] text-amber-900/80">
-              {state.channel === "phone"
-                ? `Vi åbner telefonopkald til ${state.label ?? state.target}.`
+              {state.channel === "sms"
+                ? t("doneSms", { target })
                 : state.channel === "email"
-                  ? `E-mail sendt til ${state.label ?? state.target} med et link til samtalen.`
+                  ? t("doneEmail", { target })
                   : state.channel === "webhook"
-                    ? `Service-systemet har modtaget anmodningen${state.label ? ` (${state.label})` : ""}.`
-                    : "Send linket nedenfor til service-teamet."}
+                    ? t("doneWebhook", { label: state.label ?? "none" })
+                    : t("doneServiceTicket")}
             </p>
             {state.channel === "service_ticket" && (
               <ShareLinkRow url={state.shareUrl} />
             )}
           </div>
           <Button variant="secondary" size="sm" onClick={onStartNew}>
-            Start ny samtale
+            {t("startNew")}
           </Button>
         </div>
       </div>
@@ -1440,14 +1736,14 @@ function EscalateCard({
       <div className="rounded-[4px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-medium">Kunne ikke tilkalde service</p>
+            <p className="font-medium">{t("errorTitle")}</p>
             <p className="mt-0.5 text-[13px]">{state.message}</p>
           </div>
           <button
             type="button"
             onClick={onCancel}
             className="text-red-700/70 hover:text-red-700"
-            aria-label="Luk"
+            aria-label={t("cancel")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -1465,11 +1761,10 @@ function EscalateCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[15px] font-medium text-amber-900">
-            Tilkald en tekniker?
+            {t("confirmTitle")}
           </p>
           <p className="mt-0.5 text-[13px] text-amber-900/80">
-            Vi sender et midlertidigt link til samtalen til service-kontakten
-            for din maskine. Tilføj gerne en kort beskrivelse.
+            {t("confirmHint")}
           </p>
         </div>
         <button
@@ -1477,7 +1772,7 @@ function EscalateCard({
           onClick={onCancel}
           disabled={submitting}
           className="text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
-          aria-label="Annullér"
+          aria-label={t("cancel")}
         >
           <X className="h-4 w-4" />
         </button>
@@ -1489,7 +1784,7 @@ function EscalateCard({
           onChange={(e) => onNoteChange(e.target.value)}
           rows={2}
           disabled={submitting}
-          placeholder="F.eks. Maskinen alarmerer 731 og starter ikke efter genstart."
+          placeholder={t("notePlaceholder")}
         />
         <div className="flex justify-end gap-2">
           <Button
@@ -1498,7 +1793,7 @@ function EscalateCard({
             onClick={onCancel}
             disabled={submitting}
           >
-            Annullér
+            {t("cancel")}
           </Button>
           <Button
             size="sm"
@@ -1510,7 +1805,7 @@ function EscalateCard({
             ) : (
               <span className="inline-flex items-center gap-1.5">
                 <Wrench className="h-4 w-4" />
-                Tilkald service
+                {t("submit")}
               </span>
             )}
           </Button>
@@ -1521,6 +1816,7 @@ function EscalateCard({
 }
 
 function ShareLinkRow({ url }: { url: string }) {
+  const t = useTranslations("escalate");
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -1548,12 +1844,12 @@ function ShareLinkRow({ url }: { url: string }) {
         {copied ? (
           <>
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-            Kopieret
+            {t("copied")}
           </>
         ) : (
           <>
             <Copy className="h-3.5 w-3.5" />
-            Kopiér
+            {t("copy")}
           </>
         )}
       </button>

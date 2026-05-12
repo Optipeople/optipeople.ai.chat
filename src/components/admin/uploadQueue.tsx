@@ -17,6 +17,7 @@ import {
   Loader2,
   ScanEye,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Tag } from "@/components/ui/tag";
 import {
@@ -97,6 +98,7 @@ export function UploadQueueProvider({
   onChanged: () => Promise<void>;
   children: ReactNode;
 }) {
+  const t = useTranslations("admin.uploadQueue");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const queueRef = useRef<QueueItem[]>([]);
   const processingRef = useRef(false);
@@ -179,7 +181,7 @@ export function UploadQueueProvider({
                 ? {
                     ...i,
                     status: "failed",
-                    error: e instanceof Error ? e.message : "Fejlede",
+                    error: e instanceof Error ? e.message : t("failed"),
                   }
                 : i,
             ),
@@ -265,6 +267,7 @@ function UploadQueuePanel({
   processingDocs: AdminDocument[];
   onClearFinished: () => void;
 }) {
+  const t = useTranslations("admin.uploadQueue");
   // Drop server-processing rows for docs the in-tab queue is already
   // showing (an in-flight reprocess from this tab). Avoids duplicate
   // rows for the same work.
@@ -289,16 +292,25 @@ function UploadQueuePanel({
     <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-center justify-between text-[12px]">
         <h2 className="text-[14px] font-semibold text-[var(--color-foreground)]">
-          Behandlingskø
+          {t("heading")}
         </h2>
         <span className="text-[var(--color-muted-foreground)]">
           {serverRows.length > 0
-            ? `${serverRows.length} på server${pendingOrUploading ? `, ${queue.length - finishedCount - failedCount} i denne fane` : ""}`
+            ? pendingOrUploading
+              ? t("serverWithTab", {
+                  server: serverRows.length,
+                  tab: queue.length - finishedCount - failedCount,
+                })
+              : t("serverOnly", { server: serverRows.length })
             : pendingOrUploading
-              ? `${queue.length - finishedCount - failedCount} af ${queue.length} i gang…`
-              : `${finishedCount} færdig${finishedCount === 1 ? "" : "e"}${
-                  failedCount > 0 ? `, ${failedCount} fejlet` : ""
-                }`}
+              ? t("inProgress", {
+                  remaining: queue.length - finishedCount - failedCount,
+                  total: queue.length,
+                })
+              : (finishedCount === 1
+                  ? t("doneCountOne", { done: finishedCount })
+                  : t("doneCount", { done: finishedCount })) +
+                (failedCount > 0 ? t("failedSuffix", { failed: failedCount }) : "")}
         </span>
         {!pendingOrUploading && finishedCount > 0 && (
           <button
@@ -306,7 +318,7 @@ function UploadQueuePanel({
             onClick={onClearFinished}
             className="ml-3 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
           >
-            Ryd færdige
+            {t("clearFinished")}
           </button>
         )}
       </div>
@@ -314,7 +326,7 @@ function UploadQueuePanel({
       {serverRows.length > 0 && (
         <>
           <p className="mt-3 text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            Behandler på server (overlever refresh)
+            {t("serverProcessing")}
           </p>
           <ul className="mt-1.5 flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[4px] border border-[var(--color-hairline)]">
             {serverRows.map((d) => (
@@ -328,7 +340,7 @@ function UploadQueuePanel({
         <>
           {serverRows.length > 0 && (
             <p className="mt-4 text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Denne fane
+              {t("thisTab")}
             </p>
           )}
           <ul className={cn(
@@ -346,16 +358,17 @@ function UploadQueuePanel({
 }
 
 function ServerRow({ doc }: { doc: AdminDocument }) {
+  const t = useTranslations("admin.uploadQueue");
   // Prefer the fine-grained label written by the pipeline; fall back to
   // a status-derived word for legacy rows that landed in a non-terminal
   // state before the progress columns existed.
   const fallbackLabel =
     doc.status === "uploaded"
-      ? "Modtaget"
+      ? t("statusReceived")
       : doc.status === "extracting"
-        ? "Udtrækker tekst"
+        ? t("statusExtracting")
         : doc.status === "embedding"
-          ? "Embedder"
+          ? t("statusEmbedding")
           : doc.status;
   const label = doc.progressLabel ?? fallbackLabel;
   const pct = doc.progress;
@@ -375,7 +388,7 @@ function ServerRow({ doc }: { doc: AdminDocument }) {
             </Tag>
           )}
           {doc.extractionSource === "claude-ocr" && (
-            <span title="Tekst udvundet med Claude vision (OCR)">
+            <span title={t("ocrTooltip")}>
               <ScanEye className="h-3.5 w-3.5 text-violet-600" />
             </span>
           )}
@@ -411,6 +424,7 @@ function formatBytes(b: number | null): string {
 }
 
 function QueueRow({ item }: { item: QueueItem }) {
+  const t = useTranslations("admin.uploadQueue");
   const title = item.kind === "upload" ? item.file.name : item.documentTitle;
   const size = item.kind === "upload" ? item.file.size : item.fileSize;
   const isImage = item.kind === "upload" && item.fileKind === "image";
@@ -452,9 +466,9 @@ function QueueRow({ item }: { item: QueueItem }) {
             </span>
           )}
           {ocrResult && (
-            <span title="Tekst udvundet med Claude vision (OCR)">
+            <span title={t("ocrTooltip")}>
               <ScanEye
-                aria-label="Claude vision OCR"
+                aria-label={t("ocrAria")}
                 className="h-3.5 w-3.5 text-violet-600"
               />
             </span>
@@ -474,12 +488,12 @@ function QueueRow({ item }: { item: QueueItem }) {
         {item.status === "uploading" && (
           <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
             {item.kind === "upload" && item.progress < 100
-              ? `Uploader ${item.progress}%…`
+              ? t("uploadingPct", { pct: item.progress })
               : item.kind === "reprocess"
-                ? "OCR + embedding…"
+                ? t("ocrEmbedding")
                 : isImage
-                  ? "Beskriver & embedder…"
-                  : "Behandler & embedder…"}
+                  ? t("describingImage")
+                  : t("processingEmbedding")}
           </p>
         )}
         {item.status === "done" &&
@@ -487,8 +501,10 @@ function QueueRow({ item }: { item: QueueItem }) {
           item.result &&
           item.fileKind === "pdf" && (
             <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-              {(item.result as UploadResult).chunkCount} chunks fra{" "}
-              {(item.result as UploadResult).pageCount} sider
+              {t("chunksFromPages", {
+                chunks: (item.result as UploadResult).chunkCount,
+                pages: (item.result as UploadResult).pageCount,
+              })}
             </p>
           )}
         {item.status === "done" &&
@@ -503,8 +519,10 @@ function QueueRow({ item }: { item: QueueItem }) {
           item.kind === "reprocess" &&
           item.result && (
             <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-              {item.result.chunkCount} chunks fra {item.result.pageCount}{" "}
-              sider · re-embedded
+              {t("chunksReembedded", {
+                chunks: item.result.chunkCount,
+                pages: item.result.pageCount,
+              })}
             </p>
           )}
         {item.status === "failed" && item.error && (

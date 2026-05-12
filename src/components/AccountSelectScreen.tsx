@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Loader2, ChevronRight, Search, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { OptipeopleLogo } from "@/components/logo";
 import { UserMenu } from "@/components/UserMenu";
@@ -16,6 +17,8 @@ export function AccountSelectScreen() {
     selectAccount,
     reloadAccounts,
   } = useAuth();
+  const t = useTranslations("accountSelect");
+  const tc = useTranslations("common");
 
   const [query, setQuery] = useState("");
 
@@ -50,16 +53,16 @@ export function AccountSelectScreen() {
           )}
         >
           <h1 className="mb-1 text-[22px] font-semibold text-[var(--color-foreground)]">
-            Vælg konto
+            {t("heading")}
           </h1>
           <p className="mb-6 text-[15px] text-[var(--color-muted-foreground)]">
-            Du har adgang til flere konti. Vælg den du vil arbejde i.
+            {t("subtitle")}
           </p>
 
           {isLoadingAccounts && accounts.length === 0 && (
             <div className="flex items-center gap-2 py-6 text-[15px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-5 w-5 animate-spin" />
-              Indlæser konti…
+              {t("loading")}
             </div>
           )}
 
@@ -75,7 +78,7 @@ export function AccountSelectScreen() {
                 {isLoadingAccounts ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  "Prøv igen"
+                  tc("retry")
                 )}
               </Button>
             </div>
@@ -83,14 +86,16 @@ export function AccountSelectScreen() {
 
           {!isLoadingAccounts && !accountsError && accounts.length === 0 && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-              Der er endnu ikke tilføjet maskiner i Opti Assist. Skriv til{" "}
-              <a
-                href="mailto:support@optipeople.dk"
-                className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
-              >
-                support@optipeople.dk
-              </a>{" "}
-              for hjælp med at komme i gang.
+              {t.rich("empty", {
+                email: () => (
+                  <a
+                    href={`mailto:${tc("supportEmail")}`}
+                    className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
+                  >
+                    {tc("supportEmail")}
+                  </a>
+                ),
+              })}
             </p>
           )}
 
@@ -109,14 +114,14 @@ export function AccountSelectScreen() {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Søg efter konti…"
+                    placeholder={t("search")}
                     className="h-11 flex-1 bg-transparent text-[15px] text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-muted-foreground)]"
                   />
                   {query && (
                     <button
                       type="button"
                       onClick={() => setQuery("")}
-                      aria-label="Ryd søgning"
+                      aria-label={tc("clearSearch")}
                       className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]"
                     >
                       <X className="h-4 w-4" />
@@ -127,7 +132,7 @@ export function AccountSelectScreen() {
 
               {filtered.length === 0 ? (
                 <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-                  Ingen resultater.
+                  {tc("noResults")}
                 </p>
               ) : (
                 <ul className="flex max-h-[min(60vh,480px)] flex-col gap-2 overflow-y-auto pr-1">

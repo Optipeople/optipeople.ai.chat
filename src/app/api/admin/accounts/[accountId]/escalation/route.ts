@@ -7,6 +7,7 @@
 // — if no target is configured, the operator gets a "service ikke
 // konfigureret" hint.
 
+import { getTranslations } from "next-intl/server";
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import type { EscalationChannel } from "@/lib/escalation";
 import { getSupabaseServerClient } from "@/lib/supabase";
@@ -28,11 +29,16 @@ export type AdminEscalationTargetResponse = {
 };
 
 const VALID_CHANNELS: EscalationChannel[] = [
-  "phone",
+  "sms",
   "email",
   "service_ticket",
   "webhook",
 ];
+
+// E.164 with a leading + and 8–15 digits. Twilio accepts looser inputs
+// but normalises them in unpredictable ways; we'd rather reject up-front
+// than send to the wrong number.
+const E164_RE = /^\+[1-9]\d{7,14}$/;
 
 async function gate(req: Request) {
   try {
@@ -80,7 +86,8 @@ export async function GET(
 
   if (error) {
     console.error("admin escalation GET failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    const t = await getTranslations("server");
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const result: AdminEscalationTargetResponse = {
@@ -97,12 +104,13 @@ export async function PUT(
   if (denied) return denied;
 
   const { accountId } = await ctx.params;
+  const t = await getTranslations("server");
 
   let body: { channel?: unknown; target?: unknown; label?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
   const channel =
@@ -118,16 +126,19 @@ export async function PUT(
 
   if (!channel) {
     return Response.json(
-      {
-        error:
-          "channel must be 'phone', 'email', 'service_ticket' or 'webhook'",
-      },
+      { error: t("admin.invalidChannel") },
       { status: 400 },
     );
   }
   if (target.length === 0 || target.length > 500) {
     return Response.json(
-      { error: "target is required (1–500 chars)" },
+      { error: t("admin.invalidTargetLength") },
+      { status: 400 },
+    );
+  }
+  if (channel === "sms" && !E164_RE.test(target)) {
+    return Response.json(
+      { error: t("admin.invalidPhone") },
       { status: 400 },
     );
   }
@@ -142,7 +153,7 @@ export async function PUT(
       }
     } catch {
       return Response.json(
-        { error: "Webhook target skal være en gyldig http(s)://-URL" },
+        { error: t("admin.invalidWebhookUrl") },
         { status: 400 },
       );
     }
@@ -167,7 +178,7 @@ export async function PUT(
 
   if (error || !data) {
     console.error("admin escalation PUT failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
   const result: AdminEscalationTargetResponse = {
@@ -193,7 +204,8 @@ export async function DELETE(
 
   if (error) {
     console.error("admin escalation DELETE failed:", error);
-    return Response.json({ error: "Database error" }, { status: 500 });
+    const t = await getTranslations("server");
+    return Response.json({ error: t("dbError") }, { status: 500 });
   }
   return Response.json({ ok: true });
 }

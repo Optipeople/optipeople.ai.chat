@@ -26,6 +26,7 @@ export type AdminDocument = {
   folderPath: string | null;
   progress: number | null;
   progressLabel: string | null;
+  operatorVisible: boolean;
 };
 
 export type AdminMachineDetail = {
@@ -85,7 +86,7 @@ export async function GET(
     supabase
       .from("kb_documents")
       .select(
-        "id, title, summary, status, source_type, page_count, byte_size, created_at, created_by, extraction_source, folder_path, progress, progress_label",
+        "id, title, summary, status, source_type, page_count, byte_size, created_at, created_by, extraction_source, folder_path, progress, progress_label, operator_visible",
       )
       .eq("machine_id", id)
       .order("created_at", { ascending: false }),
@@ -137,6 +138,7 @@ export async function GET(
         folder_path: string | null;
         progress: number | null;
         progress_label: string | null;
+        operator_visible: boolean;
       };
       return {
         id: r.id,
@@ -152,6 +154,7 @@ export async function GET(
         folderPath: r.folder_path ?? null,
         progress: r.progress ?? null,
         progressLabel: r.progress_label ?? null,
+        operatorVisible: r.operator_visible === true,
       };
     }),
   };

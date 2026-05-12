@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { OptipeopleLogo } from "@/components/logo";
 import { useAuth } from "@/auth/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ const MIDNIGHT_GREEN = "#134343";
 
 export function LoginScreen() {
   const { login, isLoggingIn, loginError } = useAuth();
+  const t = useTranslations("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
@@ -47,7 +49,7 @@ export function LoginScreen() {
         </div>
 
         <h1 className="pb-[18px] pt-[18px] text-[21px] font-black leading-[28px] text-black/75">
-          Log ind
+          {t("heading")}
         </h1>
 
         <div className="flex flex-col gap-2 pb-2">
@@ -59,7 +61,7 @@ export function LoginScreen() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={isLoggingIn}
-            placeholder="Brugernavn eller e-mail"
+            placeholder={t("emailPlaceholder")}
             className={cn(
               "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
               "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
@@ -76,7 +78,7 @@ export function LoginScreen() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={isLoggingIn}
-            placeholder="Adgangskode"
+            placeholder={t("passwordPlaceholder")}
             className={cn(
               "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
               "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
@@ -94,7 +96,7 @@ export function LoginScreen() {
             onChange={(e) => setRemember(e.target.checked)}
             className="size-[14px] cursor-pointer accent-[#134343]"
           />
-          Husk mig på denne computer
+          {t("rememberMe")}
         </label>
 
         {loginError && (
@@ -108,22 +110,22 @@ export function LoginScreen() {
             {isLoggingIn ? (
               <Loader2 className="h-[14px] w-[14px] animate-spin" />
             ) : (
-              "Log ind"
+              t("submit")
             )}
           </Button>
         </div>
 
         <p className="pt-6 pb-3 text-[14px] leading-[21px] text-black/90">
-          Hjælp mig.
+          {t("help")}
           <br aria-hidden />
-          Jeg har{" "}
+          {t("forgotPasswordPrefix")}
           <button
             type="button"
             className="text-[#134343] underline decoration-solid hover:opacity-70"
           >
-            glemt min adgangskode
+            {t("forgotPassword")}
           </button>
-          .
+          {t("forgotPasswordSuffix")}
         </p>
       </form>
 
@@ -135,14 +137,8 @@ export function LoginScreen() {
             rel="noopener noreferrer"
             className="hover:underline"
           >
-            Terms of Service
+            {t("termsOfService")}
           </a>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 hover:underline"
-          >
-            Sprog: Dansk
-          </button>
         </p>
       </div>
 

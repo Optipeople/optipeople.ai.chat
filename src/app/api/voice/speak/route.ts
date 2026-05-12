@@ -50,8 +50,7 @@ export async function POST(req: Request) {
   try {
     const speech = await openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      // "nova" reads Danish naturally with a neutral female timbre.
-      voice: "nova",
+      voice: "ash",
       input: text,
       response_format: "mp3",
     });

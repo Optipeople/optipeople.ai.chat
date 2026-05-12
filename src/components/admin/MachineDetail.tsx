@@ -10,6 +10,7 @@ import {
   Copy,
   Download,
   Eye,
+  EyeOff,
   Folder,
   FolderOpen,
   GripVertical,
@@ -29,6 +30,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import {
   createAdminFolder,
@@ -40,6 +42,7 @@ import {
   getAdminMachine,
   revokeAdminMachineQr,
   updateAdminDocumentFolder,
+  updateAdminDocumentOperatorVisible,
   updateAdminDocumentSummary,
   updateAdminMachineName,
   type AdminDocument,
@@ -73,22 +76,27 @@ function formatBytes(b: number | null): string {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function statusBadge(status: string): { label: string; variant: TagVariant } {
+function statusBadge(
+  status: string,
+  t: (key: string) => string,
+): { label: string; variant: TagVariant } {
   switch (status) {
     case "ready":
-      return { label: "Klar", variant: "positive" };
+      return { label: t("statusReady"), variant: "positive" };
     case "embedding":
     case "extracting":
     case "uploaded":
-      return { label: "Behandler", variant: "warning" };
+      return { label: t("statusProcessing"), variant: "warning" };
     case "failed":
-      return { label: "Fejlet", variant: "issue" };
+      return { label: t("statusFailed"), variant: "issue" };
     default:
       return { label: status, variant: "default" };
   }
 }
 
 export function MachineDetail({ machineId }: { machineId: string }) {
+  const t = useTranslations("admin.machineDetail");
+  const tc = useTranslations("common");
   const [data, setData] = useState<AdminMachineDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +111,7 @@ export function MachineDetail({ machineId }: { machineId: string }) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
         setLoading(false);
       });
     return () => {
@@ -144,7 +152,7 @@ export function MachineDetail({ machineId }: { machineId: string }) {
   if (error || !data) {
     return (
       <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-[var(--ds-red)]">
-        {error ?? "Maskinen kunne ikke hentes"}
+        {error ?? t("fetchFailed")}
       </div>
     );
   }
@@ -157,23 +165,20 @@ export function MachineDetail({ machineId }: { machineId: string }) {
         (d) => d.status !== "ready" && d.status !== "failed",
       )}
     >
-      <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-8 pb-32">
         <Link
           href="/admin/machines"
           className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Alle maskiner
+          {t("backAll")}
         </Link>
 
         <MachineSummary machine={data} onChanged={reload} />
 
         <MachineQrCard machine={data} onChanged={reload} />
 
-        <MachineEscalationCard
-          accountId={data.accountId}
-          accountLabel={data.accountId}
-        />
+        <MachineEscalationCard accountId={data.accountId} />
 
         <UploadCard existingFolders={mergedFolders(data)} />
 
@@ -203,6 +208,7 @@ function MachineSummary({
   machine: AdminMachineDetail;
   onChanged: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const router = useRouter();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
@@ -249,7 +255,7 @@ function MachineSummary({
       await onChanged();
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setSaving(false);
     }
@@ -258,10 +264,9 @@ function MachineSummary({
   async function remove() {
     const label = machine.displayName ?? machine.machineId;
     const ok = await confirm({
-      title: `Slet maskinen "${label}"?`,
-      description:
-        "Vidensbasen, alle dokumenter, mapper og embeddings fjernes permanent. Samtaler og audit-historik beholdes. Handlingen kan ikke fortrydes.",
-      confirmLabel: "Slet maskine",
+      title: t("deleteConfirmTitle", { label }),
+      description: t("deleteConfirmBody"),
+      confirmLabel: t("deleteConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -271,7 +276,7 @@ function MachineSummary({
       await deleteAdminMachine(machine.machineId);
       router.push("/admin/machines");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
       setDeleting(false);
     }
   }
@@ -306,7 +311,7 @@ function MachineSummary({
                 onClick={() => void save()}
                 disabled={saving || !draft.trim()}
                 className="rounded-[4px] p-2 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)] disabled:opacity-40"
-                aria-label="Gem"
+                aria-label={t("saveAria")}
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
               </button>
@@ -318,7 +323,7 @@ function MachineSummary({
                 }}
                 disabled={saving}
                 className="rounded-[4px] p-2 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
-                aria-label="Annullér"
+                aria-label={t("cancelAria")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -329,104 +334,104 @@ function MachineSummary({
               className="group flex items-center gap-2 text-left"
             >
               <h1 className="truncate text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
-                {machine.displayName ?? "(uden navn)"}
+                {machine.displayName ?? t("noName")}
               </h1>
               <Pencil className="h-4 w-4 text-[var(--color-muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100" />
             </button>
           )}
-          {err && (
-            <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
-          )}
-          <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
-            <div className="flex items-center gap-2">
-              <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
-                Maskinnavn
-                <span
-                  title="Hentet fra Optipeople-platformen (det navn maskinen er registreret med dér)."
-                  aria-label="Kilde: Optipeople-platformen"
-                  className="inline-flex cursor-help"
-                >
-                  <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
-                </span>
-              </dt>
-              <dd className="text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
-            </div>
-            <div className="flex items-center gap-2">
-              <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
-                Kontonavn
-                <span
-                  title="Hentet fra Optipeople-platformen (det navn kontoen er registreret med dér)."
-                  aria-label="Kilde: Optipeople-platformen"
-                  className="inline-flex cursor-help"
-                >
-                  <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
-                </span>
-              </dt>
-              <dd className="text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Machine ID</dt>
-              <dd className="font-mono text-[var(--color-foreground)]">{machine.machineId}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Konto ID</dt>
-              <dd className="font-mono text-[var(--color-foreground)]">{machine.accountId}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Dokumenter</dt>
-              <dd className="text-[var(--color-foreground)]">{machine.documents.length}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="text-[var(--color-muted-foreground)]">Opdateret</dt>
-              <dd className="text-[var(--color-foreground)]">
-                {DA_DATE.format(new Date(machine.updatedAt))}
-              </dd>
-            </div>
-          </dl>
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           <Link
             href={`/admin/machines/${machine.machineId}/conversations`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
-            title="Se alle samtaler for denne maskine"
+            title={t("conversationsTitle")}
           >
             <History className="mr-1.5 h-4 w-4" />
-            Samtaler
+            {t("conversationsBtn")}
           </Link>
           <Link
             href={`/admin/machines/${machine.machineId}/escalations`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
-            title="Se alle service-tilkald for denne maskine"
+            title={t("escalationsTitle")}
           >
             <Wrench className="mr-1.5 h-4 w-4" />
-            Eskaleringer
+            {t("escalationsBtn")}
           </Link>
           <a
             href={chatHref}
             target="_blank"
             rel="noopener noreferrer"
             className={buttonClasses({ variant: "secondary", size: "sm" })}
-            title="Åbn operatør-chat for denne maskine i ny fane"
+            title={t("testChatTitle")}
           >
             <MessageSquare className="mr-1.5 h-4 w-4" />
-            Test chat
+            {t("testChat")}
           </a>
           <Button
             variant="destructive"
             size="sm"
             onClick={() => void remove()}
             disabled={deleting}
-            title="Slet vidensbasen for denne maskine"
+            title={t("deleteMachineTitle")}
           >
             {deleting ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
               <Trash2 className="mr-1.5 h-4 w-4" />
             )}
-            Slet maskine
+            {t("deleteMachine")}
           </Button>
         </div>
       </div>
+      {err && (
+        <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
+      )}
+      <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex items-center gap-2">
+          <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+            {t("machineName")}
+            <span
+              title={t("machineNameTooltip")}
+              aria-label={t("machineNameSourceAria")}
+              className="inline-flex cursor-help"
+            >
+              <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
+            </span>
+          </dt>
+          <dd className="text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
+        </div>
+        <div className="flex items-center gap-2">
+          <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+            {t("accountName")}
+            <span
+              title={t("accountNameTooltip")}
+              aria-label={t("machineNameSourceAria")}
+              className="inline-flex cursor-help"
+            >
+              <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
+            </span>
+          </dt>
+          <dd className="text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-[var(--color-muted-foreground)]">{t("machineIdLabel")}</dt>
+          <dd className="font-mono text-[var(--color-foreground)]">{machine.machineId}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-[var(--color-muted-foreground)]">{t("accountIdLabel")}</dt>
+          <dd className="font-mono text-[var(--color-foreground)]">{machine.accountId}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-[var(--color-muted-foreground)]">{t("documentsLabel")}</dt>
+          <dd className="text-[var(--color-foreground)]">{machine.documents.length}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-[var(--color-muted-foreground)]">{t("updatedLabel")}</dt>
+          <dd className="text-[var(--color-foreground)]">
+            {DA_DATE.format(new Date(machine.updatedAt))}
+          </dd>
+        </div>
+      </dl>
     </section>
   );
 }
@@ -438,6 +443,7 @@ function MachineQrCard({
   machine: AdminMachineDetail;
   onChanged: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const confirm = useConfirm();
   const [busy, setBusy] = useState<"generate" | "revoke" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -456,10 +462,9 @@ function MachineQrCard({
     try {
       if (machine.qrToken) {
         const ok = await confirm({
-          title: "Regenerér QR-kode?",
-          description:
-            "Den eksisterende kode bliver ugyldig med det samme. Operatører der scanner gamle stickers vil få en fejl indtil de får ny print.",
-          confirmLabel: "Regenerér",
+          title: t("qrRegenConfirmTitle"),
+          description: t("qrRegenConfirmBody"),
+          confirmLabel: t("qrRegenConfirmLabel"),
           danger: true,
         });
         if (!ok) {
@@ -470,7 +475,7 @@ function MachineQrCard({
       await generateAdminMachineQr(machine.machineId);
       await onChanged();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setBusy(null);
     }
@@ -478,10 +483,9 @@ function MachineQrCard({
 
   async function revoke() {
     const ok = await confirm({
-      title: "Deaktiver QR-kode?",
-      description:
-        "Operatører kan ikke længere scanne sig ind på maskinen. Du kan altid generere en ny senere.",
-      confirmLabel: "Deaktiver",
+      title: t("qrRevokeConfirmTitle"),
+      description: t("qrRevokeConfirmBody"),
+      confirmLabel: t("qrRevokeConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -491,7 +495,7 @@ function MachineQrCard({
       await revokeAdminMachineQr(machine.machineId);
       await onChanged();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setBusy(null);
     }
@@ -519,63 +523,12 @@ function MachineQrCard({
           <div className="flex items-center gap-2">
             <QrCode className="h-5 w-5 text-[var(--color-foreground)]" />
             <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
-              QR-adgang
+              {t("qrHeading")}
             </h2>
           </div>
           <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-            Operatøren scanner stickeren ved maskinen og lander direkte i
-            chatten — uden at logge ind.
+            {t("qrDescription")}
           </p>
-
-          {machine.qrToken ? (
-            <div className="mt-4 flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Tag variant="positive" size="small">
-                  Aktiv
-                </Tag>
-                {created && (
-                  <span className="text-[12px] text-[var(--color-muted-foreground)]">
-                    Genereret {created}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
-                  {tokenUrl ?? ""}
-                </code>
-                <button
-                  type="button"
-                  onClick={() => void copy()}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
-                    "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
-                    "transition-colors hover:bg-[var(--color-muted)]",
-                  )}
-                  title="Kopiér link"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 text-[var(--ds-green)]" />
-                      Kopieret
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5" />
-                      Kopiér
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4">
-              <Tag variant="default" size="small">
-                Ingen aktiv QR-kode
-              </Tag>
-            </div>
-          )}
-
-          {err && <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>}
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
@@ -585,10 +538,10 @@ function MachineQrCard({
               target="_blank"
               rel="noopener noreferrer"
               className={buttonClasses({ variant: "secondary", size: "sm" })}
-              title="Åbn QR-side med download"
+              title={t("qrViewDownloadTitle")}
             >
               <Download className="mr-1.5 h-4 w-4" />
-              Vis & hent
+              {t("qrViewDownload")}
             </Link>
           )}
           <Button
@@ -602,7 +555,7 @@ function MachineQrCard({
             ) : (
               <RefreshCw className="mr-1.5 h-4 w-4" />
             )}
-            {machine.qrToken ? "Regenerér" : "Generér QR"}
+            {machine.qrToken ? t("qrRegenerate") : t("qrGenerate")}
           </Button>
           {machine.qrToken && (
             <Button
@@ -616,11 +569,61 @@ function MachineQrCard({
               ) : (
                 <X className="mr-1.5 h-4 w-4" />
               )}
-              Deaktiver
+              {t("qrRevoke")}
             </Button>
           )}
         </div>
       </div>
+
+      {machine.qrToken ? (
+        <div className="mt-4 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Tag variant="positive" size="small">
+              {t("qrActive")}
+            </Tag>
+            {created && (
+              <span className="text-[12px] text-[var(--color-muted-foreground)]">
+                {t("qrGeneratedAt", { date: created })}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
+              {tokenUrl ?? ""}
+            </code>
+            <button
+              type="button"
+              onClick={() => void copy()}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
+                "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
+                "transition-colors hover:bg-[var(--color-muted)]",
+              )}
+              title={t("qrCopyTitle")}
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-[var(--ds-green)]" />
+                  {t("qrCopied")}
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  {t("qrCopy")}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4">
+          <Tag variant="default" size="small">
+            {t("qrInactive")}
+          </Tag>
+        </div>
+      )}
+
+      {err && <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>}
     </section>
   );
 }
@@ -633,6 +636,7 @@ function UploadCard({
 }: {
   existingFolders: string[];
 }) {
+  const t = useTranslations("admin.machineDetail");
   const { enqueueUploads } = useUploadQueue();
   const [dragActive, setDragActive] = useState(false);
   // Folder selector for *picker-based* uploads. Drag-drop uploads use
@@ -669,17 +673,15 @@ function UploadCard({
   return (
     <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <h2 className="text-[16px] font-semibold text-[var(--color-foreground)]">
-        Upload manualer & billeder
+        {t("uploadHeading")}
       </h2>
       <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-        Træk PDF&#39;er, billeder (PNG/JPG/WebP) eller en hel mappe hertil.
-        Mappestrukturen bevares. Billeder bliver beskrevet med Claude vision
-        og kan derefter dukke op som figurer i chat-svaret.
+        {t("uploadDescription")}
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <label className="block text-[13px] font-medium text-[var(--color-foreground)]">
-          Mappe (kun for filer valgt via knap nedenfor)
+          {t("folderLabel")}
           <select
             value={pickerFolder}
             onChange={(e) => setPickerFolder(e.target.value)}
@@ -689,20 +691,20 @@ function UploadCard({
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
             )}
           >
-            <option value={ROOT_FOLDER_SENTINEL}>(uden mappe)</option>
+            <option value={ROOT_FOLDER_SENTINEL}>{t("folderRoot")}</option>
             {existingFolders.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>
             ))}
-            <option value={NEW_FOLDER_SENTINEL}>+ Ny mappe…</option>
+            <option value={NEW_FOLDER_SENTINEL}>{t("folderNew")}</option>
           </select>
         </label>
         {pickerFolder === NEW_FOLDER_SENTINEL && (
           <input
             value={newFolderInput}
             onChange={(e) => setNewFolderInput(e.target.value)}
-            placeholder="F.eks. Setup/Kalibrering"
+            placeholder={t("folderNewPlaceholder")}
             className={cn(
               "h-10 rounded-[4px] border border-[var(--color-hairline)]",
               "bg-[var(--color-background)] px-3 text-[14px]",
@@ -738,13 +740,13 @@ function UploadCard({
       >
         <Upload className="h-5 w-5 text-[var(--color-muted-foreground)]" />
         <p className="text-[14px] text-[var(--color-muted-foreground)]">
-          Træk PDF&#39;er, billeder eller en mappe hertil, eller{" "}
+          {t("dropPrefix")}{" "}
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
             className="font-medium text-[var(--color-brand)] hover:underline"
           >
-            vælg filer
+            {t("dropPickFiles")}
           </button>
         </p>
         <input
@@ -842,6 +844,7 @@ function DocumentsTree({
   explicitFolders: string[];
   onChanged: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const confirm = useConfirm();
   const { rootDocs, topFolders } = buildTree(documents, explicitFolders);
   const [creating, setCreating] = useState(false);
@@ -851,6 +854,7 @@ function DocumentsTree({
   const [autoOrganizeOpen, setAutoOrganizeOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkVisibility, setBulkVisibility] = useState(false);
   const [bulkErr, setBulkErr] = useState<string | null>(null);
 
   // Drop selections that no longer correspond to a visible document
@@ -887,14 +891,46 @@ function DocumentsTree({
     );
   }
 
+  async function bulkSetVisibility(visible: boolean) {
+    if (selected.size === 0) return;
+    setBulkVisibility(true);
+    setBulkErr(null);
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) => updateAdminDocumentOperatorVisible(id, visible)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    try {
+      await onChanged();
+    } finally {
+      setBulkVisibility(false);
+    }
+    if (failed > 0) {
+      setBulkErr(t("bulkVisibilityFailed", { failed, total: ids.length }));
+    }
+  }
+
+  // Mixed-state aware: if any selected doc is hidden, the bulk action
+  // shows them; otherwise it hides them. Read off the current documents
+  // snapshot so the label updates as the selection or data changes.
+  const bulkVisibilityAction: "show" | "hide" = (() => {
+    if (selected.size === 0) return "show";
+    const anyHidden = documents.some(
+      (d) => selected.has(d.id) && !d.operatorVisible,
+    );
+    return anyHidden ? "show" : "hide";
+  })();
+
   async function bulkDelete() {
     if (selected.size === 0) return;
     const n = selected.size;
     const ok = await confirm({
-      title: `Slet ${n} dokument${n === 1 ? "" : "er"}?`,
-      description:
-        "Dokumenterne og alle deres embeddings fjernes permanent. Handlingen kan ikke fortrydes.",
-      confirmLabel: "Slet",
+      title:
+        n === 1
+          ? t("bulkDeleteConfirmTitleOne", { count: n })
+          : t("bulkDeleteConfirmTitle", { count: n }),
+      description: t("bulkDeleteConfirmBody"),
+      confirmLabel: t("bulkDeleteConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -912,7 +948,7 @@ function DocumentsTree({
       setBulkDeleting(false);
     }
     if (failed > 0) {
-      setBulkErr(`${failed} af ${ids.length} dokumenter kunne ikke slettes`);
+      setBulkErr(t("bulkDeleteFailed", { failed, total: ids.length }));
     }
   }
 
@@ -931,7 +967,7 @@ function DocumentsTree({
       setCreating(false);
       await onChanged();
     } catch (e) {
-      setCreateErr(e instanceof Error ? e.message : "Fejl");
+      setCreateErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setSavingFolder(false);
     }
@@ -982,11 +1018,11 @@ function DocumentsTree({
       <div className="flex items-center justify-between gap-3 bg-[var(--color-muted)] px-4 py-2 text-[12px]">
         <div className="flex items-center gap-3">
           <span className="font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            Dokumenter
+            {t("documents")}
           </span>
           {selected.size > 0 && (
             <span className="normal-case text-[12px] text-[var(--color-muted-foreground)]">
-              {selected.size} valgt
+              {t("selectedCount", { count: selected.size })}
             </span>
           )}
         </div>
@@ -996,15 +1032,34 @@ function DocumentsTree({
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}
-                disabled={bulkDeleting}
+                disabled={bulkDeleting || bulkVisibility}
                 className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
               >
-                Ryd valg
+                {t("clearSelection")}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void bulkSetVisibility(bulkVisibilityAction === "show")
+                }
+                disabled={bulkDeleting || bulkVisibility}
+                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
+              >
+                {bulkVisibility ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : bulkVisibilityAction === "show" ? (
+                  <Eye className="h-3.5 w-3.5" />
+                ) : (
+                  <EyeOff className="h-3.5 w-3.5" />
+                )}
+                {bulkVisibilityAction === "show"
+                  ? t("bulkShowOperators", { count: selected.size })
+                  : t("bulkHideOperators", { count: selected.size })}
               </button>
               <button
                 type="button"
                 onClick={() => void bulkDelete()}
-                disabled={bulkDeleting}
+                disabled={bulkDeleting || bulkVisibility}
                 className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--ds-red)]/30 bg-[var(--ds-red-bg)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--ds-red)] hover:bg-[var(--ds-red)]/10 disabled:opacity-50"
               >
                 {bulkDeleting ? (
@@ -1012,7 +1067,7 @@ function DocumentsTree({
                 ) : (
                   <Trash2 className="h-3.5 w-3.5" />
                 )}
-                Slet {selected.size}
+                {t("deleteN", { count: selected.size })}
               </button>
             </>
           )}
@@ -1020,11 +1075,11 @@ function DocumentsTree({
             type="button"
             onClick={() => setAutoOrganizeOpen(true)}
             disabled={!canAutoOrganize}
-            title="Lad Claude foreslå en mappe-struktur for dine dokumenter"
+            title={t("autoOrganizeTitle")}
             className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
           >
             <Sparkles className="h-3.5 w-3.5 text-[var(--color-brand)]" />
-            Auto-organisér
+            {t("autoOrganize")}
           </button>
           <button
             type="button"
@@ -1033,7 +1088,7 @@ function DocumentsTree({
             className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
           >
             <Folder className="h-3.5 w-3.5" />
-            Ny mappe
+            {t("newFolder")}
           </button>
         </div>
       </div>
@@ -1053,15 +1108,14 @@ function DocumentsTree({
 
       {isEmpty && !creating ? (
         <div className="p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          Ingen manualer endnu. Upload den første ovenfor — eller opret en
-          tom mappe og fyld den senere.
+          {t("emptyTree")}
         </div>
       ) : (
-        <div className="grid grid-cols-[auto_2fr_2fr_auto_auto_auto_auto_auto]">
+        <div className="grid grid-cols-[auto_2fr_2fr_auto_auto_auto_auto_auto_auto]">
       <div className="col-span-full grid grid-cols-subgrid items-center gap-x-4 bg-[var(--color-muted)] px-4 py-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
         <input
           type="checkbox"
-          aria-label={allSelected ? "Fravælg alle" : "Vælg alle"}
+          aria-label={allSelected ? t("deselectAll") : t("selectAll")}
           checked={allSelected}
           ref={(el) => {
             if (el) el.indeterminate = someSelected;
@@ -1070,12 +1124,18 @@ function DocumentsTree({
           disabled={allDocIds.length === 0}
           className="h-4 w-4 cursor-pointer accent-[var(--color-brand)] disabled:cursor-not-allowed disabled:opacity-40"
         />
-        <div className="font-medium">Titel</div>
-        <div className="font-medium">Beskrivelse</div>
-        <div className="font-medium">Status</div>
-        <div className="text-right font-medium">Sider</div>
-        <div className="text-right font-medium">Størrelse</div>
-        <div className="font-medium">Oprettet</div>
+        <div className="font-medium">{t("colTitle")}</div>
+        <div className="font-medium">{t("colDescription")}</div>
+        <div className="font-medium">{t("colStatus")}</div>
+        <div className="text-right font-medium">{t("colPages")}</div>
+        <div className="text-right font-medium">{t("colSize")}</div>
+        <div className="font-medium">{t("colCreated")}</div>
+        <div
+          className="text-center font-medium"
+          title={t("colOperatorVisibleTitle")}
+        >
+          {t("colOperatorVisible")}
+        </div>
         <div></div>
       </div>
 
@@ -1137,6 +1197,7 @@ function RootRow({
   hasDocs: boolean;
   onMoveHere: (docId: string) => void;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const [over, setOver] = useState(false);
   return (
     <div
@@ -1159,7 +1220,7 @@ function RootRow({
         over && "bg-[var(--color-brand)]/5",
       )}
     >
-      {hasDocs ? "Rod" : "Rod (træk hertil for at flytte til rod)"}
+      {hasDocs ? t("root") : t("rootDrop")}
     </div>
   );
 }
@@ -1179,6 +1240,7 @@ function NewFolderRow({
   saving: boolean;
   error: string | null;
 }) {
+  const t = useTranslations("admin.machineDetail");
   return (
     <div
       className={cn(
@@ -1197,7 +1259,7 @@ function NewFolderRow({
           if (e.key === "Enter") onSubmit();
           if (e.key === "Escape") onCancel();
         }}
-        placeholder="Sti, f.eks. Setup/Kalibrering"
+        placeholder={t("newFolderPlaceholder")}
         disabled={saving}
         className={cn(
           "h-7 max-w-sm flex-1 rounded-[4px] border border-[var(--color-hairline)]",
@@ -1216,7 +1278,7 @@ function NewFolderRow({
         onClick={onSubmit}
         disabled={saving || !value.trim()}
         className="ml-auto rounded p-1 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)] disabled:opacity-40"
-        aria-label="Opret"
+        aria-label={t("createFolderAria")}
       >
         {saving ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1229,7 +1291,7 @@ function NewFolderRow({
         onClick={onCancel}
         disabled={saving}
         className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
-        aria-label="Annullér"
+        aria-label={t("cancelAria")}
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -1262,6 +1324,7 @@ function FolderNode({
   selected: Set<string>;
   onToggleSelected: (id: string) => void;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const confirm = useConfirm();
   const [over, setOver] = useState(false);
   const [deletingFolder, setDeletingFolder] = useState(false);
@@ -1274,9 +1337,9 @@ function FolderNode({
     e.stopPropagation();
     if (!isEmpty || deletingFolder) return;
     const ok = await confirm({
-      title: `Slet mappen "${folder.name}"?`,
-      description: "Mappen er tom. Den fjernes fra strukturen.",
-      confirmLabel: "Slet",
+      title: t("deleteFolderConfirmTitle", { name: folder.name }),
+      description: t("deleteFolderConfirmBody"),
+      confirmLabel: t("deleteFolderConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -1335,8 +1398,8 @@ function FolderNode({
             type="button"
             onClick={handleDelete}
             disabled={deletingFolder}
-            title="Slet tom mappe"
-            aria-label="Slet tom mappe"
+            title={t("deleteEmptyFolderTitle")}
+            aria-label={t("deleteEmptyFolderAria")}
             className="ml-auto rounded p-1 text-[var(--color-muted-foreground)] opacity-0 transition-opacity hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] group-hover:opacity-100 disabled:opacity-40"
           >
             {deletingFolder ? (
@@ -1410,6 +1473,7 @@ function DocumentRow({
   selected: boolean;
   onToggleSelected: (id: string) => void;
 }) {
+  const t = useTranslations("admin.machineDetail");
   const confirm = useConfirm();
   const { enqueueReprocess } = useUploadQueue();
   const [editing, setEditing] = useState(false);
@@ -1422,10 +1486,9 @@ function DocumentRow({
 
   async function reprocess() {
     const ok = await confirm({
-      title: `Kør "${document.title}" igennem Claude OCR?`,
-      description:
-        "Eksisterende chunks slettes og dokumentet behandles igen via vision. Det kan tage et minut og forbruger Claude tokens. Tidligere svar i samtaler påvirkes ikke, men nye søgninger vil bruge det nye indhold.",
-      confirmLabel: "Reprocesser",
+      title: t("reprocessConfirmTitle", { title: document.title }),
+      description: t("reprocessConfirmBody"),
+      confirmLabel: t("reprocessConfirmLabel"),
     });
     if (!ok) return;
     enqueueReprocess({
@@ -1448,16 +1511,14 @@ function DocumentRow({
     try {
       const { url } = await getAdminDocumentSignedUrl(document.id);
       if (!w) {
-        setErr(
-          "Browseren blokerede pop-up. Tillad pop-ups eller brug download-knappen.",
-        );
+        setErr(t("popupBlocked"));
         return;
       }
       w.opener = null;
       w.location.href = url;
     } catch (e) {
       w?.close();
-      setErr(e instanceof Error ? e.message : "Kunne ikke åbne fil");
+      setErr(e instanceof Error ? e.message : t("openFileFailed"));
     } finally {
       setOpening(false);
     }
@@ -1480,7 +1541,7 @@ function DocumentRow({
       a.click();
       window.document.body.removeChild(a);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Kunne ikke hente fil");
+      setErr(e instanceof Error ? e.message : t("downloadFileFailed"));
     } finally {
       setDownloading(false);
     }
@@ -1499,7 +1560,7 @@ function DocumentRow({
       await onChanged();
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
     } finally {
       setSaving(false);
     }
@@ -1507,10 +1568,9 @@ function DocumentRow({
 
   async function remove() {
     const ok = await confirm({
-      title: `Slet "${document.title}"?`,
-      description:
-        "Dokumentet og alle dets embeddings fjernes permanent. Handlingen kan ikke fortrydes.",
-      confirmLabel: "Slet",
+      title: t("deleteDocConfirmTitle", { title: document.title }),
+      description: t("deleteDocConfirmBody"),
+      confirmLabel: t("deleteDocConfirmLabel"),
       danger: true,
     });
     if (!ok) return;
@@ -1520,12 +1580,12 @@ function DocumentRow({
       await deleteAdminDocument(document.id);
       await onChanged();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Fejl");
+      setErr(e instanceof Error ? e.message : t("genericError"));
       setDeleting(false);
     }
   }
 
-  const badge = statusBadge(document.status);
+  const badge = statusBadge(document.status, t);
 
   return (
     <div
@@ -1547,7 +1607,7 @@ function DocumentRow({
     >
       <input
         type="checkbox"
-        aria-label={`Vælg ${document.title}`}
+        aria-label={t("selectDocAria", { title: document.title })}
         checked={selected}
         onChange={() => onToggleSelected(document.id)}
         // Stop drag/click bubbling so the checkbox doesn't trigger the
@@ -1560,29 +1620,29 @@ function DocumentRow({
       <div className="flex min-w-0 items-center gap-1.5 font-medium text-[var(--color-foreground)]">
         <GripVertical
           className="h-4 w-4 shrink-0 cursor-grab text-[var(--color-muted-foreground)]/40 hover:text-[var(--color-muted-foreground)]"
-          aria-label="Træk for at flytte"
+          aria-label={t("dragToMoveAria")}
         />
         <span className="truncate">{document.title}</span>
         {document.sourceType === "image" && (
-          <span title="Billede beskrevet med Claude vision">
+          <span title={t("imageTitle")}>
             <ImageIcon
-              aria-label="Billede"
+              aria-label={t("imageAria")}
               className="h-3.5 w-3.5 shrink-0 text-[var(--color-brand)]"
             />
           </span>
         )}
         {document.extractionSource === "claude-ocr" && (
-          <span title="Tekst udvundet med Claude vision (OCR)">
+          <span title={t("ocrTitle")}>
             <ScanEye
-              aria-label="Claude vision OCR"
+              aria-label={t("ocrAria")}
               className="h-3.5 w-3.5 shrink-0 text-violet-600"
             />
           </span>
         )}
         {document.sourceType === "feedback" && (
-          <span title="Auto-promoveret fra operatør-feedback (markeret som virkende)">
+          <span title={t("feedbackTitle")}>
             <MessageSquareQuote
-              aria-label="Operatør-erfaring"
+              aria-label={t("feedbackAria")}
               className="h-3.5 w-3.5 shrink-0 text-[var(--ds-green)]"
             />
           </span>
@@ -1614,7 +1674,7 @@ function DocumentRow({
               onClick={() => void saveSummary()}
               disabled={saving}
               className="rounded p-1 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)]"
-              aria-label="Gem"
+              aria-label={t("saveAria")}
             >
               {saving ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1629,7 +1689,7 @@ function DocumentRow({
               }}
               disabled={saving}
               className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
-              aria-label="Annullér"
+              aria-label={t("cancelAria")}
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -1664,14 +1724,18 @@ function DocumentRow({
         {DA_DATE.format(new Date(document.createdAt))}
       </div>
 
+      <div className="flex items-center justify-center">
+        <OperatorVisibleToggle document={document} onChanged={onChanged} />
+      </div>
+
       <div className="flex items-center justify-end gap-0.5">
         {document.sourceType !== "feedback" && (
           <>
             <button
               onClick={() => void viewOriginal()}
               disabled={opening}
-              title="Åbn original"
-              aria-label="Åbn original"
+              title={t("openOriginalTitle")}
+              aria-label={t("openOriginalAria")}
               className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {opening ? (
@@ -1683,8 +1747,8 @@ function DocumentRow({
             <button
               onClick={() => void downloadOriginal()}
               disabled={downloading}
-              title="Download original"
-              aria-label="Download original"
+              title={t("downloadOriginalTitle")}
+              aria-label={t("downloadOriginalAria")}
               className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {downloading ? (
@@ -1696,8 +1760,8 @@ function DocumentRow({
             {document.sourceType === "pdf" && (
               <button
                 onClick={() => void reprocess()}
-                title="Kør igennem Claude OCR igen — kører i den fælles kø"
-                aria-label="Reprocesser med OCR"
+                title={t("reprocessTitle")}
+                aria-label={t("reprocessAria")}
                 className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -1710,10 +1774,10 @@ function DocumentRow({
           disabled={deleting}
           title={
             document.sourceType === "feedback"
-              ? "Demoter — fjern operatør-erfaringen fra KB"
-              : "Slet dokument"
+              ? t("deleteFeedbackTitle")
+              : t("deleteDocTitle")
           }
-          aria-label="Slet dokument"
+          aria-label={t("deleteDocAria")}
           className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] disabled:opacity-40"
         >
           {deleting ? (
@@ -1724,5 +1788,75 @@ function DocumentRow({
         </button>
       </div>
     </div>
+  );
+}
+
+function OperatorVisibleToggle({
+  document,
+  onChanged,
+}: {
+  document: AdminDocument;
+  onChanged: () => Promise<void>;
+}) {
+  const t = useTranslations("admin.machineDetail");
+  const [saving, setSaving] = useState(false);
+  // Optimistic local state — the row only re-renders with fresh server
+  // data after `onChanged` resolves, so we mirror the click immediately
+  // and let the refetch correct it if the PATCH fails.
+  const [localVisible, setLocalVisible] = useState(document.operatorVisible);
+  useEffect(() => {
+    setLocalVisible(document.operatorVisible);
+  }, [document.operatorVisible]);
+
+  async function toggle() {
+    if (saving) return;
+    const next = !localVisible;
+    setSaving(true);
+    setLocalVisible(next);
+    try {
+      await updateAdminDocumentOperatorVisible(document.id, next);
+      await onChanged();
+    } catch {
+      setLocalVisible(!next);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={localVisible}
+      aria-label={
+        localVisible
+          ? t("operatorVisibleHideAria", { title: document.title })
+          : t("operatorVisibleShowAria", { title: document.title })
+      }
+      title={
+        localVisible ? t("operatorVisibleHideTitle") : t("operatorVisibleShowTitle")
+      }
+      onClick={() => void toggle()}
+      disabled={saving}
+      className={cn(
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+        "disabled:opacity-50",
+        localVisible
+          ? "bg-[var(--color-brand)]"
+          : "bg-[var(--color-muted-foreground)]/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-flex h-4 w-4 transform items-center justify-center rounded-full bg-white shadow-sm transition-transform",
+          localVisible ? "translate-x-[18px]" : "translate-x-[2px]",
+        )}
+      >
+        {saving && (
+          <Loader2 className="h-2.5 w-2.5 animate-spin text-[var(--color-muted-foreground)]" />
+        )}
+      </span>
+    </button>
   );
 }

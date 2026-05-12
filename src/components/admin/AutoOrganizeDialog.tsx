@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Folder, Loader2, Sparkles, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,6 +29,8 @@ export function AutoOrganizeDialog({
   onClose: () => void;
   onApplied: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.autoOrganize");
+  const tc = useTranslations("common");
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
   const [proposals, setProposals] = useState<AutoOrganizeProposal[]>([]);
@@ -48,7 +51,7 @@ export function AutoOrganizeDialog({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Ukendt fejl");
+        setError(err instanceof Error ? err.message : tc("unknownError"));
         setPhase("error");
       });
     return () => {
@@ -133,7 +136,7 @@ export function AutoOrganizeDialog({
       await onApplied();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ukendt fejl");
+      setError(err instanceof Error ? err.message : tc("unknownError"));
       setPhase("ready");
     }
   }
@@ -158,18 +161,17 @@ export function AutoOrganizeDialog({
               className="flex items-center gap-2 text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]"
             >
               <Sparkles className="h-4 w-4 text-[var(--color-brand)]" />
-              Auto-organisér dokumenter
+              {t("heading")}
             </h2>
             <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-              Claude foreslår en mappe per dokument. Fjern flueben for det
-              du ikke vil flytte.
+              {t("description")}
             </p>
           </div>
           <button
             type="button"
             onClick={() => !busy && onClose()}
             disabled={busy}
-            aria-label="Luk"
+            aria-label={t("closeAria")}
             className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
           >
             <X className="h-4 w-4" />
@@ -180,7 +182,7 @@ export function AutoOrganizeDialog({
           {phase === "loading" && (
             <div className="flex flex-col items-center justify-center gap-3 py-10 text-[14px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-5 w-5 animate-spin" />
-              Analyserer dokumenter…
+              {t("analyzing")}
             </div>
           )}
 
@@ -192,9 +194,7 @@ export function AutoOrganizeDialog({
 
           {phase !== "loading" && phase !== "error" && moves.length === 0 && (
             <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-4 py-6 text-center text-[14px] text-[var(--color-muted-foreground)]">
-              {proposals.length === 0
-                ? "Ingen klar-dokumenter at organisere."
-                : "Alle dokumenter ligger allerede i en god mappe — eller Claude er ikke sikker på hvor de hører til."}
+              {proposals.length === 0 ? t("noReadyDocs") : t("allInPlace")}
             </div>
           )}
 
@@ -225,7 +225,7 @@ export function AutoOrganizeDialog({
                           {f.path}
                         </span>
                         <span className="text-[12px] text-[var(--color-muted-foreground)]">
-                          ({checkedCount} af {items.length})
+                          {t("folderItemCount", { checked: checkedCount, total: items.length })}
                         </span>
                       </header>
                       <ul className="flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[4px] border border-[var(--color-hairline)]">
@@ -253,8 +253,8 @@ export function AutoOrganizeDialog({
                                 </div>
                                 <div className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
                                   {p.currentFolder
-                                    ? `Fra: ${p.currentFolder}`
-                                    : "Fra: rod"}
+                                    ? t("fromFolder", { folder: p.currentFolder })
+                                    : t("fromRoot")}
                                 </div>
                               </div>
                             </li>
@@ -269,7 +269,7 @@ export function AutoOrganizeDialog({
                 <section>
                   <header className="mb-2 flex items-center gap-2">
                     <span className="text-[13px] font-medium text-[var(--color-muted-foreground)]">
-                      Beholdes uændret ({unchanged.length})
+                      {t("unchangedHeader", { n: unchanged.length })}
                     </span>
                   </header>
                   <ul className="flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[4px] border border-[var(--color-hairline)] opacity-70">
@@ -280,13 +280,13 @@ export function AutoOrganizeDialog({
                       >
                         <span className="truncate">{p.title}</span>
                         <span className="shrink-0">
-                          {p.currentFolder ?? "rod"}
+                          {p.currentFolder ?? t("rootLabel")}
                         </span>
                       </li>
                     ))}
                     {unchanged.length > 20 && (
                       <li className="px-3 py-1.5 text-center text-[12px] text-[var(--color-muted-foreground)]">
-                        + {unchanged.length - 20} mere…
+                        {t("moreItems", { n: unchanged.length - 20 })}
                       </li>
                     )}
                   </ul>
@@ -299,7 +299,9 @@ export function AutoOrganizeDialog({
         <div className="flex items-center justify-between gap-3 border-t border-[var(--color-hairline)] px-6 py-4">
           <span className="text-[13px] text-[var(--color-muted-foreground)]">
             {moves.length > 0 && phase !== "loading"
-              ? `${selectedCount} flytning${selectedCount === 1 ? "" : "er"} valgt`
+              ? selectedCount === 1
+                ? t("moveSelected", { count: selectedCount })
+                : t("movesSelected", { count: selectedCount })
               : " "}
           </span>
           <div className="flex gap-2">
@@ -309,7 +311,7 @@ export function AutoOrganizeDialog({
               onClick={() => !busy && onClose()}
               disabled={busy}
             >
-              Annullér
+              {t("cancel")}
             </Button>
             <Button
               size="sm"
@@ -321,8 +323,9 @@ export function AutoOrganizeDialog({
               ) : (
                 <Sparkles className="mr-1.5 h-4 w-4" />
               )}
-              Anvend
-              {selectedCount > 0 && phase === "ready" ? ` (${selectedCount})` : ""}
+              {selectedCount > 0 && phase === "ready"
+                ? t("applyWithCount", { count: selectedCount })
+                : t("apply")}
             </Button>
           </div>
         </div>
