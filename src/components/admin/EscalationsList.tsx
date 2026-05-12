@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, ExternalLink, Loader2, Wrench } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
   listAdminEscalations,
   type AdminEscalationListItem,
@@ -23,11 +24,11 @@ const CHANNEL_LABEL: Record<AdminEscalationListItem["channel"], string> = {
   webhook: "Webhook",
 };
 
-const CHANNEL_TONE: Record<AdminEscalationListItem["channel"], string> = {
-  phone: "bg-sky-100 text-sky-800",
-  email: "bg-violet-100 text-violet-800",
-  service_ticket: "bg-amber-100 text-amber-800",
-  webhook: "bg-emerald-100 text-emerald-800",
+const CHANNEL_VARIANT: Record<AdminEscalationListItem["channel"], TagVariant> = {
+  phone: "default",
+  email: "default",
+  service_ticket: "warning",
+  webhook: "positive",
 };
 
 export function EscalationsList({ machineId }: { machineId: string }) {
@@ -78,7 +79,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
       </div>
 
       {error ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+        <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
           {error}
         </div>
       ) : loading ? (
@@ -86,12 +87,12 @@ export function EscalationsList({ machineId }: { machineId: string }) {
           <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           Ingen eskaleringer endnu for denne maskine.
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+          <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>
@@ -117,15 +118,10 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                       {DA_DT.format(new Date(e.createdAt))}
                     </td>
                     <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                          CHANNEL_TONE[e.channel],
-                        )}
-                      >
-                        <Wrench className="h-3 w-3" />
+                      <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
+                        <Wrench className="mr-1 h-3 w-3" />
                         {CHANNEL_LABEL[e.channel]}
-                      </span>
+                      </Tag>
                     </td>
                     <td className="px-4 py-3 font-mono text-[12px] text-[var(--color-foreground)]">
                       <span className="block max-w-[260px] truncate" title={e.target}>
@@ -169,23 +165,23 @@ export function EscalationsList({ machineId }: { machineId: string }) {
 
           {(page > 0 || hasMore) && (
             <div className="flex items-center justify-between text-[13px] text-[var(--color-muted-foreground)]">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
-                className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] hover:bg-[var(--color-muted)] disabled:opacity-40"
               >
                 ← Forrige
-              </button>
+              </Button>
               <span>Side {page + 1}</span>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={!hasMore}
                 onClick={() => setPage((p) => p + 1)}
-                className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] hover:bg-[var(--color-muted)] disabled:opacity-40"
               >
                 Næste →
-              </button>
+              </Button>
             </div>
           )}
         </>

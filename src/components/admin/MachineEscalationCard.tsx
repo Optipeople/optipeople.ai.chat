@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { Check, Loader2, Pencil, Phone, Trash2, Wrench, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Tag } from "@/components/ui/tag";
+import { TextField } from "@/components/ui/text-field";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   clearAdminEscalationTarget,
@@ -142,7 +145,7 @@ export function MachineEscalationCard({
   }
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -183,9 +186,9 @@ export function MachineEscalationCard({
           ) : target ? (
             <div className="mt-4 flex flex-col gap-1">
               <div className="flex items-center gap-2">
-                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                <Tag variant="positive" size="small">
                   Aktiv
-                </span>
+                </Tag>
                 <span className="text-[12px] text-[var(--color-muted-foreground)]">
                   {CHANNEL_LABEL[target.channel]}
                 </span>
@@ -201,9 +204,9 @@ export function MachineEscalationCard({
             </div>
           ) : (
             <div className="mt-4">
-              <span className="inline-flex rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-muted-foreground)]">
+              <Tag variant="default" size="small">
                 Ikke konfigureret
-              </span>
+              </Tag>
               <p className="mt-2 text-[13px] text-[var(--color-muted-foreground)]">
                 Operatører ser knappen, men får en hint om at bede admin
                 konfigurere kontakten først.
@@ -211,42 +214,36 @@ export function MachineEscalationCard({
             </div>
           )}
 
-          {err && <p className="mt-2 text-[13px] text-red-600">{err}</p>}
+          {err && (
+            <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
+          )}
         </div>
 
         {!editing && !loading && (
           <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={startEdit}
               disabled={saving}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-                "transition-colors hover:bg-[var(--color-muted)] disabled:opacity-50",
-              )}
             >
-              <Pencil className="h-4 w-4" />
+              <Pencil className="mr-1.5 h-4 w-4" />
               {target ? "Redigér" : "Konfigurér"}
-            </button>
+            </Button>
             {target && (
-              <button
-                type="button"
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={() => void remove()}
                 disabled={removing}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                  "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-red-700",
-                  "transition-colors hover:bg-red-50 disabled:opacity-50",
-                )}
               >
                 {removing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                 ) : (
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="mr-1.5 h-4 w-4" />
                 )}
                 Fjern
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -276,106 +273,84 @@ function EditForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const targetLabel =
+    channel === "phone"
+      ? "Telefonnummer"
+      : channel === "email"
+        ? "E-mail-adresse"
+        : channel === "webhook"
+          ? "Webhook-URL"
+          : "URL til ticket-system";
+
   return (
     <div className="mt-4 flex flex-col gap-3">
-      <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
-        <label className="block text-[12px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-          Kanal
-          <select
-            value={channel}
-            onChange={(e) => setChannel(e.target.value as Channel)}
-            disabled={saving}
-            className={cn(
-              "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-background)] px-3 text-[14px] font-normal normal-case",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-            )}
-          >
-            <option value="phone">{CHANNEL_LABEL.phone}</option>
-            <option value="email">{CHANNEL_LABEL.email}</option>
-            <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
-            <option value="webhook">{CHANNEL_LABEL.webhook}</option>
-          </select>
-        </label>
-        <label className="block text-[12px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-          {channel === "phone"
-            ? "Telefonnummer"
-            : channel === "email"
-              ? "E-mail-adresse"
-              : channel === "webhook"
-                ? "Webhook-URL"
-                : "URL til ticket-system"}
-          <input
-            value={targetInput}
-            onChange={(e) => setTargetInput(e.target.value)}
-            placeholder={CHANNEL_PLACEHOLDER[channel]}
-            disabled={saving}
-            inputMode={
-              channel === "phone"
-                ? "tel"
-                : channel === "email"
-                  ? "email"
-                  : "url"
-            }
-            className={cn(
-              "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-background)] px-3 text-[14px] font-mono",
-              "placeholder:text-[var(--color-muted-foreground)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-            )}
-          />
-        </label>
-      </div>
-
-      <label className="block text-[12px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-        Etiket (valgfrit — vises operatøren)
-        <input
-          value={labelInput}
-          onChange={(e) => setLabelInput(e.target.value)}
-          placeholder="F.eks. Felder service-hotline"
+      <label className="block text-[14px] leading-[21px] text-[var(--ds-grey-medium-04)]">
+        Kanal
+        <select
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as Channel)}
           disabled={saving}
           className={cn(
-            "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-            "bg-[var(--color-background)] px-3 text-[14px] font-normal normal-case",
-            "placeholder:text-[var(--color-muted-foreground)]",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+            "mt-1 h-[30px] w-full rounded-[4px] bg-white px-[7px] text-[14px] leading-[21px]",
+            "shadow-[var(--ds-shadow-input)]",
+            "focus:outline-none focus:shadow-[inset_0_0_0_2px_var(--ds-green-80),var(--ds-shadow-input)]",
+            "disabled:bg-[var(--ds-bg-disabled)] disabled:cursor-not-allowed",
           )}
-        />
+        >
+          <option value="phone">{CHANNEL_LABEL.phone}</option>
+          <option value="email">{CHANNEL_LABEL.email}</option>
+          <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
+          <option value="webhook">{CHANNEL_LABEL.webhook}</option>
+        </select>
       </label>
+      <TextField
+        label={targetLabel}
+        value={targetInput}
+        onChange={(e) => setTargetInput(e.target.value)}
+        placeholder={CHANNEL_PLACEHOLDER[channel]}
+        disabled={saving}
+        inputMode={
+          channel === "phone"
+            ? "tel"
+            : channel === "email"
+              ? "email"
+              : "url"
+        }
+        className="font-mono"
+      />
+
+      <TextField
+        label="Etiket (valgfrit — vises operatøren)"
+        value={labelInput}
+        onChange={(e) => setLabelInput(e.target.value)}
+        placeholder="F.eks. Felder service-hotline"
+        disabled={saving}
+      />
 
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={onCancel}
           disabled={saving}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-            "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-muted-foreground)]",
-            "transition-colors hover:text-[var(--color-foreground)] disabled:opacity-50",
-          )}
         >
-          <X className="h-4 w-4" />
+          <X className="mr-1.5 h-4 w-4" />
           Annullér
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
           onClick={onSave}
           disabled={saving || !targetInput.trim()}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-[var(--radius)] border border-emerald-700",
-            "bg-emerald-600 px-3 py-2 text-[13px] font-medium text-white",
-            "transition-colors hover:bg-emerald-700 disabled:opacity-50",
-          )}
         >
           {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
           ) : channel === "phone" ? (
-            <Phone className="h-4 w-4" />
+            <Phone className="mr-1.5 h-4 w-4" />
           ) : (
-            <Check className="h-4 w-4" />
+            <Check className="mr-1.5 h-4 w-4" />
           )}
           Gem
-        </button>
+        </Button>
       </div>
     </div>
   );

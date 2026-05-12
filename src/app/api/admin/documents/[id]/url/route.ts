@@ -29,7 +29,7 @@ export async function GET(
   const supabase = getSupabaseServerClient();
   const { data: doc, error } = await supabase
     .from("kb_documents")
-    .select("storage_path, title")
+    .select("storage_path, title, source_type")
     .eq("id", id)
     .maybeSingle();
 
@@ -40,7 +40,11 @@ export async function GET(
   if (!doc) {
     return Response.json({ error: "Document not found" }, { status: 404 });
   }
-  const row = doc as { storage_path: string | null; title: string };
+  const row = doc as {
+    storage_path: string | null;
+    title: string;
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+  };
   if (!row.storage_path) {
     return Response.json(
       { error: "Document has no original file" },
@@ -48,9 +52,17 @@ export async function GET(
     );
   }
 
-  const fileName = `${row.title}.pdf`;
+  // Standalone images live in the kb-images bucket; everything else in
+  // kb-documents. Filename extension also follows the source type so a
+  // download attaches the right one.
+  const isImage = row.source_type === "image";
+  const bucket = isImage ? "kb-images" : "kb-documents";
+  const ext = isImage
+    ? row.storage_path.split(".").pop() || "png"
+    : "pdf";
+  const fileName = `${row.title}.${ext}`;
   const { data: signed, error: signErr } = await supabase.storage
-    .from("kb-documents")
+    .from(bucket)
     .createSignedUrl(row.storage_path, SIGN_EXPIRY_SECONDS, {
       download: wantDownload ? fileName : false,
     });

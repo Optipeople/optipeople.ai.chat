@@ -8,16 +8,27 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AlertCircle, CheckCircle2, Folder, Loader2, ScanEye } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileText,
+  Folder,
+  Image as ImageIcon,
+  Loader2,
+  ScanEye,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tag } from "@/components/ui/tag";
 import {
   reprocessAdminDocument,
   uploadAdminDocument,
+  uploadAdminImage,
   type AdminDocument,
+  type ImageUploadResult,
   type ReprocessResult,
   type UploadResult,
 } from "@/admin/adminApi";
-import type { DroppedPdf } from "@/admin/dropFiles";
+import type { DroppedFile } from "@/admin/dropFiles";
 
 // One shared queue handles both fresh uploads and OCR reprocesses so
 // they share the Voyage rate-limit budget. Items run strictly
@@ -36,9 +47,13 @@ type Base = {
 
 type UploadQueueItem = Base & {
   kind: "upload";
+  // Discriminates which ingest endpoint to call. Drag-drop and the file
+  // picker both classify per-file so a single batch can mix PDFs and
+  // images without special-casing in the queue loop.
+  fileKind: "pdf" | "image";
   file: File;
   folderPath: string | null;
-  result?: UploadResult;
+  result?: UploadResult | ImageUploadResult;
 };
 
 type ReprocessQueueItem = Base & {
@@ -52,7 +67,7 @@ type ReprocessQueueItem = Base & {
 export type QueueItem = UploadQueueItem | ReprocessQueueItem;
 
 type QueueAPI = {
-  enqueueUploads: (pdfs: DroppedPdf[]) => void;
+  enqueueUploads: (files: DroppedFile[]) => void;
   enqueueReprocess: (args: {
     documentId: string;
     documentTitle: string;
@@ -110,19 +125,28 @@ export function UploadQueueProvider({
 
         try {
           if (next.kind === "upload") {
-            const result = await uploadAdminDocument({
-              machineId,
-              file: next.file,
-              folderPath: next.folderPath,
-              onProgress: (loaded, total) => {
-                const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-                update((q) =>
-                  q.map((i) =>
-                    i.id === next.id ? { ...i, progress: pct } : i,
-                  ),
-                );
-              },
-            });
+            const onProgress = (loaded: number, total: number) => {
+              const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+              update((q) =>
+                q.map((i) =>
+                  i.id === next.id ? { ...i, progress: pct } : i,
+                ),
+              );
+            };
+            const result =
+              next.fileKind === "image"
+                ? await uploadAdminImage({
+                    machineId,
+                    file: next.file,
+                    folderPath: next.folderPath,
+                    onProgress,
+                  })
+                : await uploadAdminDocument({
+                    machineId,
+                    file: next.file,
+                    folderPath: next.folderPath,
+                    onProgress,
+                  });
             update((q) =>
               q.map((i) =>
                 i.id === next.id
@@ -168,10 +192,11 @@ export function UploadQueueProvider({
   }, [machineId, onChanged, update]);
 
   const enqueueUploads = useCallback(
-    (pdfs: DroppedPdf[]) => {
-      if (pdfs.length === 0) return;
-      const items: UploadQueueItem[] = pdfs.map(({ file, folderPath }) => ({
+    (files: DroppedFile[]) => {
+      if (files.length === 0) return;
+      const items: UploadQueueItem[] = files.map(({ file, folderPath, kind }) => ({
         kind: "upload",
+        fileKind: kind,
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         file,
         folderPath,
@@ -261,7 +286,7 @@ function UploadQueuePanel({
   const failedCount = queue.filter((i) => i.status === "failed").length;
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-center justify-between text-[12px]">
         <h2 className="text-[14px] font-semibold text-[var(--color-foreground)]">
           Behandlingskø
@@ -291,7 +316,7 @@ function UploadQueuePanel({
           <p className="mt-3 text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
             Behandler på server (overlever refresh)
           </p>
-          <ul className="mt-1.5 flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)]">
+          <ul className="mt-1.5 flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[4px] border border-[var(--color-hairline)]">
             {serverRows.map((d) => (
               <ServerRow key={d.id} doc={d} />
             ))}
@@ -308,7 +333,7 @@ function UploadQueuePanel({
           )}
           <ul className={cn(
             serverRows.length > 0 ? "mt-1.5" : "mt-3",
-            "flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)]",
+            "flex flex-col divide-y divide-[var(--color-hairline)] overflow-hidden rounded-[4px] border border-[var(--color-hairline)]",
           )}>
             {queue.map((item) => (
               <QueueRow key={item.id} item={item} />
@@ -344,10 +369,10 @@ function ServerRow({ doc }: { doc: AdminDocument }) {
             {doc.title}
           </span>
           {doc.folderPath && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-muted-foreground)]">
-              <Folder className="h-3 w-3" />
+            <Tag variant="default" size="small">
+              <Folder className="mr-1 h-3 w-3" />
               {doc.folderPath}
-            </span>
+            </Tag>
           )}
           {doc.extractionSource === "claude-ocr" && (
             <span title="Tekst udvundet med Claude vision (OCR)">
@@ -388,9 +413,13 @@ function formatBytes(b: number | null): string {
 function QueueRow({ item }: { item: QueueItem }) {
   const title = item.kind === "upload" ? item.file.name : item.documentTitle;
   const size = item.kind === "upload" ? item.file.size : item.fileSize;
+  const isImage = item.kind === "upload" && item.fileKind === "image";
+  // Type guards: only PDF uploads (and reprocesses) carry an
+  // extractionSource. Image uploads return ImageUploadResult instead.
   const ocrResult =
-    item.kind === "upload"
-      ? item.result?.extractionSource === "claude-ocr"
+    item.kind === "upload" && item.fileKind === "pdf"
+      ? (item.result as UploadResult | undefined)?.extractionSource ===
+        "claude-ocr"
       : item.kind === "reprocess"
         ? item.result?.extractionSource === "claude-ocr"
         : false;
@@ -401,10 +430,15 @@ function QueueRow({ item }: { item: QueueItem }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           {item.kind === "reprocess" && (
-            <span className="inline-flex shrink-0 items-center rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-700">
+            <Tag variant="warning" size="small">
               OCR
-            </span>
+            </Tag>
           )}
+          {isImage ? (
+            <ImageIcon className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+          ) : item.kind === "upload" ? (
+            <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+          ) : null}
           <span className="truncate font-medium text-[var(--color-foreground)]">
             {title}
           </span>
@@ -443,14 +477,28 @@ function QueueRow({ item }: { item: QueueItem }) {
               ? `Uploader ${item.progress}%…`
               : item.kind === "reprocess"
                 ? "OCR + embedding…"
-                : "Behandler & embedder…"}
+                : isImage
+                  ? "Beskriver & embedder…"
+                  : "Behandler & embedder…"}
           </p>
         )}
-        {item.status === "done" && item.kind === "upload" && item.result && (
-          <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-            {item.result.chunkCount} chunks fra {item.result.pageCount} sider
-          </p>
-        )}
+        {item.status === "done" &&
+          item.kind === "upload" &&
+          item.result &&
+          item.fileKind === "pdf" && (
+            <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+              {(item.result as UploadResult).chunkCount} chunks fra{" "}
+              {(item.result as UploadResult).pageCount} sider
+            </p>
+          )}
+        {item.status === "done" &&
+          item.kind === "upload" &&
+          item.result &&
+          item.fileKind === "image" && (
+            <p className="mt-0.5 line-clamp-1 text-[12px] text-[var(--color-muted-foreground)]">
+              {(item.result as ImageUploadResult).altText}
+            </p>
+          )}
         {item.status === "done" &&
           item.kind === "reprocess" &&
           item.result && (
@@ -460,7 +508,7 @@ function QueueRow({ item }: { item: QueueItem }) {
             </p>
           )}
         {item.status === "failed" && item.error && (
-          <p className="mt-0.5 truncate text-[12px] text-red-600">
+          <p className="mt-0.5 truncate text-[12px] text-[var(--ds-red)]">
             {item.error}
           </p>
         )}
@@ -480,8 +528,8 @@ function QueueStatusIcon({ status }: { status: QueueStatus }) {
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
       );
     case "done":
-      return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />;
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ds-green)]" />;
     case "failed":
-      return <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />;
+      return <AlertCircle className="h-4 w-4 shrink-0 text-[var(--ds-red)]" />;
   }
 }

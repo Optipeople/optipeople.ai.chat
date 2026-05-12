@@ -38,6 +38,9 @@ import {
 
 export type User = {
   email: string;
+  // Display name from /api/User/GetCurrentUser. Null until that fetch
+  // completes; callers should fall back to the email-local-part.
+  name: string | null;
   // Human-readable Optipeople role (e.g. "Super Administrator"). Shown in
   // the user menu. Populated asynchronously after login from
   // /api/User/GetCurrentUser; null until that fetch completes.
@@ -262,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ? {
                 ...prev,
                 email: me.email,
+                name: me.name,
                 roleName: me.roleName,
                 permissionName: me.permissionName,
               }
@@ -277,11 +281,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = getAccessToken();
     const email = getUserName();
     if (token && email) {
-      setUser({ email, roleName: null, permissionName: null });
+      // Hydrating from localStorage — only available after mount, so the
+      // initial render starts unauthenticated and this effect promotes
+      // it once the cached session is read.
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setUser({ email, name: null, roleName: null, permissionName: null });
       const storedAccount = getCurrentAccount();
       if (storedAccount) setCurrentAccount(storedAccount);
       const storedMachine = getCurrentMachine();
       if (storedMachine) setCurrentMachine(storedMachine);
+      /* eslint-enable react-hooks/set-state-in-effect */
       void reloadAccounts();
       void refreshRole();
     }
@@ -296,6 +305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await apiLogin(email, password);
         setUser({
           email: res.user_name ?? email,
+          name: null,
           roleName: null,
           permissionName: null,
         });

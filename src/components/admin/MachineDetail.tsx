@@ -14,6 +14,8 @@ import {
   FolderOpen,
   GripVertical,
   History,
+  Image as ImageIcon,
+  Info,
   Loader2,
   MessageSquare,
   MessageSquareQuote,
@@ -21,6 +23,7 @@ import {
   QrCode,
   RefreshCw,
   ScanEye,
+  Sparkles,
   Trash2,
   Upload,
   Wrench,
@@ -42,13 +45,18 @@ import {
   type AdminDocument,
   type AdminMachineDetail,
 } from "@/admin/adminApi";
-import { filesFromDrop } from "@/admin/dropFiles";
+import { classifyFile, filesFromDrop } from "@/admin/dropFiles";
+import { getAccounts } from "@/auth/accountsApi";
+import { getMachinesForAccount } from "@/auth/machinesApi";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { Button, buttonClasses } from "@/components/ui/button";
+import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
   UploadQueueProvider,
   useUploadQueue,
 } from "@/components/admin/uploadQueue";
 import { MachineEscalationCard } from "@/components/admin/MachineEscalationCard";
+import { AutoOrganizeDialog } from "@/components/admin/AutoOrganizeDialog";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
 
@@ -65,18 +73,18 @@ function formatBytes(b: number | null): string {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function statusBadge(status: string): { label: string; tone: string } {
+function statusBadge(status: string): { label: string; variant: TagVariant } {
   switch (status) {
     case "ready":
-      return { label: "Klar", tone: "bg-emerald-100 text-emerald-700" };
+      return { label: "Klar", variant: "positive" };
     case "embedding":
     case "extracting":
     case "uploaded":
-      return { label: "Behandler", tone: "bg-amber-100 text-amber-800" };
+      return { label: "Behandler", variant: "warning" };
     case "failed":
-      return { label: "Fejlet", tone: "bg-red-100 text-red-700" };
+      return { label: "Fejlet", variant: "issue" };
     default:
-      return { label: status, tone: "bg-slate-100 text-slate-700" };
+      return { label: status, variant: "default" };
   }
 }
 
@@ -135,7 +143,7 @@ export function MachineDetail({ machineId }: { machineId: string }) {
   }
   if (error || !data) {
     return (
-      <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-[var(--ds-red)]">
         {error ?? "Maskinen kunne ikke hentes"}
       </div>
     );
@@ -202,6 +210,35 @@ function MachineSummary({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Real Optipeople-registered names for the machine + account.
+  // Best-effort: silently fall back to "—" if the Optipeople API is
+  // unreachable or the IDs no longer exist there.
+  const [accountName, setAccountName] = useState<string | null>(null);
+  const [machineName, setMachineName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [accounts, machines] = await Promise.all([
+          getAccounts(),
+          getMachinesForAccount(machine.accountId),
+        ]);
+        if (cancelled) return;
+        setAccountName(
+          accounts.find((a) => a.id === machine.accountId)?.name ?? null,
+        );
+        setMachineName(
+          machines.find((m) => m.id === machine.machineId)?.name ?? null,
+        );
+      } catch {
+        // Operator-role admins (or transient API errors) — just leave names blank.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [machine.accountId, machine.machineId]);
 
   async function save() {
     if (!draft.trim()) return;
@@ -242,7 +279,7 @@ function MachineSummary({
   const chatHref = `/?account=${encodeURIComponent(machine.accountId)}&machine=${encodeURIComponent(machine.machineId)}`;
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           {editing ? (
@@ -260,7 +297,7 @@ function MachineSummary({
                 autoFocus
                 disabled={saving}
                 className={cn(
-                  "h-9 flex-1 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                  "h-9 flex-1 rounded-[4px] border border-[var(--color-hairline)]",
                   "bg-[var(--color-background)] px-3 text-[20px] font-semibold",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
                 )}
@@ -268,7 +305,7 @@ function MachineSummary({
               <button
                 onClick={() => void save()}
                 disabled={saving || !draft.trim()}
-                className="rounded-[var(--radius)] p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                className="rounded-[4px] p-2 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)] disabled:opacity-40"
                 aria-label="Gem"
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -280,7 +317,7 @@ function MachineSummary({
                   setErr(null);
                 }}
                 disabled={saving}
-                className="rounded-[var(--radius)] p-2 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
+                className="rounded-[4px] p-2 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
                 aria-label="Annullér"
               >
                 <X className="h-4 w-4" />
@@ -298,9 +335,35 @@ function MachineSummary({
             </button>
           )}
           {err && (
-            <p className="mt-2 text-[13px] text-red-600">{err}</p>
+            <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
           )}
           <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
+            <div className="flex items-center gap-2">
+              <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+                Maskinnavn
+                <span
+                  title="Hentet fra Optipeople-platformen (det navn maskinen er registreret med dér)."
+                  aria-label="Kilde: Optipeople-platformen"
+                  className="inline-flex cursor-help"
+                >
+                  <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
+                </span>
+              </dt>
+              <dd className="text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
+            </div>
+            <div className="flex items-center gap-2">
+              <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+                Kontonavn
+                <span
+                  title="Hentet fra Optipeople-platformen (det navn kontoen er registreret med dér)."
+                  aria-label="Kilde: Optipeople-platformen"
+                  className="inline-flex cursor-help"
+                >
+                  <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
+                </span>
+              </dt>
+              <dd className="text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
+            </div>
             <div className="flex gap-2">
               <dt className="text-[var(--color-muted-foreground)]">Machine ID</dt>
               <dd className="font-mono text-[var(--color-foreground)]">{machine.machineId}</dd>
@@ -324,60 +387,44 @@ function MachineSummary({
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           <Link
             href={`/admin/machines/${machine.machineId}/conversations`}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-              "transition-colors hover:bg-[var(--color-muted)]",
-            )}
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
             title="Se alle samtaler for denne maskine"
           >
-            <History className="h-4 w-4" />
+            <History className="mr-1.5 h-4 w-4" />
             Samtaler
           </Link>
           <Link
             href={`/admin/machines/${machine.machineId}/escalations`}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-              "transition-colors hover:bg-[var(--color-muted)]",
-            )}
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
             title="Se alle service-tilkald for denne maskine"
           >
-            <Wrench className="h-4 w-4" />
+            <Wrench className="mr-1.5 h-4 w-4" />
             Eskaleringer
           </Link>
           <a
             href={chatHref}
             target="_blank"
             rel="noopener noreferrer"
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-              "transition-colors hover:bg-[var(--color-muted)]",
-            )}
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
             title="Åbn operatør-chat for denne maskine i ny fane"
           >
-            <MessageSquare className="h-4 w-4" />
+            <MessageSquare className="mr-1.5 h-4 w-4" />
             Test chat
           </a>
-          <button
-            type="button"
+          <Button
+            variant="destructive"
+            size="sm"
             onClick={() => void remove()}
             disabled={deleting}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-red-700",
-              "transition-colors hover:bg-red-50 disabled:opacity-50",
-            )}
             title="Slet vidensbasen for denne maskine"
           >
             {deleting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="mr-1.5 h-4 w-4" />
             )}
             Slet maskine
-          </button>
+          </Button>
         </div>
       </div>
     </section>
@@ -431,10 +478,10 @@ function MachineQrCard({
 
   async function revoke() {
     const ok = await confirm({
-      title: "Inaktivér QR-kode?",
+      title: "Deaktiver QR-kode?",
       description:
         "Operatører kan ikke længere scanne sig ind på maskinen. Du kan altid generere en ny senere.",
-      confirmLabel: "Inaktivér",
+      confirmLabel: "Deaktiver",
       danger: true,
     });
     if (!ok) return;
@@ -466,7 +513,7 @@ function MachineQrCard({
     : null;
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -483,9 +530,9 @@ function MachineQrCard({
           {machine.qrToken ? (
             <div className="mt-4 flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                <Tag variant="positive" size="small">
                   Aktiv
-                </span>
+                </Tag>
                 {created && (
                   <span className="text-[12px] text-[var(--color-muted-foreground)]">
                     Genereret {created}
@@ -493,14 +540,14 @@ function MachineQrCard({
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
+                <code className="flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
                   {tokenUrl ?? ""}
                 </code>
                 <button
                   type="button"
                   onClick={() => void copy()}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                    "inline-flex items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
                     "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
                     "transition-colors hover:bg-[var(--color-muted)]",
                   )}
@@ -508,7 +555,7 @@ function MachineQrCard({
                 >
                   {copied ? (
                     <>
-                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      <Check className="h-3.5 w-3.5 text-[var(--ds-green)]" />
                       Kopieret
                     </>
                   ) : (
@@ -522,13 +569,13 @@ function MachineQrCard({
             </div>
           ) : (
             <div className="mt-4">
-              <span className="inline-flex rounded-full bg-[var(--color-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-muted-foreground)]">
+              <Tag variant="default" size="small">
                 Ingen aktiv QR-kode
-              </span>
+              </Tag>
             </div>
           )}
 
-          {err && <p className="mt-2 text-[13px] text-red-600">{err}</p>}
+          {err && <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>}
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
@@ -537,52 +584,40 @@ function MachineQrCard({
               href={`/admin/machines/${machine.machineId}/qr`}
               target="_blank"
               rel="noopener noreferrer"
-              className={cn(
-                "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-                "transition-colors hover:bg-[var(--color-muted)]",
-              )}
+              className={buttonClasses({ variant: "secondary", size: "sm" })}
               title="Åbn QR-side med download"
             >
-              <Download className="h-4 w-4" />
+              <Download className="mr-1.5 h-4 w-4" />
               Vis & hent
             </Link>
           )}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => void generate()}
             disabled={busy !== null}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-              "transition-colors hover:bg-[var(--color-muted)] disabled:opacity-50",
-            )}
           >
             {busy === "generate" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className="mr-1.5 h-4 w-4" />
             )}
             {machine.qrToken ? "Regenerér" : "Generér QR"}
-          </button>
+          </Button>
           {machine.qrToken && (
-            <button
-              type="button"
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={() => void revoke()}
               disabled={busy !== null}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-red-700",
-                "transition-colors hover:bg-red-50 disabled:opacity-50",
-              )}
             >
               {busy === "revoke" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
               ) : (
-                <X className="h-4 w-4" />
+                <X className="mr-1.5 h-4 w-4" />
               )}
-              Inaktivér
-            </button>
+              Deaktiver
+            </Button>
           )}
         </div>
       </div>
@@ -618,31 +653,28 @@ function UploadCard({
   function handleFileInput(list: FileList | null) {
     if (!list || list.length === 0) return;
     const folderPath = pickerFolderPath();
-    const pdfs = Array.from(list)
-      .filter(
-        (f) =>
-          f.type === "application/pdf" ||
-          f.name.toLowerCase().endsWith(".pdf"),
-      )
-      .map((file) => ({ file, folderPath }));
-    enqueueUploads(pdfs);
+    const files = Array.from(list).flatMap((file) => {
+      const kind = classifyFile(file);
+      return kind ? [{ file, folderPath, kind }] : [];
+    });
+    enqueueUploads(files);
     if (inputRef.current) inputRef.current.value = "";
   }
 
   async function handleDrop(dt: DataTransfer) {
-    const pdfs = await filesFromDrop(dt);
-    enqueueUploads(pdfs);
+    const files = await filesFromDrop(dt);
+    enqueueUploads(files);
   }
 
   return (
-    <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
       <h2 className="text-[16px] font-semibold text-[var(--color-foreground)]">
-        Upload manualer
+        Upload manualer & billeder
       </h2>
       <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-        Træk én eller flere PDF&#39;er — eller en hel mappe — hertil.
-        Mappestrukturen bevares. Filerne køres igennem en ad gangen pga.
-        embeddings-rate-limits.
+        Træk PDF&#39;er, billeder (PNG/JPG/WebP) eller en hel mappe hertil.
+        Mappestrukturen bevares. Billeder bliver beskrevet med Claude vision
+        og kan derefter dukke op som figurer i chat-svaret.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -652,7 +684,7 @@ function UploadCard({
             value={pickerFolder}
             onChange={(e) => setPickerFolder(e.target.value)}
             className={cn(
-              "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "mt-1 h-10 w-full rounded-[4px] border border-[var(--color-hairline)]",
               "bg-[var(--color-background)] px-3 text-[14px] font-normal",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
             )}
@@ -672,7 +704,7 @@ function UploadCard({
             onChange={(e) => setNewFolderInput(e.target.value)}
             placeholder="F.eks. Setup/Kalibrering"
             className={cn(
-              "h-10 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+              "h-10 rounded-[4px] border border-[var(--color-hairline)]",
               "bg-[var(--color-background)] px-3 text-[14px]",
               "placeholder:text-[var(--color-muted-foreground)]",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
@@ -683,7 +715,7 @@ function UploadCard({
 
       <div
         className={cn(
-          "mt-4 flex flex-col items-center justify-center gap-2 rounded-[var(--radius)]",
+          "mt-4 flex flex-col items-center justify-center gap-2 rounded-[4px]",
           "border border-dashed px-4 py-8 text-center transition-colors",
           dragActive
             ? "border-[var(--color-brand)] bg-[var(--color-brand)]/5"
@@ -706,7 +738,7 @@ function UploadCard({
       >
         <Upload className="h-5 w-5 text-[var(--color-muted-foreground)]" />
         <p className="text-[14px] text-[var(--color-muted-foreground)]">
-          Træk PDF&#39;er eller en mappe hertil, eller{" "}
+          Træk PDF&#39;er, billeder eller en mappe hertil, eller{" "}
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
@@ -718,7 +750,7 @@ function UploadCard({
         <input
           ref={inputRef}
           type="file"
-          accept="application/pdf"
+          accept="application/pdf,image/png,image/jpeg,image/webp"
           multiple
           className="hidden"
           onChange={(e) => handleFileInput(e.target.files)}
@@ -810,11 +842,83 @@ function DocumentsTree({
   explicitFolders: string[];
   onChanged: () => Promise<void>;
 }) {
+  const confirm = useConfirm();
   const { rootDocs, topFolders } = buildTree(documents, explicitFolders);
   const [creating, setCreating] = useState(false);
   const [newFolderInput, setNewFolderInput] = useState("");
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [savingFolder, setSavingFolder] = useState(false);
+  const [autoOrganizeOpen, setAutoOrganizeOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkErr, setBulkErr] = useState<string | null>(null);
+
+  // Drop selections that no longer correspond to a visible document
+  // (e.g. after a refresh or a successful delete). Reconciles local
+  // selection set with the externally-fetched documents list.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(documents.map((d) => d.id));
+      const next = new Set<string>();
+      for (const id of prev) if (valid.has(id)) next.add(id);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [documents]);
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const allDocIds = documents.map((d) => d.id);
+  const allSelected =
+    allDocIds.length > 0 && allDocIds.every((id) => selected.has(id));
+  const someSelected = selected.size > 0 && !allSelected;
+
+  function toggleAll() {
+    setSelected((prev) =>
+      prev.size === allDocIds.length ? new Set() : new Set(allDocIds),
+    );
+  }
+
+  async function bulkDelete() {
+    if (selected.size === 0) return;
+    const n = selected.size;
+    const ok = await confirm({
+      title: `Slet ${n} dokument${n === 1 ? "" : "er"}?`,
+      description:
+        "Dokumenterne og alle deres embeddings fjernes permanent. Handlingen kan ikke fortrydes.",
+      confirmLabel: "Slet",
+      danger: true,
+    });
+    if (!ok) return;
+    setBulkDeleting(true);
+    setBulkErr(null);
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) => deleteAdminDocument(id)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setSelected(new Set());
+    try {
+      await onChanged();
+    } finally {
+      setBulkDeleting(false);
+    }
+    if (failed > 0) {
+      setBulkErr(`${failed} af ${ids.length} dokumenter kunne ikke slettes`);
+    }
+  }
+
+  // Show the auto-organize button when there's at least one ready doc to
+  // think about. With zero docs there's nothing to suggest moves for.
+  const canAutoOrganize = documents.some((d) => d.status === "ready");
 
   async function submitNewFolder() {
     const path = newFolderInput.trim();
@@ -867,87 +971,105 @@ function DocumentsTree({
 
   const isEmpty = documents.length === 0 && topFolders.length === 0;
 
-  return (
-    <section className="overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
-      <div className="flex items-center justify-between gap-3 bg-[var(--color-muted)] px-4 py-2 text-[12px]">
-        {creating ? (
-          <div className="flex flex-1 items-center gap-2">
-            <input
-              autoFocus
-              value={newFolderInput}
-              onChange={(e) => setNewFolderInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitNewFolder();
-                if (e.key === "Escape") {
-                  setNewFolderInput("");
-                  setCreating(false);
-                  setCreateErr(null);
-                }
-              }}
-              placeholder="Sti, f.eks. Setup/Kalibrering"
-              disabled={savingFolder}
-              className={cn(
-                "h-8 max-w-xs flex-1 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] px-2 text-[13px] font-normal normal-case",
-                "placeholder:text-[var(--color-muted-foreground)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-              )}
-            />
-            <button
-              onClick={() => void submitNewFolder()}
-              disabled={savingFolder || !newFolderInput.trim()}
-              className="rounded p-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
-              aria-label="Opret"
-            >
-              {savingFolder ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Check className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setCreating(false);
-                setNewFolderInput("");
-                setCreateErr(null);
-              }}
-              disabled={savingFolder}
-              className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
-              aria-label="Annullér"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-            {createErr && (
-              <span className="ml-2 text-[12px] normal-case text-red-600">
-                {createErr}
-              </span>
-            )}
-          </div>
-        ) : (
-          <>
-            <span className="font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              Dokumenter
-            </span>
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)]"
-            >
-              <Folder className="h-3.5 w-3.5" />
-              Ny mappe
-            </button>
-          </>
-        )}
-      </div>
+  function cancelCreate() {
+    setCreating(false);
+    setNewFolderInput("");
+    setCreateErr(null);
+  }
 
-      {isEmpty ? (
+  return (
+    <section className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+      <div className="flex items-center justify-between gap-3 bg-[var(--color-muted)] px-4 py-2 text-[12px]">
+        <div className="flex items-center gap-3">
+          <span className="font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            Dokumenter
+          </span>
+          {selected.size > 0 && (
+            <span className="normal-case text-[12px] text-[var(--color-muted-foreground)]">
+              {selected.size} valgt
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {selected.size > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
+              >
+                Ryd valg
+              </button>
+              <button
+                type="button"
+                onClick={() => void bulkDelete()}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--ds-red)]/30 bg-[var(--ds-red-bg)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--ds-red)] hover:bg-[var(--ds-red)]/10 disabled:opacity-50"
+              >
+                {bulkDeleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+                Slet {selected.size}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setAutoOrganizeOpen(true)}
+            disabled={!canAutoOrganize}
+            title="Lad Claude foreslå en mappe-struktur for dine dokumenter"
+            className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[var(--color-brand)]" />
+            Auto-organisér
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            disabled={creating}
+            className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
+          >
+            <Folder className="h-3.5 w-3.5" />
+            Ny mappe
+          </button>
+        </div>
+      </div>
+      {bulkErr && (
+        <div className="border-t border-[var(--color-hairline)] bg-[var(--ds-red-bg)] px-4 py-2 text-[12px] text-[var(--ds-red)]">
+          {bulkErr}
+        </div>
+      )}
+
+      {autoOrganizeOpen && (
+        <AutoOrganizeDialog
+          machineId={machineId}
+          onClose={() => setAutoOrganizeOpen(false)}
+          onApplied={onChanged}
+        />
+      )}
+
+      {isEmpty && !creating ? (
         <div className="p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           Ingen manualer endnu. Upload den første ovenfor — eller opret en
           tom mappe og fyld den senere.
         </div>
       ) : (
-        <>
-      <div className="grid grid-cols-[2fr_2fr_auto_auto_auto_auto_auto] gap-x-4 bg-[var(--color-muted)] px-4 py-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        <div className="grid grid-cols-[auto_2fr_2fr_auto_auto_auto_auto_auto]">
+      <div className="col-span-full grid grid-cols-subgrid items-center gap-x-4 bg-[var(--color-muted)] px-4 py-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+        <input
+          type="checkbox"
+          aria-label={allSelected ? "Fravælg alle" : "Vælg alle"}
+          checked={allSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someSelected;
+          }}
+          onChange={toggleAll}
+          disabled={allDocIds.length === 0}
+          className="h-4 w-4 cursor-pointer accent-[var(--color-brand)] disabled:cursor-not-allowed disabled:opacity-40"
+        />
         <div className="font-medium">Titel</div>
         <div className="font-medium">Beskrivelse</div>
         <div className="font-medium">Status</div>
@@ -956,6 +1078,17 @@ function DocumentsTree({
         <div className="font-medium">Oprettet</div>
         <div></div>
       </div>
+
+      {creating && (
+        <NewFolderRow
+          value={newFolderInput}
+          onChange={setNewFolderInput}
+          onSubmit={submitNewFolder}
+          onCancel={cancelCreate}
+          saving={savingFolder}
+          error={createErr}
+        />
+      )}
 
       <RootRow
         hasDocs={rootDocs.length > 0}
@@ -970,6 +1103,8 @@ function DocumentsTree({
           onDragStartDoc={() => setMovingId(d.id)}
           onDragEndDoc={() => setMovingId(null)}
           isMoving={movingId === d.id}
+          selected={selected.has(d.id)}
+          onToggleSelected={toggleSelected}
         />
       ))}
 
@@ -985,9 +1120,11 @@ function DocumentsTree({
           movingId={movingId}
           setMovingId={setMovingId}
           onChanged={onChanged}
+          selected={selected}
+          onToggleSelected={toggleSelected}
         />
       ))}
-        </>
+        </div>
       )}
     </section>
   );
@@ -1016,13 +1153,86 @@ function RootRow({
         if (id) onMoveHere(id);
       }}
       className={cn(
-        "border-t border-[var(--color-hairline)]",
+        "col-span-full border-t border-[var(--color-hairline)]",
         "px-4 py-2 text-[11px] font-medium uppercase tracking-wide",
         "text-[var(--color-muted-foreground)] transition-colors",
         over && "bg-[var(--color-brand)]/5",
       )}
     >
       {hasDocs ? "Rod" : "Rod (træk hertil for at flytte til rod)"}
+    </div>
+  );
+}
+
+function NewFolderRow({
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  saving,
+  error,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  error: string | null;
+}) {
+  return (
+    <div
+      className={cn(
+        "col-span-full flex items-center gap-2 border-t border-[var(--color-hairline)]",
+        "bg-[var(--color-brand)]/5 px-4 py-2 text-[14px]",
+      )}
+      style={{ paddingLeft: 16 }}
+    >
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
+      <Folder className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onSubmit();
+          if (e.key === "Escape") onCancel();
+        }}
+        placeholder="Sti, f.eks. Setup/Kalibrering"
+        disabled={saving}
+        className={cn(
+          "h-7 max-w-sm flex-1 rounded-[4px] border border-[var(--color-hairline)]",
+          "bg-[var(--color-surface)] px-2 text-[13px] font-medium normal-case",
+          "placeholder:font-normal placeholder:text-[var(--color-muted-foreground)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+        )}
+      />
+      {error && (
+        <span className="text-[12px] normal-case text-[var(--ds-red)]">
+          {error}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={saving || !value.trim()}
+        className="ml-auto rounded p-1 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)] disabled:opacity-40"
+        aria-label="Opret"
+      >
+        {saving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Check className="h-3.5 w-3.5" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={saving}
+        className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
+        aria-label="Annullér"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -1037,6 +1247,8 @@ function FolderNode({
   movingId,
   setMovingId,
   onChanged,
+  selected,
+  onToggleSelected,
 }: {
   machineId: string;
   folder: FolderTree;
@@ -1047,6 +1259,8 @@ function FolderNode({
   movingId: string | null;
   setMovingId: (id: string | null) => void;
   onChanged: () => Promise<void>;
+  selected: Set<string>;
+  onToggleSelected: (id: string) => void;
 }) {
   const confirm = useConfirm();
   const [over, setOver] = useState(false);
@@ -1092,7 +1306,7 @@ function FolderNode({
           if (id) void onMoveDoc(id, folder.path);
         }}
         className={cn(
-          "group flex cursor-pointer items-center gap-2 border-t border-[var(--color-hairline)]",
+          "group col-span-full flex cursor-pointer items-center gap-2 border-t border-[var(--color-hairline)]",
           "px-4 py-2.5 text-[14px] transition-colors hover:bg-[var(--color-muted)]/40",
           over && "bg-[var(--color-brand)]/5",
         )}
@@ -1123,7 +1337,7 @@ function FolderNode({
             disabled={deletingFolder}
             title="Slet tom mappe"
             aria-label="Slet tom mappe"
-            className="ml-auto rounded p-1 text-[var(--color-muted-foreground)] opacity-0 transition-opacity hover:bg-red-50 hover:text-red-700 group-hover:opacity-100 disabled:opacity-40"
+            className="ml-auto rounded p-1 text-[var(--color-muted-foreground)] opacity-0 transition-opacity hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] group-hover:opacity-100 disabled:opacity-40"
           >
             {deletingFolder ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1145,6 +1359,8 @@ function FolderNode({
               onDragStartDoc={() => setMovingId(d.id)}
               onDragEndDoc={() => setMovingId(null)}
               isMoving={movingId === d.id}
+              selected={selected.has(d.id)}
+              onToggleSelected={onToggleSelected}
             />
           ))}
           {folder.children.map((child) => (
@@ -1159,6 +1375,8 @@ function FolderNode({
               movingId={movingId}
               setMovingId={setMovingId}
               onChanged={onChanged}
+              selected={selected}
+              onToggleSelected={onToggleSelected}
             />
           ))}
         </>
@@ -1180,6 +1398,8 @@ function DocumentRow({
   onDragStartDoc,
   onDragEndDoc,
   isMoving,
+  selected,
+  onToggleSelected,
 }: {
   document: AdminDocument;
   depth: number;
@@ -1187,6 +1407,8 @@ function DocumentRow({
   onDragStartDoc: () => void;
   onDragEndDoc: () => void;
   isMoving: boolean;
+  selected: boolean;
+  onToggleSelected: (id: string) => void;
 }) {
   const confirm = useConfirm();
   const { enqueueReprocess } = useUploadQueue();
@@ -1315,19 +1537,40 @@ function DocumentRow({
       }}
       onDragEnd={onDragEndDoc}
       className={cn(
-        "grid grid-cols-[2fr_2fr_auto_auto_auto_auto_auto] items-center gap-x-4",
+        "col-span-full grid grid-cols-subgrid items-center gap-x-4",
         "border-t border-[var(--color-hairline)] px-4 py-3 text-[14px]",
         "transition-opacity",
         isMoving && "opacity-40",
+        selected && "bg-[var(--color-brand)]/5",
       )}
       style={{ paddingLeft: 16 + depth * 20 }}
     >
+      <input
+        type="checkbox"
+        aria-label={`Vælg ${document.title}`}
+        checked={selected}
+        onChange={() => onToggleSelected(document.id)}
+        // Stop drag/click bubbling so the checkbox doesn't trigger the
+        // row drag handle or expand interactions.
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        draggable={false}
+        className="h-4 w-4 cursor-pointer accent-[var(--color-brand)]"
+      />
       <div className="flex min-w-0 items-center gap-1.5 font-medium text-[var(--color-foreground)]">
         <GripVertical
           className="h-4 w-4 shrink-0 cursor-grab text-[var(--color-muted-foreground)]/40 hover:text-[var(--color-muted-foreground)]"
           aria-label="Træk for at flytte"
         />
         <span className="truncate">{document.title}</span>
+        {document.sourceType === "image" && (
+          <span title="Billede beskrevet med Claude vision">
+            <ImageIcon
+              aria-label="Billede"
+              className="h-3.5 w-3.5 shrink-0 text-[var(--color-brand)]"
+            />
+          </span>
+        )}
         {document.extractionSource === "claude-ocr" && (
           <span title="Tekst udvundet med Claude vision (OCR)">
             <ScanEye
@@ -1340,7 +1583,7 @@ function DocumentRow({
           <span title="Auto-promoveret fra operatør-feedback (markeret som virkende)">
             <MessageSquareQuote
               aria-label="Operatør-erfaring"
-              className="h-3.5 w-3.5 shrink-0 text-emerald-600"
+              className="h-3.5 w-3.5 shrink-0 text-[var(--ds-green)]"
             />
           </span>
         )}
@@ -1362,7 +1605,7 @@ function DocumentRow({
               autoFocus
               disabled={saving}
               className={cn(
-                "h-8 flex-1 rounded-[var(--radius)] border border-[var(--color-hairline)]",
+                "h-8 flex-1 rounded-[4px] border border-[var(--color-hairline)]",
                 "bg-[var(--color-background)] px-2 text-[14px]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
               )}
@@ -1370,7 +1613,7 @@ function DocumentRow({
             <button
               onClick={() => void saveSummary()}
               disabled={saving}
-              className="rounded p-1 text-emerald-700 hover:bg-emerald-50"
+              className="rounded p-1 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)]"
               aria-label="Gem"
             >
               {saving ? (
@@ -1400,18 +1643,13 @@ function DocumentRow({
             <Pencil className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100" />
           </button>
         )}
-        {err && <p className="mt-1 text-[12px] text-red-600">{err}</p>}
+        {err && <p className="mt-1 text-[12px] text-[var(--ds-red)]">{err}</p>}
       </div>
 
       <div>
-        <span
-          className={cn(
-            "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium",
-            badge.tone,
-          )}
-        >
+        <Tag variant={badge.variant} size="small">
           {badge.label}
-        </span>
+        </Tag>
       </div>
 
       <div className="text-right tabular-nums text-[var(--color-foreground)]">
@@ -1455,14 +1693,16 @@ function DocumentRow({
                 <Download className="h-4 w-4" />
               )}
             </button>
-            <button
-              onClick={() => void reprocess()}
-              title="Kør igennem Claude OCR igen — kører i den fælles kø"
-              aria-label="Reprocesser med OCR"
-              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+            {document.sourceType === "pdf" && (
+              <button
+                onClick={() => void reprocess()}
+                title="Kør igennem Claude OCR igen — kører i den fælles kø"
+                aria-label="Reprocesser med OCR"
+                className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            )}
           </>
         )}
         <button
@@ -1474,7 +1714,7 @@ function DocumentRow({
               : "Slet dokument"
           }
           aria-label="Slet dokument"
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-red-50 hover:text-red-700 disabled:opacity-40"
+          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] disabled:opacity-40"
         >
           {deleting ? (
             <Loader2 className="h-4 w-4 animate-spin" />

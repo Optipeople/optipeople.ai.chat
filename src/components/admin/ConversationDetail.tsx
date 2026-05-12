@@ -69,7 +69,7 @@ export function ConversationDetail({
   }
   if (error || !data) {
     return (
-      <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
         {error ?? "Samtalen kunne ikke hentes"}
       </div>
     );
@@ -89,7 +89,7 @@ export function ConversationDetail({
         Alle samtaler
       </Link>
 
-      <section className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+      <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
         <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)]">
           Samtale fra {DA_DT.format(new Date(data.startedAt))}
         </h1>
@@ -125,7 +125,7 @@ export function ConversationDetail({
         </dl>
 
         {data.escalation && (
-          <div className="mt-5 flex items-start gap-3 rounded-[var(--radius)] border border-amber-200 bg-amber-50 p-4 text-[14px]">
+          <div className="mt-5 flex items-start gap-3 rounded-[4px] border border-amber-200 bg-amber-50 p-4 text-[14px]">
             <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
             <div className="flex-1">
               <p className="font-medium text-amber-900">
@@ -171,7 +171,7 @@ export function ConversationDetail({
         {data.feedback && (
           <div
             className={cn(
-              "mt-5 flex items-start gap-3 rounded-[var(--radius)] border p-4 text-[14px]",
+              "mt-5 flex items-start gap-3 rounded-[4px] border p-4 text-[14px]",
               data.feedback.resolved
                 ? "border-emerald-200 bg-emerald-50"
                 : "border-red-200 bg-red-50",
@@ -229,7 +229,7 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
             Operatør · {time}
           </span>
           <div
-            className="rounded-[var(--radius-lg)] rounded-br-[10px] px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+            className="rounded-[4px] px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-[var(--shadow-sm)]"
             style={{
               backgroundColor: "var(--color-accent)",
               color: "var(--color-primary-foreground)",
@@ -259,11 +259,11 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
         )}
       </span>
       {message.content ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 text-[15px]">
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 text-[15px]">
           <Markdown>{message.content}</Markdown>
         </div>
       ) : message.toolName ? (
-        <div className="rounded-[var(--radius)] border border-dashed border-[var(--color-hairline)] bg-[var(--color-surface)] px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
+        <div className="rounded-[4px] border border-dashed border-[var(--color-hairline)] bg-[var(--color-surface)] px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
           (kun tool-kald — se nedenstående tool-besked)
         </div>
       ) : null}
@@ -287,7 +287,7 @@ function ToolMessage({
       : null;
 
   return (
-    <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-muted)]/40 p-4">
+    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-muted)]/40 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
           <Wrench className="h-3.5 w-3.5" />
@@ -313,7 +313,7 @@ function ToolMessage({
         </button>
       </div>
       {showInput && (
-        <pre className="mt-3 overflow-x-auto rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 text-[12px]">
+        <pre className="mt-3 overflow-x-auto rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 text-[12px]">
           {JSON.stringify(message.toolInput, null, 2)}
         </pre>
       )}
@@ -346,7 +346,7 @@ function ChunkRow({ chunk }: { chunk: AdminChunkRef }) {
         : `s. ${chunk.pageFrom}`;
 
   return (
-    <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

@@ -112,7 +112,7 @@ export async function fetchWithAuth(
   const token = getAccessToken();
   if (!token) throw new Error("Session expired");
 
-  let res = await fetch(url, withAuthHeader(init, token));
+  const res = await fetch(url, withAuthHeader(init, token));
   if (res.status !== 401) return res;
 
   if (!refreshInFlight) {

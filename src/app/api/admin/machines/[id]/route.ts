@@ -17,7 +17,7 @@ export type AdminDocument = {
   title: string;
   summary: string;
   status: string;
-  sourceType: "pdf" | "url" | "manual_note" | "feedback";
+  sourceType: "pdf" | "url" | "manual_note" | "feedback" | "image";
   pageCount: number | null;
   byteSize: number | null;
   createdAt: string;
@@ -128,7 +128,7 @@ export async function GET(
         title: string;
         summary: string;
         status: string;
-        source_type: "pdf" | "url" | "manual_note" | "feedback";
+        source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
         page_count: number | null;
         byte_size: number | null;
         created_at: string;
@@ -206,21 +206,33 @@ export async function DELETE(
   const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
-  // Best-effort storage cleanup: list everything under <machineId>/ and
-  // remove. Done before the row delete so we still have a foothold if the
-  // listing fails. The DB cascade drops kb_documents/kb_chunks/kb_folders.
-  const { data: objects, error: listErr } = await supabase.storage
-    .from("kb-documents")
-    .list(id, { limit: 1000 });
-  if (listErr) {
-    console.warn("admin DELETE machine: storage list failed:", listErr);
-  } else if (objects && objects.length > 0) {
-    const paths = objects.map((o) => `${id}/${o.name}`);
-    const { error: rmErr } = await supabase.storage
-      .from("kb-documents")
-      .remove(paths);
-    if (rmErr) {
-      console.warn("admin DELETE machine: storage remove failed:", rmErr);
+  // Best-effort storage cleanup: list everything under <machineId>/ in
+  // both buckets (pdfs in kb-documents, images in kb-images) and remove.
+  // Done before the row delete so we still have a foothold if the
+  // listing fails. The DB cascade drops kb_documents/kb_chunks/kb_assets/
+  // kb_folders.
+  for (const bucket of ["kb-documents", "kb-images"] as const) {
+    const { data: objects, error: listErr } = await supabase.storage
+      .from(bucket)
+      .list(id, { limit: 1000 });
+    if (listErr) {
+      console.warn(
+        `admin DELETE machine: ${bucket} list failed:`,
+        listErr,
+      );
+      continue;
+    }
+    if (objects && objects.length > 0) {
+      const paths = objects.map((o) => `${id}/${o.name}`);
+      const { error: rmErr } = await supabase.storage
+        .from(bucket)
+        .remove(paths);
+      if (rmErr) {
+        console.warn(
+          `admin DELETE machine: ${bucket} remove failed:`,
+          rmErr,
+        );
+      }
     }
   }
 

@@ -2,15 +2,18 @@
 
 import { useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { OptipeopleLogo } from "@/components/logo";
 import { useAuth } from "@/auth/AuthContext";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const MIDNIGHT_GREEN = "#134343";
 
 export function LoginScreen() {
   const { login, isLoggingIn, loginError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -21,38 +24,33 @@ export function LoginScreen() {
     }
   }
 
+  const canSubmit = !isLoggingIn && email.length > 0 && password.length > 0;
+
   return (
-    <div className="relative flex h-full flex-col bg-[var(--color-background)]">
-      <header
-        className="relative z-20 shrink-0"
-        style={{ backgroundColor: "var(--color-brand)" }}
+    <div
+      className="relative flex h-full flex-col items-center justify-center"
+      style={{ backgroundColor: MIDNIGHT_GREEN }}
+    >
+      <form
+        onSubmit={handleSubmit}
+        className={cn(
+          "msg-in relative w-[400px] max-w-[calc(100%-2rem)] rounded-[4px] bg-white px-12 pt-12 pb-8",
+          "border border-[#aab5b5]",
+          "shadow-[inset_0_2px_2px_0_rgba(0,0,0,0.1)]",
+        )}
       >
-        <div className="mx-auto flex h-16 max-w-3xl items-center px-6">
-          <OptipeopleLogo className="h-7 w-auto text-white" aria-label="Optipeople" />
+        <div className="flex flex-col items-center pt-6 pb-8">
+          <OptipeopleLogo
+            className="h-[50px] w-auto text-[#0f1a21]"
+            aria-label="Optipeople"
+          />
         </div>
-      </header>
 
-      <div className="flex flex-1 items-center justify-center px-6">
-        <form
-          onSubmit={handleSubmit}
-          className={cn(
-            "msg-in w-full max-w-sm rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-8",
-            "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
-          )}
-        >
-          <h1 className="mb-1 text-[22px] font-semibold text-[var(--color-foreground)]">
-            Log ind
-          </h1>
-          <p className="mb-6 text-[15px] text-[var(--color-muted-foreground)]">
-            Brug din Optipeople-konto.
-          </p>
+        <h1 className="pb-[18px] pt-[18px] text-[21px] font-black leading-[28px] text-black/75">
+          Log ind
+        </h1>
 
-          <label
-            htmlFor="email"
-            className="mb-1.5 block text-[14px] font-medium text-[var(--color-foreground)]"
-          >
-            E-mail
-          </label>
+        <div className="flex flex-col gap-2 pb-2">
           <input
             id="email"
             type="email"
@@ -61,20 +59,15 @@ export function LoginScreen() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={isLoggingIn}
+            placeholder="Brugernavn eller e-mail"
             className={cn(
-              "mb-4 h-11 w-full rounded-[var(--radius-sm)] bg-[var(--color-surface)] px-3.5 text-[16px]",
-              "border border-[var(--color-input)] text-[var(--color-foreground)]",
-              "focus:border-[var(--color-brand)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
+              "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
+              "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
+              "placeholder:text-[#b9b8b7]",
+              "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",
               "disabled:opacity-60",
             )}
           />
-
-          <label
-            htmlFor="password"
-            className="mb-1.5 block text-[14px] font-medium text-[var(--color-foreground)]"
-          >
-            Adgangskode
-          </label>
           <input
             id="password"
             type="password"
@@ -83,33 +76,77 @@ export function LoginScreen() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={isLoggingIn}
+            placeholder="Adgangskode"
             className={cn(
-              "mb-5 h-11 w-full rounded-[var(--radius-sm)] bg-[var(--color-surface)] px-3.5 text-[16px]",
-              "border border-[var(--color-input)] text-[var(--color-foreground)]",
-              "focus:border-[var(--color-brand)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
+              "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
+              "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
+              "placeholder:text-[#b9b8b7]",
+              "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",
               "disabled:opacity-60",
             )}
           />
+        </div>
 
-          {loginError && (
-            <p className="mb-4 text-[14px] text-[#b00020]">{loginError}</p>
-          )}
+        <label className="mt-2 inline-flex cursor-pointer items-center gap-[6px] text-[14px] leading-[14px] text-[#071818]">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="size-[14px] cursor-pointer accent-[#134343]"
+          />
+          Husk mig på denne computer
+        </label>
 
-          <Button
-            type="submit"
-            disabled={isLoggingIn || !email || !password}
-            className="h-11 w-full rounded-[var(--radius-sm)]"
-          >
+        {loginError && (
+          <p className="mt-3 text-[13px] leading-[18px] text-[#b00020]">
+            {loginError}
+          </p>
+        )}
+
+        <div className="pt-3">
+          <Button type="submit" variant="secondary" disabled={!canSubmit}>
             {isLoggingIn ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Loader2 className="h-[14px] w-[14px] animate-spin" />
             ) : (
               "Log ind"
             )}
           </Button>
-        </form>
+        </div>
+
+        <p className="pt-6 pb-3 text-[14px] leading-[21px] text-black/90">
+          Hjælp mig.
+          <br aria-hidden />
+          Jeg har{" "}
+          <button
+            type="button"
+            className="text-[#134343] underline decoration-solid hover:opacity-70"
+          >
+            glemt min adgangskode
+          </button>
+          .
+        </p>
+      </form>
+
+      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center pb-[59px]">
+        <p className="flex flex-wrap items-center justify-center gap-x-9 gap-y-2 text-[14px] leading-[21px] text-[#eaeeee]">
+          <a
+            href="https://optipeople.com/terms-and-conditions/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:underline"
+          >
+            Terms of Service
+          </a>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 hover:underline"
+          >
+            Sprog: Dansk
+          </button>
+        </p>
       </div>
 
-      <div className="brand-stripe" aria-hidden>
+      <div className="brand-stripe absolute inset-x-0 bottom-0" aria-hidden>
         <span />
         <span />
         <span />

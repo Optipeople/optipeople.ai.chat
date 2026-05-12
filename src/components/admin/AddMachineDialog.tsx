@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { TextField } from "@/components/ui/text-field";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import {
   getMachinesForAccount,
@@ -58,8 +60,11 @@ export function AddMachineDialog({
   // Re-fetch machines whenever the chosen account changes.
   useEffect(() => {
     if (!account) {
+      // Clear cached list when the account selection is cleared.
+      /* eslint-disable react-hooks/set-state-in-effect */
       setMachines(null);
       setMachinesErr(null);
+      /* eslint-enable react-hooks/set-state-in-effect */
       return;
     }
     let cancelled = false;
@@ -136,7 +141,7 @@ export function AddMachineDialog({
         if (e.target === e.currentTarget && !submitting) onClose();
       }}
     >
-      <div className="flex w-full max-w-lg flex-col gap-5 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 shadow-xl">
+      <div className="flex w-full max-w-lg flex-col gap-5 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
@@ -198,56 +203,39 @@ export function AddMachineDialog({
           disabled={!account || submitting}
         />
 
-        <label className="block text-[13px] font-medium text-[var(--color-foreground)]">
-          Visningsnavn
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Bruges i admin og chat-overskrifter"
-            disabled={!machine || submitting}
-            className={cn(
-              "mt-1 h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-background)] px-3 text-[14px] font-normal",
-              "placeholder:text-[var(--color-muted-foreground)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-              "disabled:opacity-60",
-            )}
-          />
-        </label>
+        <TextField
+          label="Visningsnavn"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Bruges i admin og chat-overskrifter"
+          disabled={!machine || submitting}
+        />
 
-        {submitErr && <p className="text-[13px] text-red-600">{submitErr}</p>}
+        {submitErr && (
+          <p className="text-[13px] text-[var(--ds-red)]">{submitErr}</p>
+        )}
 
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => !submitting && onClose()}
             disabled={submitting}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] border border-[var(--color-hairline)]",
-              "bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-foreground)]",
-              "transition-colors hover:bg-[var(--color-muted)] disabled:opacity-50",
-            )}
           >
             Annullér
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
             onClick={() => void submit()}
             disabled={!machine || submitting}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-[13px] font-medium",
-              "bg-[var(--color-brand)] text-white transition-opacity",
-              "hover:opacity-90 disabled:opacity-50",
-            )}
           >
             {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <Check className="h-4 w-4" />
+              <Check className="mr-1.5 h-4 w-4" />
             )}
             Opret vidensbase
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -291,6 +279,7 @@ function Combobox<T>({
 
   // Keep input in sync with selection from outside (e.g. parent clearing).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selected) setQuery(getLabel(selected));
     else setQuery("");
   }, [selected, getLabel]);
@@ -344,7 +333,7 @@ function Combobox<T>({
           placeholder={placeholder}
           disabled={disabled || loading}
           className={cn(
-            "h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
+            "h-10 w-full rounded-[4px] border border-[var(--color-hairline)]",
             "bg-[var(--color-background)] pl-9 pr-9 text-[14px]",
             "placeholder:text-[var(--color-muted-foreground)]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
@@ -366,7 +355,7 @@ function Combobox<T>({
       </div>
 
       {open && !disabled && !loading && (
-        <div className="absolute z-10 mt-1 max-h-72 w-full overflow-auto rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-lg">
+        <div className="absolute z-10 mt-1 max-h-72 w-full overflow-auto rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-lg">
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[13px] text-[var(--color-muted-foreground)]">
               {loadErr ?? "Ingen match"}
@@ -406,7 +395,7 @@ function Combobox<T>({
                     )}
                   </div>
                   {isSelected && (
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <Check className="h-4 w-4 shrink-0 text-[var(--ds-green)]" />
                   )}
                 </button>
               );

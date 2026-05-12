@@ -54,7 +54,7 @@ export async function GET(
   const supabase = getSupabaseServerClient();
   const { data: doc, error } = await supabase
     .from("kb_documents")
-    .select("storage_path, title, machine_id")
+    .select("storage_path, title, machine_id, source_type")
     .eq("id", id)
     .maybeSingle();
 
@@ -69,6 +69,7 @@ export async function GET(
     storage_path: string | null;
     title: string;
     machine_id: string;
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
   };
   // QR sessions are pinned to one machine — refuse cross-machine doc
   // lookups even if the operator guesses a UUID.
@@ -82,8 +83,9 @@ export async function GET(
     );
   }
 
+  const bucket = row.source_type === "image" ? "kb-images" : "kb-documents";
   const { data: signed, error: signErr } = await supabase.storage
-    .from("kb-documents")
+    .from(bucket)
     .createSignedUrl(row.storage_path, SIGN_EXPIRY_SECONDS);
 
   if (signErr || !signed) {

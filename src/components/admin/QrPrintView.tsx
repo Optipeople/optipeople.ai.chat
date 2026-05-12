@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { OptipeopleLogo } from "@/components/logo";
+import { Button } from "@/components/ui/button";
 import { getAdminMachine, type AdminMachineDetail } from "@/admin/adminApi";
 import { downloadQrStickerPng } from "@/admin/qrSticker";
 
@@ -32,7 +33,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
 
   if (error) {
     return (
-      <div className="mx-auto mt-12 max-w-md rounded-[var(--radius)] border border-red-200 bg-red-50 p-6 text-[14px] text-red-700">
+      <div className="mx-auto mt-12 max-w-md rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
         {error}
       </div>
     );
@@ -48,7 +49,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
 
   if (!data.qrToken) {
     return (
-      <div className="mx-auto mt-12 max-w-md rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-center text-[14px]">
+      <div className="mx-auto mt-12 max-w-md rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-center text-[14px]">
         <p>Der er ingen aktiv QR-kode for denne maskine.</p>
         <Link
           href={`/admin/machines/${machineId}`}
@@ -89,24 +90,23 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           <ArrowLeft className="h-3.5 w-3.5" />
           Tilbage
         </Link>
-        <button
-          type="button"
+        <Button
+          size="sm"
           onClick={() => void onDownload()}
           disabled={downloading}
-          className="inline-flex items-center gap-2 rounded-[var(--radius)] bg-[var(--color-brand)] px-4 py-2 text-[13px] font-medium text-white shadow-[var(--shadow-sm)] hover:opacity-90 disabled:opacity-60"
         >
           {downloading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
           ) : (
-            <Download className="h-4 w-4" />
+            <Download className="mr-1.5 h-4 w-4" />
           )}
           Download
-        </button>
+        </Button>
       </div>
 
       {/* On-screen preview — visually mirrors the rendered PNG so the
           user can confirm the sticker looks right before downloading. */}
-      <div className="flex w-full flex-col items-center gap-6 rounded-[var(--radius-lg)] border-2 border-[var(--color-foreground)] bg-white p-10 text-center">
+      <div className="flex w-full flex-col items-center gap-6 rounded-[4px] border-2 border-[var(--color-foreground)] bg-white p-10 text-center">
         <OptipeopleLogo
           className="h-10 w-auto text-[var(--color-foreground)]"
           aria-label="Optipeople"
@@ -121,7 +121,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           </h1>
         </div>
 
-        <div className="rounded-[var(--radius)] bg-white p-4">
+        <div className="rounded-[4px] bg-white p-4">
           <QRCodeSVG value={url} size={320} level="M" includeMargin />
         </div>
 
@@ -131,7 +131,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
         </p>
       </div>
 
-      <p className="max-w-md break-all rounded-[var(--radius)] bg-[var(--color-muted)] px-3 py-2 text-center font-mono text-[11px] text-[var(--color-muted-foreground)]">
+      <p className="max-w-md break-all rounded-[4px] bg-[var(--color-muted)] px-3 py-2 text-center font-mono text-[11px] text-[var(--color-muted-foreground)]">
         {url}
       </p>
 

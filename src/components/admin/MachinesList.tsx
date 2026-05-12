@@ -2,14 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ChevronRight,
-  Loader2,
-  MessageSquare,
-  Plus,
-  Search,
-} from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
 import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
 import { AddMachineDialog } from "@/components/admin/AddMachineDialog";
 
@@ -67,32 +63,21 @@ export function MachinesList() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="relative w-72">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted-foreground)]" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Søg navn eller ID…"
-              className={cn(
-                "h-10 w-full rounded-[var(--radius)] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] pl-9 pr-3 text-[14px]",
-                "text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-              )}
-            />
-          </label>
-          <button
-            type="button"
+          <SearchField
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onClear={() => setQuery("")}
+            placeholder="Søg navn eller ID…"
+            className="w-72"
+          />
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setAddOpen(true)}
-            className={cn(
-              "inline-flex h-10 items-center gap-2 rounded-[var(--radius)] px-3 text-[13px] font-medium",
-              "bg-[var(--color-brand)] text-white transition-opacity hover:opacity-90",
-            )}
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="mr-1.5 h-4 w-4" />
             Tilføj maskine
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -105,7 +90,7 @@ export function MachinesList() {
       )}
 
       {error ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+        <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
           {error}
         </div>
       ) : loading ? (
@@ -113,13 +98,13 @@ export function MachinesList() {
           <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           {machines.length === 0
             ? 'Tryk "Tilføj maskine" for at tilføje din første maskine.'
             : "Ingen maskiner matcher din søgning."}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+        <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
           <table className="w-full text-[14px]">
             <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
               <tr>

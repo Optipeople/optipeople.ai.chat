@@ -24,7 +24,7 @@ import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-haiku-4-5-20251001";
+const MODEL = "claude-sonnet-4-6";
 
 // Hard cap on the agentic loop. The model usually finishes in 1–2 tool
 // calls; this is a safety net against pathological loops.
@@ -53,6 +53,7 @@ Formatering (svar vises som Markdown):
 - Hold afsnit på 1–3 linjer. Foretræk lister frem for prosa ved alt flertrins-indhold.
 - Skriv IKKE en *Kilde:* linje selv — kildelinks tilføjes automatisk under svaret når du har brugt search_kb. Du kan referere til manualens titel i prosa hvis det hjælper, men ingen footer-citat.
 - Pak aldrig hele svaret ind i en code block.
+- Når et søgeresultat har \`is_image: true\`, er det en figur/diagram. Nævn kort i prosa hvad figuren viser ("se diagrammet over værktøjsskift-sekvensen nedenfor"). Operatøren ser thumbnaillen automatisk under dit svar — du skal IKKE prøve at indlejre billedet selv.
 `;
 
 const TOOLS: Tool[] = [
@@ -147,6 +148,19 @@ type DocHit = {
   score: number;
 };
 
+// One per image-caption chunk that came back from search_kb. The client
+// resolves these to thumbnails via /api/assets/<id>/url so the operator
+// sees the diagram next to the answer.
+type ImageHit = {
+  assetId: string;
+  documentId: string;
+  documentTitle: string;
+  altText: string;
+  pageFrom: number | null;
+  mimeType: string;
+  score: number;
+};
+
 type ToolExecResult = {
   // What goes back to the model as the tool_result content.
   modelPayload: unknown;
@@ -157,6 +171,10 @@ type ToolExecResult = {
   // agentic loop and streamed to the client as `sources` so the UI can
   // render clickable links to the original PDFs.
   documents: DocHit[];
+  // Image-caption hits — chunks whose asset_id points at a kb_assets
+  // row. Surfaced separately so the client can render thumbnails
+  // alongside the document chips.
+  images: ImageHit[];
 };
 
 async function executeSearchKb(
@@ -168,6 +186,7 @@ async function executeSearchKb(
       modelPayload: { error: "query must be a non-empty string" },
       chunkIds: [],
       documents: [],
+      images: [],
     };
   }
   const topK = Math.min(
@@ -191,6 +210,7 @@ async function executeSearchKb(
       modelPayload: { error: error.message },
       chunkIds: [],
       documents: [],
+      images: [],
     };
   }
 
@@ -204,16 +224,60 @@ async function executeSearchKb(
     rrf_score: number;
   }>;
 
-  // Look up document titles so the model can cite them by name.
+  // Look up document titles + each chunk's asset_id in parallel. The
+  // RPC doesn't return asset_id (would require a SQL change), so we
+  // join it back in here. Cheap — at most topK chunks.
   const docIds = [...new Set(rows.map((r) => r.document_id))];
+  const chunkIds = rows.map((r) => r.chunk_id);
+  const [docTitles, chunkAssets] = await Promise.all([
+    docIds.length > 0
+      ? supabase.from("kb_documents").select("id, title").in("id", docIds)
+      : Promise.resolve({ data: [] }),
+    chunkIds.length > 0
+      ? supabase.from("kb_chunks").select("id, asset_id").in("id", chunkIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
   const titleByDoc = new Map<string, string>();
-  if (docIds.length > 0) {
-    const { data: docs } = await supabase
-      .from("kb_documents")
-      .select("id, title")
-      .in("id", docIds);
-    for (const d of (docs ?? []) as { id: string; title: string }[]) {
-      titleByDoc.set(d.id, d.title);
+  for (const d of (docTitles.data ?? []) as { id: string; title: string }[]) {
+    titleByDoc.set(d.id, d.title);
+  }
+  const assetByChunk = new Map<string, string>();
+  for (const c of (chunkAssets.data ?? []) as {
+    id: string;
+    asset_id: string | null;
+  }[]) {
+    if (c.asset_id) assetByChunk.set(c.id, c.asset_id);
+  }
+
+  // Pull every involved asset (kb_assets row) so we can build the
+  // image-hit list. Same one-shot batch fetch as titles above.
+  const assetIds = [...new Set(assetByChunk.values())];
+  const assetById = new Map<
+    string,
+    {
+      id: string;
+      document_id: string;
+      mime_type: string;
+      page_from: number | null;
+      alt_text: string | null;
+      caption: string;
+    }
+  >();
+  if (assetIds.length > 0) {
+    const { data: assets } = await supabase
+      .from("kb_assets")
+      .select("id, document_id, mime_type, page_from, alt_text, caption")
+      .in("id", assetIds);
+    for (const a of (assets ?? []) as {
+      id: string;
+      document_id: string;
+      mime_type: string;
+      page_from: number | null;
+      alt_text: string | null;
+      caption: string;
+    }[]) {
+      assetById.set(a.id, a);
     }
   }
 
@@ -221,6 +285,7 @@ async function executeSearchKb(
   // pointing at the most relevant page when there are multiple hits in
   // the same document.
   const hitsByDoc = new Map<string, DocHit>();
+  const imageHits: ImageHit[] = [];
   for (const r of rows) {
     const cur = hitsByDoc.get(r.document_id);
     if (!cur || r.rrf_score > cur.score) {
@@ -231,21 +296,46 @@ async function executeSearchKb(
         score: r.rrf_score,
       });
     }
+    const assetId = assetByChunk.get(r.chunk_id);
+    if (assetId) {
+      const asset = assetById.get(assetId);
+      if (asset) {
+        imageHits.push({
+          assetId,
+          documentId: r.document_id,
+          documentTitle: titleByDoc.get(r.document_id) ?? "(unknown)",
+          altText: asset.alt_text ?? asset.caption.slice(0, 80),
+          pageFrom: asset.page_from,
+          mimeType: asset.mime_type,
+          score: r.rrf_score,
+        });
+      }
+    }
   }
 
   return {
     modelPayload: {
-      results: rows.map((r) => ({
-        document_id: r.document_id,
-        title: titleByDoc.get(r.document_id) ?? "(unknown)",
-        page_from: r.page_from,
-        page_to: r.page_to,
-        score: r.rrf_score,
-        text: r.text,
-      })),
+      results: rows.map((r) => {
+        const assetId = assetByChunk.get(r.chunk_id);
+        const asset = assetId ? assetById.get(assetId) : undefined;
+        return {
+          document_id: r.document_id,
+          title: titleByDoc.get(r.document_id) ?? "(unknown)",
+          page_from: r.page_from,
+          page_to: r.page_to,
+          score: r.rrf_score,
+          text: r.text,
+          // The model uses these two fields to spot image hits — it can
+          // then mention the figure in prose ("se figur s. 12") and the
+          // operator-side UI renders the actual thumbnail.
+          is_image: !!asset,
+          image_alt: asset?.alt_text ?? null,
+        };
+      }),
     },
     chunkIds: rows.map((r) => r.chunk_id),
     documents: Array.from(hitsByDoc.values()),
+    images: imageHits,
   };
 }
 
@@ -261,6 +351,7 @@ async function executeTool(
     modelPayload: { error: `Unknown tool: ${name}` },
     chunkIds: [],
     documents: [],
+    images: [],
   };
 }
 
@@ -423,6 +514,10 @@ export async function POST(req: Request) {
         // calls in this turn's agentic loop. Streamed back as `sources`
         // so the UI can render clickable chips under the assistant reply.
         const docHits = new Map<string, DocHit>();
+        // Same idea but for image-caption chunks — one entry per asset
+        // so we don't show the same diagram twice if multiple searches
+        // retrieved it.
+        const imageHits = new Map<string, ImageHit>();
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
           const s = anthropic.messages.stream({
@@ -493,6 +588,10 @@ export async function POST(req: Request) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);
                 }
+                for (const im of exec.images) {
+                  const cur = imageHits.get(im.assetId);
+                  if (!cur || im.score > cur.score) imageHits.set(im.assetId, im);
+                }
                 const payloadStr = JSON.stringify(exec.modelPayload);
                 await safe("appendToolMessage", () =>
                   appendToolMessage({
@@ -541,7 +640,7 @@ export async function POST(req: Request) {
           ];
         }
 
-        if (docHits.size > 0) {
+        if (docHits.size > 0 || imageHits.size > 0) {
           send("sources", {
             sources: Array.from(docHits.values())
               .sort((a, b) => b.score - a.score)
@@ -549,6 +648,20 @@ export async function POST(req: Request) {
                 id: d.id,
                 title: d.title,
                 pageFrom: d.pageFrom,
+              })),
+            // Up to 4 figures — more than that overwhelms the chat
+            // layout and the model rarely uses information from beyond
+            // the top few hits anyway.
+            images: Array.from(imageHits.values())
+              .sort((a, b) => b.score - a.score)
+              .slice(0, 4)
+              .map((im) => ({
+                assetId: im.assetId,
+                documentId: im.documentId,
+                documentTitle: im.documentTitle,
+                altText: im.altText,
+                pageFrom: im.pageFrom,
+                mimeType: im.mimeType,
               })),
           });
         }

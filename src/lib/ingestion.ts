@@ -8,11 +8,13 @@
 // Server-only: uses the service-role Supabase client.
 
 import { randomUUID } from "node:crypto";
+import { attachPdfFigures, wipePdfFigures } from "./imageIngestion";
 import {
   extractPdfText,
   type PdfExtractionForce,
   type PdfExtractionSource,
 } from "./pdfText";
+import { regenerateSuggestedQuestionsSafe } from "./suggestions";
 import { getSupabaseServerClient } from "./supabase";
 import { embedDocuments, VOYAGE_MODEL } from "./voyage";
 
@@ -365,6 +367,17 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
       }
     }
 
+    // Figure extraction is best-effort and runs after text chunks are
+    // persisted so a failure here can't strand the document in an
+    // unsearchable state. The function logs and returns 0 on any error.
+    await writeProgress(documentId, 97, "Finder figurer…");
+    await attachPdfFigures({
+      documentId,
+      machineId: input.machineId,
+      pdfBuffer: input.fileBuffer,
+      pdfStoragePath: storagePath,
+    });
+
     await supabase
       .from("kb_documents")
       .update({
@@ -374,6 +387,8 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
         updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);
+
+    await regenerateSuggestedQuestionsSafe(input.machineId);
 
     return {
       documentId,
@@ -465,7 +480,9 @@ export async function reprocessPdf(args: {
 
   // Drop the old chunks before re-inserting. ON DELETE CASCADE on
   // kb_chunks handles document deletion, but for re-embed we delete
-  // explicitly since the document row is being kept.
+  // explicitly since the document row is being kept. Figure assets are
+  // wiped too so the upcoming attachPdfFigures pass writes a fresh set
+  // (their caption chunks cascade away with them).
   const { error: delErr } = await supabase
     .from("kb_chunks")
     .delete()
@@ -473,6 +490,7 @@ export async function reprocessPdf(args: {
   if (delErr) {
     throw new Error(`wipe old chunks failed: ${delErr.message}`);
   }
+  await wipePdfFigures(row.id);
 
   const work = (async (): Promise<ReprocessPdfResult> => {
     const extracted = await extractPdfText(buf, {
@@ -537,6 +555,14 @@ export async function reprocessPdf(args: {
       }
     }
 
+    await writeProgress(row.id, 97, "Finder figurer…");
+    await attachPdfFigures({
+      documentId: row.id,
+      machineId: row.machine_id,
+      pdfBuffer: buf,
+      pdfStoragePath: row.storage_path!,
+    });
+
     await supabase
       .from("kb_documents")
       .update({
@@ -548,6 +574,8 @@ export async function reprocessPdf(args: {
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
+
+    await regenerateSuggestedQuestionsSafe(row.machine_id);
 
     return {
       documentId: row.id,
@@ -583,22 +611,37 @@ export async function resetMachineKb(machineId: string): Promise<number> {
   const supabase = getSupabaseServerClient();
   const { data: oldDocs } = await supabase
     .from("kb_documents")
-    .select("id, storage_path")
+    .select("id, storage_path, source_type")
     .eq("machine_id", machineId);
 
   if (!oldDocs || oldDocs.length === 0) return 0;
 
-  const paths = oldDocs
-    .map((d) => d.storage_path)
-    .filter((p): p is string => !!p);
-  if (paths.length > 0) {
-    await supabase.storage.from("kb-documents").remove(paths);
+  // Bucket per source type — PDFs in kb-documents, standalone images in
+  // kb-images. We pre-bucket the paths so each remove() call hits the
+  // right object set.
+  const pdfPaths: string[] = [];
+  const imagePaths: string[] = [];
+  for (const d of oldDocs as {
+    storage_path: string | null;
+    source_type: string;
+  }[]) {
+    if (!d.storage_path) continue;
+    if (d.source_type === "image") imagePaths.push(d.storage_path);
+    else pdfPaths.push(d.storage_path);
+  }
+  if (pdfPaths.length > 0) {
+    await supabase.storage.from("kb-documents").remove(pdfPaths);
+  }
+  if (imagePaths.length > 0) {
+    await supabase.storage.from("kb-images").remove(imagePaths);
   }
   const { error } = await supabase
     .from("kb_documents")
     .delete()
     .eq("machine_id", machineId);
   if (error) throw new Error(`reset failed: ${error.message}`);
+
+  await regenerateSuggestedQuestionsSafe(machineId);
 
   return oldDocs.length;
 }

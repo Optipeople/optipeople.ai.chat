@@ -7,6 +7,9 @@ import {
   ExternalLink,
   FileText,
   Loader2,
+  Mic,
+  AudioLines,
+  Square,
   ThumbsDown,
   ThumbsUp,
   Wrench,
@@ -16,11 +19,13 @@ import type { EscalateResponse } from "@/app/api/chat/escalate/route";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/ui/markdown";
-import { OptipeopleLogo } from "@/components/logo";
+import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
 import { AccountSelectScreen } from "@/components/AccountSelectScreen";
 import { MachineSelectScreen } from "@/components/MachineSelectScreen";
-import { UserMenu } from "@/components/UserMenu";
+import { SpeakButton } from "@/components/SpeakButton";
+import { VoiceConversation } from "@/components/VoiceConversation";
+import { useVoiceRecorder } from "@/lib/useVoiceRecorder";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchWithAuth } from "@/auth/authApi";
 import {
@@ -59,6 +64,9 @@ function useDeepLinkSelection() {
     const account = params.get("account");
     const machine = params.get("machine");
     if (account || machine) {
+      // Capturing browser-only URL params on mount — has to run after
+      // hydration, can't be derived inline at render time.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPending({ account, machine });
       // Clean the URL once we've captured the intent.
       window.history.replaceState(null, "", window.location.pathname);
@@ -87,6 +95,9 @@ function useDeepLinkSelection() {
       machines.some((m) => m.id === pending.machine)
     ) {
       selectMachine(pending.machine);
+      // Synchronising local "pending deep-link" intent with auth-context
+      // state — the effect IS the synchronisation, can't be hoisted.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPending(null);
     } else if (pending && !pending.machine && currentAccount?.id === pending.account) {
       setPending(null);
@@ -107,16 +118,31 @@ type SourceRef = {
   title: string;
   pageFrom: number | null;
 };
+// One image-caption hit. The chat client resolves assetId → signed URL
+// on demand via /api/assets/<assetId>/url. For PDF-figure assets the
+// signed URL is the parent PDF — combined with pageFrom we deep-link
+// rather than render inline.
+type ImageSourceRef = {
+  assetId: string;
+  documentId: string;
+  documentTitle: string;
+  altText: string;
+  pageFrom: number | null;
+  mimeType: string;
+};
 interface Message {
   role: Role;
   content: string;
   sources?: SourceRef[];
+  images?: ImageSourceRef[];
 }
 
-const SAMPLE_QUESTIONS = [
-  "Hvordan fjerner jeg alarm 731?",
-  "Vis mig værktøjsskift-proceduren",
-  "Hvad står der på vedligeholdelses-tjeklisten?",
+// Shown when the machine's KB is empty (or the suggestions fetch fails).
+// Intentionally broad so they make sense even without manual content.
+const FALLBACK_QUESTIONS = [
+  "Hvad kan du hjælpe med?",
+  "Hvilke dokumenter har du adgang til?",
+  "Hvor finder jeg manualen?",
 ];
 
 type ChatTarget = {
@@ -146,6 +172,9 @@ export default function Home() {
     const token = urlToken ?? storedToken;
 
     if (!token) {
+      // Initial QR phase decided once on mount based on sessionStorage —
+      // requires the post-hydration window to read.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQrPhase({ kind: "none" });
       return;
     }
@@ -330,6 +359,7 @@ function ChatApp({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
   const [escalate, setEscalate] = useState<EscalateState>({ phase: "hidden" });
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -339,13 +369,58 @@ function ChatApp({
   const abortRef = useRef<AbortController | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceConvOpen, setVoiceConvOpen] = useState(false);
+  const voice = useVoiceRecorder({
+    onTranscript: (text) => {
+      // Append rather than overwrite so a user who'd already typed
+      // doesn't lose what they have. Trim joining whitespace.
+      setInput((prev) => (prev ? `${prev.trim()} ${text}` : text));
+      setVoiceError(null);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    onError: (message) => setVoiceError(message),
+  });
+
   useEffect(() => {
     // Switching machine = new conversation context. Drop any prior id
-    // and clear messages — operator likely wants a fresh slate.
+    // and clear messages — operator likely wants a fresh slate. This
+    // synchronises several local state slots with the externally-owned
+    // machine selection; key-based remount would be a heavier refactor.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setConversationId(null);
     setMessages([]);
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
+    setSuggestions([]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [machine?.id]);
+
+  // Per-machine starter questions live on machine_kb and are regenerated
+  // on KB changes (ingest / reset / delete). Falls back to FALLBACK_QUESTIONS
+  // below if the array comes back empty or the fetch fails.
+  useEffect(() => {
+    const id = machine?.id;
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/machines/${encodeURIComponent(id)}/suggestions`,
+        );
+        if (!res.ok) return;
+        const body = (await res.json()) as { suggestions?: string[] };
+        if (cancelled) return;
+        if (Array.isArray(body.suggestions)) {
+          setSuggestions(body.suggestions);
+        }
+      } catch {
+        // Swallow — UI already falls back to FALLBACK_QUESTIONS.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [machine?.id]);
 
   useEffect(() => {
@@ -597,13 +672,22 @@ function ChatApp({
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
           } else if (event === "sources") {
-            if (Array.isArray(data.sources)) {
-              const sources = data.sources as SourceRef[];
+            const sources = Array.isArray(data.sources)
+              ? (data.sources as SourceRef[])
+              : undefined;
+            const images = Array.isArray(data.images)
+              ? (data.images as ImageSourceRef[])
+              : undefined;
+            if (sources || images) {
               setMessages((prev) => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
                 if (last?.role === "assistant") {
-                  copy[copy.length - 1] = { ...last, sources };
+                  copy[copy.length - 1] = {
+                    ...last,
+                    ...(sources ? { sources } : {}),
+                    ...(images ? { images } : {}),
+                  };
                 }
                 return copy;
               });
@@ -666,15 +750,7 @@ function ChatApp({
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
-      <header
-        className="relative z-20 shrink-0"
-        style={{ backgroundColor: "var(--color-brand)" }}
-      >
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-6">
-          <OptipeopleLogo className="h-7 w-auto text-white" aria-label="Optipeople" />
-          <UserMenu />
-        </div>
-      </header>
+      <AppHeader />
 
       <div ref={scrollRef} className="scroll-area flex-1 overflow-y-auto">
         {/* pb sized to clear the absolutely-positioned footer (24px fade
@@ -690,7 +766,13 @@ function ChatApp({
           ) : (
             <div className="flex flex-col gap-8">
               {messages.map((m, i) => (
-                <MessageRow key={i} message={m} />
+                <MessageRow
+                  key={i}
+                  message={m}
+                  onCallService={() =>
+                    setEscalate({ phase: "confirm", note: "" })
+                  }
+                />
               ))}
             </div>
           )}
@@ -716,52 +798,47 @@ function ChatApp({
         <div className="pointer-events-auto w-full bg-[var(--color-background)]">
         <div className="mx-auto max-w-3xl px-4 pb-8 pt-2">
           {isEmpty && (
-            <div className="msg-in mb-3 flex flex-wrap gap-2">
-              {SAMPLE_QUESTIONS.map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={() => send(q)}
-                  disabled={streaming}
-                  className={cn(
-                    "rounded-full bg-[var(--color-surface)] px-4 py-2.5 text-[16px] text-[var(--color-foreground)]",
-                    "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
-                    "transition-[transform,border-color,box-shadow] duration-200 ease-[var(--ease-apple)]",
-                    "hover:-translate-y-[1px] hover:border-[var(--color-brand)]/40 hover:shadow-[var(--shadow-md)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-                    "disabled:opacity-60 disabled:hover:translate-y-0",
-                  )}
-                >
-                  {q}
-                </button>
-              ))}
+            <div className="msg-in mb-10 flex items-end gap-2">
+              <div className="flex flex-1 flex-wrap gap-2">
+                {(suggestions.length > 0 ? suggestions : FALLBACK_QUESTIONS).map(
+                  (q) => (
+                    <Button
+                      key={q}
+                      variant="secondary"
+                      onClick={() => send(q)}
+                      disabled={streaming}
+                      className="rounded-full"
+                    >
+                      {q}
+                    </Button>
+                  ),
+                )}
+              </div>
+              <Button
+                size="lg"
+                aria-hidden
+                tabIndex={-1}
+                className="invisible pointer-events-none"
+              >
+                Send
+              </Button>
             </div>
           )}
           {showActionButtons && (
             <div className="msg-in mb-3 flex justify-end gap-2">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => setEscalate({ phase: "confirm", note: "" })}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-muted-foreground)]",
-                  "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
-                  "transition-colors hover:text-amber-700 hover:border-amber-300",
-                )}
               >
-                <Wrench className="h-3.5 w-3.5" />
+                <Wrench className="mr-1.5 h-4 w-4" />
                 Tilkald service
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => setFeedback({ phase: "prompt" })}
-                className={cn(
-                  "rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-muted-foreground)]",
-                  "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
-                  "transition-colors hover:text-[var(--color-foreground)] hover:border-[var(--color-brand)]/40",
-                )}
               >
                 Afslut samtale
-              </button>
+              </Button>
             </div>
           )}
           {escalate.phase !== "hidden" && (
@@ -804,12 +881,18 @@ function ChatApp({
               />
             </div>
           )}
+          {voiceError && (
+            <div
+              className="mb-2 text-[14px]"
+              style={{ color: "var(--color-destructive)" }}
+              role="status"
+            >
+              {voiceError}
+            </div>
+          )}
           <div
             className={cn(
-              "flex items-end gap-3 rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-2.5",
-              "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
-              "transition-[border-color,box-shadow] duration-300",
-              "focus-within:border-[var(--color-brand)]/30",
+              "flex items-end gap-2",
               inputLocked && "opacity-60",
             )}
           >
@@ -821,27 +904,78 @@ function ChatApp({
               placeholder={
                 feedback.phase === "thanks"
                   ? "Samtalen er afsluttet. Start en ny ovenfor."
-                  : "Skriv dit spørgsmål her…"
+                  : voice.state === "recording"
+                    ? "Optager… tryk på stop når du er færdig."
+                    : voice.state === "transcribing"
+                      ? "Transskriberer…"
+                      : "Skriv dit spørgsmål her…"
               }
-              rows={1}
-              disabled={inputLocked}
-              className="min-h-[48px] max-h-[200px] flex-1 border-0 bg-transparent shadow-none focus:border-0"
+              rows={2}
+              disabled={inputLocked || voice.state !== "idle"}
+              autoGrow
+              size="medium"
+              className="flex-1"
             />
-            <Button
-              onClick={() => send()}
-              disabled={!canSend}
-              className={cn(
-                "h-[52px] min-w-[100px] rounded-[var(--radius-lg)] shadow-[var(--shadow-sm)]",
-                !canSend &&
-                  "bg-[var(--color-muted)] text-[var(--color-muted-foreground)] shadow-none hover:bg-[var(--color-muted)]",
-              )}
-            >
+            <Button size="lg" onClick={() => send()} disabled={!canSend}>
               {streaming ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
                 "Send"
               )}
             </Button>
+            <button
+              type="button"
+              onClick={() =>
+                voice.state === "recording" ? voice.stop() : voice.start()
+              }
+              disabled={inputLocked || voice.state === "transcribing"}
+              aria-label={
+                voice.state === "recording"
+                  ? "Stop optagelse"
+                  : voice.state === "transcribing"
+                    ? "Transskriberer"
+                    : "Optag stemme"
+              }
+              title={
+                voice.state === "recording"
+                  ? "Stop optagelse"
+                  : "Optag stemme"
+              }
+              className={cn(
+                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
+                "hover:bg-[var(--color-muted)] disabled:opacity-60",
+                voice.state === "recording" &&
+                  "border-transparent bg-[var(--color-destructive)] text-white animate-pulse",
+              )}
+            >
+              {voice.state === "transcribing" ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : voice.state === "recording" ? (
+                <Square className="h-5 w-5" fill="currentColor" />
+              ) : (
+                <Mic className="h-5 w-5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setVoiceConvOpen(true)}
+              disabled={
+                inputLocked ||
+                voice.state !== "idle" ||
+                !machine?.id ||
+                !account?.id
+              }
+              aria-label="Start samtale"
+              title="Start samtale"
+              className={cn(
+                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
+                "hover:bg-[var(--color-muted)] disabled:opacity-60",
+              )}
+            >
+              <AudioLines className="h-5 w-5" />
+            </button>
           </div>
         </div>
         </div>
@@ -851,16 +985,29 @@ function ChatApp({
           <span />
         </div>
       </footer>
+      {voiceConvOpen && machine?.id && account?.id ? (
+        <VoiceConversation
+          machineId={machine.id}
+          accountId={account.id}
+          onClose={() => setVoiceConvOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function MessageRow({ message }: { message: Message }) {
+function MessageRow({
+  message,
+  onCallService,
+}: {
+  message: Message;
+  onCallService?: () => void;
+}) {
   if (message.role === "user") {
     return (
       <div className="msg-in flex justify-end">
         <div
-          className="max-w-[78%] rounded-[var(--radius-lg)] rounded-br-[10px] px-5 py-3 text-[19px] leading-[1.55] whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+          className="max-w-[78%] rounded-[4px] px-5 py-3 text-[19px] leading-[1.55] whitespace-pre-wrap shadow-[var(--shadow-sm)]"
           style={{
             backgroundColor: "var(--color-accent)",
             color: "var(--color-primary-foreground)",
@@ -883,11 +1030,114 @@ function MessageRow({ message }: { message: Message }) {
 
   return (
     <div className="msg-in flex flex-col gap-3">
-      <Markdown>{message.content}</Markdown>
+      <Markdown onCallService={onCallService}>{message.content}</Markdown>
+      <div className="-mt-1 flex items-center">
+        <SpeakButton text={message.content} />
+      </div>
+      {message.images && message.images.length > 0 && (
+        <ImageSources images={message.images} />
+      )}
       {message.sources && message.sources.length > 0 && (
         <SourceChips sources={message.sources} />
       )}
     </div>
+  );
+}
+
+// Thumbnails (real <img>) for standalone uploaded images and clickable
+// page cards for figures pulled out of a PDF. The signed URL is fetched
+// lazily on mount per asset; if it fails we just hide the thumbnail —
+// the source chip below still gives the operator a path to the doc.
+function ImageSources({ images }: { images: ImageSourceRef[] }) {
+  return (
+    <div className="flex flex-wrap items-stretch gap-3 pt-1">
+      {images.map((im) => (
+        <ImageSourceCard key={im.assetId} image={im} />
+      ))}
+    </div>
+  );
+}
+
+function ImageSourceCard({ image }: { image: ImageSourceRef }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const isPdfFigure = image.mimeType === "application/pdf";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithAuth(
+          `/api/assets/${encodeURIComponent(image.assetId)}/url`,
+        );
+        if (!res.ok) throw new Error(`asset url ${res.status}`);
+        const body = (await res.json()) as { url?: string };
+        if (cancelled) return;
+        if (body.url) setUrl(body.url);
+        else setFailed(true);
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [image.assetId]);
+
+  if (failed) return null;
+
+  function onClick() {
+    if (!url) return;
+    const target =
+      isPdfFigure && image.pageFrom != null
+        ? `${url}#page=${image.pageFrom}`
+        : url;
+    window.open(target, "_blank", "noopener,noreferrer");
+  }
+
+  const pageLabel =
+    image.pageFrom != null ? ` · s. ${image.pageFrom}` : "";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!url}
+      title={`${image.altText} — ${image.documentTitle}${pageLabel}`}
+      className={cn(
+        "group flex w-44 flex-col gap-1.5 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-1.5 text-left",
+        "shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+        "disabled:cursor-default disabled:opacity-60",
+      )}
+    >
+      <div className="relative aspect-square w-full overflow-hidden rounded-[4px] bg-[var(--color-muted)]">
+        {url && !isPdfFigure ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={image.altText}
+            className="h-full w-full object-cover"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-[var(--color-muted-foreground)]">
+            {url ? (
+              <FileText className="h-8 w-8" />
+            ) : (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
+          </div>
+        )}
+      </div>
+      <p className="line-clamp-2 px-0.5 text-[11px] leading-tight text-[var(--color-foreground)]">
+        {image.altText}
+      </p>
+      <p className="line-clamp-1 px-0.5 text-[10px] text-[var(--color-muted-foreground)]">
+        {image.documentTitle}
+        {pageLabel}
+      </p>
+    </button>
   );
 }
 
@@ -992,7 +1242,7 @@ function FeedbackCard({
 }) {
   if (state.phase === "thanks") {
     return (
-      <div className="rounded-[var(--radius-xl)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
+      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
         <div className="flex items-start gap-3">
           <CheckCircle2
             className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600"
@@ -1008,13 +1258,9 @@ function FeedbackCard({
                 : "Markeret som uløst. Vi kigger på det."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onStartNew}
-            className="rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40"
-          >
+          <Button variant="secondary" size="sm" onClick={onStartNew}>
             Start ny samtale
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1022,7 +1268,7 @@ function FeedbackCard({
 
   if (state.phase === "error") {
     return (
-      <div className="rounded-[var(--radius-xl)] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
+      <div className="rounded-[4px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="font-medium">Kunne ikke gemme feedback</p>
@@ -1046,7 +1292,7 @@ function FeedbackCard({
     (state.phase === "answered_yes" && state.submitting);
 
   return (
-    <div className="rounded-[var(--radius-xl)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
+    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[15px] font-medium text-[var(--color-foreground)]">
@@ -1069,34 +1315,22 @@ function FeedbackCard({
       </div>
 
       {state.phase === "prompt" || state.phase === "submitting" ? (
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={onAnswerYes}
-            disabled={submitting}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 text-[14px] font-medium text-white shadow-[var(--shadow-sm)]",
-              "transition-colors hover:bg-emerald-700 disabled:opacity-60",
-            )}
-          >
-            <ThumbsUp className="h-4 w-4" />
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" onClick={onAnswerYes} disabled={submitting}>
+            <ThumbsUp className="mr-1.5 h-4 w-4" />
             Ja, det løste det
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onAnswerNo}
             disabled={submitting}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-4 py-2 text-[14px] font-medium text-[var(--color-foreground)]",
-              "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors",
-              "hover:border-[var(--color-brand)]/40 disabled:opacity-60",
-            )}
           >
-            <ThumbsDown className="h-4 w-4" />
+            <ThumbsDown className="mr-1.5 h-4 w-4" />
             Nej
-          </button>
+          </Button>
           {submitting && (
-            <Loader2 className="ml-1 mt-2 h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+            <Loader2 className="ml-1 h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
           )}
         </div>
       ) : state.phase === "answered_yes" ? (
@@ -1140,22 +1374,17 @@ function YesSolutionForm({
         rows={3}
         disabled={submitting}
         placeholder="F.eks. RESET-knappen + genstart styringen efter alarm-koden var læst."
-        className="min-h-[80px] text-[14px]"
       />
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={onSkip}
           disabled={submitting}
-          className="rounded-full bg-[var(--color-surface)] px-4 py-2 text-[13px] text-[var(--color-muted-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-60"
         >
           Spring over
-        </button>
-        <Button
-          onClick={onSubmit}
-          disabled={submitting}
-          className="h-9 min-w-[90px] rounded-full bg-emerald-600 text-white shadow-[var(--shadow-sm)] hover:bg-emerald-700"
-        >
+        </Button>
+        <Button size="sm" onClick={onSubmit} disabled={submitting}>
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
         </Button>
       </div>
@@ -1178,7 +1407,7 @@ function EscalateCard({
 }) {
   if (state.phase === "done") {
     return (
-      <div className="rounded-[var(--radius-xl)] border border-amber-200 bg-amber-50 p-4 shadow-[var(--shadow-md)]">
+      <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-4 shadow-[var(--shadow-md)]">
         <div className="flex items-start gap-3">
           <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
           <div className="flex-1">
@@ -1198,13 +1427,9 @@ function EscalateCard({
               <ShareLinkRow url={state.shareUrl} />
             )}
           </div>
-          <button
-            type="button"
-            onClick={onStartNew}
-            className="rounded-full bg-[var(--color-surface)] px-3.5 py-1.5 text-[13px] text-[var(--color-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40"
-          >
+          <Button variant="secondary" size="sm" onClick={onStartNew}>
             Start ny samtale
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1212,7 +1437,7 @@ function EscalateCard({
 
   if (state.phase === "error") {
     return (
-      <div className="rounded-[var(--radius-xl)] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
+      <div className="rounded-[4px] border border-red-200 bg-red-50 p-4 text-[14px] text-red-700">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="font-medium">Kunne ikke tilkalde service</p>
@@ -1236,7 +1461,7 @@ function EscalateCard({
   const note = state.note;
 
   return (
-    <div className="rounded-[var(--radius-xl)] border border-amber-200 bg-amber-50/60 p-4 shadow-[var(--shadow-md)]">
+    <div className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-4 shadow-[var(--shadow-md)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[15px] font-medium text-amber-900">
@@ -1265,21 +1490,20 @@ function EscalateCard({
           rows={2}
           disabled={submitting}
           placeholder="F.eks. Maskinen alarmerer 731 og starter ikke efter genstart."
-          className="min-h-[64px] text-[14px]"
         />
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onCancel}
             disabled={submitting}
-            className="rounded-full bg-[var(--color-surface)] px-4 py-2 text-[13px] text-[var(--color-muted-foreground)] border border-[var(--color-hairline)] shadow-[var(--shadow-sm)] transition-colors hover:text-[var(--color-foreground)] disabled:opacity-60"
           >
             Annullér
-          </button>
+          </Button>
           <Button
+            size="sm"
             onClick={() => onSubmit(note)}
             disabled={submitting}
-            className="h-9 min-w-[140px] rounded-full bg-amber-600 text-white shadow-[var(--shadow-sm)] hover:bg-amber-700"
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 animate-spin" />

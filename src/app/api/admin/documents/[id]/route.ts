@@ -4,6 +4,7 @@
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import { ensureFolderPath } from "@/lib/ingestion";
+import { regenerateSuggestedQuestionsSafe } from "@/lib/suggestions";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -100,11 +101,12 @@ export async function DELETE(
   const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
-  // Look up the storage path before deleting the row so we can clean up
-  // the underlying object too. ON DELETE CASCADE drops the chunks.
+  // Look up the storage path + machine id before deleting the row so we
+  // can clean up the underlying object and regenerate that machine's
+  // starter questions afterwards. ON DELETE CASCADE drops the chunks.
   const { data: doc, error: lookupErr } = await supabase
     .from("kb_documents")
-    .select("storage_path")
+    .select("storage_path, machine_id, source_type")
     .eq("id", id)
     .maybeSingle();
 
@@ -116,11 +118,20 @@ export async function DELETE(
     return Response.json({ error: "Document not found" }, { status: 404 });
   }
 
-  const storagePath = (doc as { storage_path: string | null }).storage_path;
+  const {
+    storage_path: storagePath,
+    machine_id: machineId,
+    source_type: sourceType,
+  } = doc as {
+    storage_path: string | null;
+    machine_id: string;
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+  };
   if (storagePath) {
-    // Best-effort: if the object's already gone we still want to drop the row.
+    // Standalone images live in kb-images; everything else in kb-documents.
+    const bucket = sourceType === "image" ? "kb-images" : "kb-documents";
     const { error: storageErr } = await supabase.storage
-      .from("kb-documents")
+      .from(bucket)
       .remove([storagePath]);
     if (storageErr) {
       console.warn("admin DELETE storage cleanup failed:", storageErr);
@@ -136,5 +147,8 @@ export async function DELETE(
     console.error("admin DELETE row failed:", delErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
+
+  await regenerateSuggestedQuestionsSafe(machineId);
+
   return Response.json({ ok: true });
 }

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
   listAdminConversations,
   type AdminConversationListItem,
@@ -18,16 +19,16 @@ const PER_PAGE = 25;
 
 function resolutionBadge(
   resolution: string | null,
-): { label: string; tone: string } | null {
+): { label: string; variant: TagVariant } | null {
   switch (resolution) {
     case "resolved":
-      return { label: "Løst", tone: "bg-emerald-100 text-emerald-700" };
+      return { label: "Løst", variant: "positive" };
     case "unresolved":
-      return { label: "Uløst", tone: "bg-red-100 text-red-700" };
+      return { label: "Uløst", variant: "issue" };
     case "escalated":
-      return { label: "Eskaleret", tone: "bg-amber-100 text-amber-800" };
+      return { label: "Eskaleret", variant: "warning" };
     case "unknown":
-      return { label: "Ukendt", tone: "bg-slate-100 text-slate-700" };
+      return { label: "Ukendt", variant: "default" };
     default:
       return null;
   }
@@ -80,7 +81,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
       </div>
 
       {error ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+        <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
           {error}
         </div>
       ) : loading ? (
@@ -88,12 +89,12 @@ export function ConversationsList({ machineId }: { machineId: string }) {
           <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           Ingen samtaler endnu for denne maskine.
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+          <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>
@@ -139,14 +140,9 @@ export function ConversationsList({ machineId }: { machineId: string }) {
                       </td>
                       <td className="px-4 py-3">
                         {badge ? (
-                          <span
-                            className={cn(
-                              "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium",
-                              badge.tone,
-                            )}
-                          >
+                          <Tag variant={badge.variant} size="small">
                             {badge.label}
-                          </span>
+                          </Tag>
                         ) : (
                           <span className="text-[12px] text-[var(--color-muted-foreground)]">
                             —
@@ -165,23 +161,23 @@ export function ConversationsList({ machineId }: { machineId: string }) {
 
           {(page > 0 || hasMore) && (
             <div className="flex items-center justify-between text-[13px] text-[var(--color-muted-foreground)]">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
-                className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] hover:bg-[var(--color-muted)] disabled:opacity-40"
               >
                 ← Forrige
-              </button>
+              </Button>
               <span>Side {page + 1}</span>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={!hasMore}
                 onClick={() => setPage((p) => p + 1)}
-                className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-1.5 text-[13px] hover:bg-[var(--color-muted)] disabled:opacity-40"
               >
                 Næste →
-              </button>
+              </Button>
             </div>
           )}
         </>

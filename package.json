@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",
     "next": "16.2.5",
+    "openai": "^6.37.0",
     "pdf-parse": "^1.1.4",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",

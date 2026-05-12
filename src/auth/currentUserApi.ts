@@ -5,6 +5,7 @@ const CURRENT_USER_URL = "/auth-api/User/GetCurrentUser";
 export type CurrentUser = {
   id: string;
   email: string;
+  name: string | null;
   // Human-readable role label (e.g. "Super Administrator"). Null if the
   // upstream payload didn't carry it.
   roleName: string | null;
@@ -19,6 +20,7 @@ export type CurrentUser = {
 type RawUser = {
   id?: string;
   email?: string;
+  name?: string | null;
   roleName?: string | null;
   permissionName?: string | null;
 };
@@ -40,6 +42,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   return {
     id: raw.id,
     email: raw.email,
+    name: raw.name ?? null,
     roleName: raw.roleName ?? null,
     permissionName: raw.permissionName ?? null,
   };

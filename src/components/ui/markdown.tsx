@@ -1,8 +1,66 @@
+import { useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { buttonClasses } from "@/components/ui/button";
 
-const components: Components = {
+// Sentinel href emitted by `remarkServiceButton`. When the link renderer
+// sees it, the anchor becomes an inline pill button that calls the same
+// handler as the bottom "Tilkald service" button.
+const CALL_SERVICE_HREF = "opti:call-service";
+
+// Walks the mdast tree and replaces standalone "service" / "Service" words
+// inside plain text with a synthetic `link` node pointing to
+// CALL_SERVICE_HREF. Skips text inside existing links and code so we don't
+// double-wrap. Word-boundary matching avoids catching compounds like
+// "serviceaftale".
+function remarkServiceButton() {
+  const SKIP = new Set(["code", "inlineCode", "link", "linkReference"]);
+  type Node = { type: string; value?: string; children?: Node[] };
+  const transform = (node: Node) => {
+    if (!node.children) return;
+    const out: Node[] = [];
+    for (const child of node.children) {
+      if (SKIP.has(child.type)) {
+        out.push(child);
+        continue;
+      }
+      if (child.type !== "text" || typeof child.value !== "string") {
+        transform(child);
+        out.push(child);
+        continue;
+      }
+      const value = child.value;
+      const regex = /\bservice\b/gi;
+      let last = 0;
+      let matched = false;
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(value)) !== null) {
+        matched = true;
+        if (m.index > last) {
+          out.push({ type: "text", value: value.slice(last, m.index) });
+        }
+        out.push({
+          type: "link",
+          // mdast link carries `url` at runtime
+          ...({ url: CALL_SERVICE_HREF } as object),
+          children: [{ type: "text", value: m[0] }],
+        });
+        last = m.index + m[0].length;
+      }
+      if (!matched) {
+        out.push(child);
+      } else if (last < value.length) {
+        out.push({ type: "text", value: value.slice(last) });
+      }
+    }
+    node.children = out;
+  };
+  return (tree: Node) => transform(tree);
+}
+
+const baseComponents: Components = {
   p: ({ className, ...props }) => (
     <p
       className={cn("my-2 first:mt-0 last:mb-0 leading-[1.65]", className)}
@@ -196,10 +254,58 @@ const components: Components = {
 export function Markdown({
   children,
   className,
+  onCallService,
 }: {
   children: string;
   className?: string;
+  onCallService?: () => void;
 }) {
+  const components = useMemo<Components>(() => {
+    if (!onCallService) return baseComponents;
+    return {
+      ...baseComponents,
+      a: ({ className: aClass, href, children: aChildren, ...rest }) => {
+        if (href === CALL_SERVICE_HREF) {
+          return (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                onCallService();
+              }}
+              className={cn(
+                buttonClasses({ variant: "secondary", size: "sm" }),
+                "mx-0.5 align-baseline gap-1",
+              )}
+            >
+              <Wrench className="h-3 w-3" />
+              {aChildren}
+            </button>
+          );
+        }
+        return (
+          <a
+            className={cn(
+              "font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]",
+              aClass,
+            )}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            {...rest}
+          >
+            {aChildren}
+          </a>
+        );
+      },
+    };
+  }, [onCallService]);
+
+  const plugins = useMemo(
+    () => (onCallService ? [remarkGfm, remarkServiceButton] : [remarkGfm]),
+    [onCallService],
+  );
+
   return (
     <div
       className={cn(
@@ -207,7 +313,7 @@ export function Markdown({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={plugins} components={components}>
         {children}
       </ReactMarkdown>
     </div>

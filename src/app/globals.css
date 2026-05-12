@@ -29,6 +29,59 @@
   --color-primary: #212529;
   --color-primary-foreground: #ffffff;
 
+  /* === Figma design system tokens === */
+  /* Greys */
+  --ds-grey-light-01: #f6fafa;
+  --ds-grey-light-02: #eaeeee;
+  --ds-grey-light-03: #aab5b5;
+  --ds-grey-medium-04: #758585;  /* label text */
+  --ds-grey-medium-05: #5d6b6b;  /* help text */
+  --ds-grey-medium-06: #364646;
+  --ds-grey-medium-07: #243535;  /* same as brand */
+  --ds-grey-dark-08: #112222;
+  --ds-grey-dark-09: #071818;    /* primary text */
+  --ds-text-disabled: #b9b8b7;
+  --ds-bg-disabled: #f7f6f4;
+
+  /* Accents */
+  --ds-blue-primary: #378fc2;
+  --ds-blue-primary-fill: #bde0f5;
+  --ds-blue-secondary: #eef9ff;
+  --ds-table-blue-hover: #ebf1f5;
+
+  --ds-orange: #ffa740;
+  --ds-orange-darkest: #f98700;
+
+  --ds-red: #c25037;
+  --ds-red-dark: #962e17;
+  --ds-red-bg: #ffede9;
+  --ds-red-validation-bg: #fdf8f7;
+
+  --ds-green: #37c245;
+  --ds-green-50: rgba(55, 194, 69, 0.5);
+  --ds-green-80: rgba(55, 194, 69, 0.8);
+
+  /* Tag palette */
+  --ds-tag-green-light: #d6f1d9;
+  --ds-tag-green-dark: #b2d0b5;
+  --ds-tag-orange-light: #f8e6d1;
+  --ds-tag-orange-dark: #f0b571;
+  --ds-tag-red-light: #f6cdc4;
+  --ds-tag-red-dark: #da8572;
+
+  /* Panel header */
+  --ds-panel-header-bg: #f5f5f5;
+  --ds-panel-header-hover: #e5e3e0;
+
+  /* Shadows */
+  --ds-shadow-input: 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.3), 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05);
+  --ds-shadow-button: 0px 1px 1px 0px rgba(0, 0, 0, 0.1);
+  --ds-shadow-button-active: 0px 1px 2.5px 0px rgba(0, 122, 255, 0.24), 0px 0px 0px 0.5px rgba(0, 122, 255, 0.12);
+  --ds-shadow-destructive: 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.3), 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05);
+  --ds-shadow-tag-inset: inset 1px 1px 4px 0px rgba(0, 0, 0, 0.08);
+  --ds-shadow-panel-inset: inset 0px 2px 2px 0px rgba(0, 0, 0, 0.1);
+  --ds-focus-ring: 0px 0px 0px 3px rgba(55, 194, 69, 0.8);
+
   /* Radii — soft, generous */
   --radius-xs: 0.5rem;
   --radius-sm: 0.625rem;
@@ -65,13 +118,28 @@ body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    var(--font-hanken-grotesk), -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", ui-sans-serif,
+    system-ui, sans-serif;
   font-size: 18px;
   font-feature-settings: "ss01", "cv11", "tnum";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+}
+
+/* Soft, quick hover/active transition for all buttons app-wide.
+   Component-level Tailwind `transition-*` classes override this via specificity. */
+button,
+[role="button"],
+a[data-button] {
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out,
+    color 150ms ease-out,
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
 }
 
 /* Opticloud brand stripe — three stacked bars, full width */
@@ -82,7 +150,7 @@ body {
 }
 .brand-stripe > span {
   display: block;
-  height: 4px;
+  height: 9px;
   width: 100%;
 }
 .brand-stripe > span:nth-child(1) { background: var(--color-amber); }

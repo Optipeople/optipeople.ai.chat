@@ -8,7 +8,7 @@
 
 import { getSupabaseServerClient } from "./supabase";
 
-export type EntryMode = "qr" | "manual" | "deep_link";
+export type EntryMode = "qr" | "manual" | "deep_link" | "voice";
 
 export async function createConversation(args: {
   machineId: string;

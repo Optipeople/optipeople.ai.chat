@@ -18,6 +18,15 @@ import type {
   AdminEscalationTarget,
   AdminEscalationTargetResponse,
 } from "@/app/api/admin/accounts/[accountId]/escalation/route";
+import type {
+  AutoOrganizeApplyResponse,
+  AutoOrganizePreviewResponse,
+} from "@/app/api/admin/machines/[id]/auto-organize/route";
+import type {
+  AutoOrganizeMove,
+  AutoOrganizeProposal,
+  StandardFolder,
+} from "@/lib/autoOrganize";
 
 export type {
   AdminChunkRef,
@@ -31,6 +40,9 @@ export type {
   AdminMachine,
   AdminMachineDetail,
   AdminQrTokenResponse,
+  AutoOrganizeMove,
+  AutoOrganizeProposal,
+  StandardFolder,
 };
 
 export async function getAdminMachines(): Promise<AdminMachine[]> {
@@ -285,6 +297,54 @@ export async function uploadAdminDocument(args: {
   folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<UploadResult> {
+  return xhrFormUpload<UploadResult>({
+    url: "/api/admin/ingest",
+    machineId: args.machineId,
+    file: args.file,
+    summary: args.summary,
+    folderPath: args.folderPath,
+    onProgress: args.onProgress,
+  });
+}
+
+export type ImageUploadResult = {
+  documentId: string;
+  assetId: string;
+  caption: string;
+  altText: string;
+  byteSize: number;
+  storagePath: string;
+};
+
+export async function uploadAdminImage(args: {
+  machineId: string;
+  file: File;
+  summary?: string;
+  folderPath?: string | null;
+  onProgress?: UploadProgress;
+}): Promise<ImageUploadResult> {
+  return xhrFormUpload<ImageUploadResult>({
+    url: "/api/admin/ingest/image",
+    machineId: args.machineId,
+    file: args.file,
+    summary: args.summary,
+    folderPath: args.folderPath,
+    onProgress: args.onProgress,
+  });
+}
+
+// XHR (not fetch) gets us real upload-progress events. Same auth caveat
+// as uploadAdminDocument: we attach the bearer manually because the
+// transparent retry-on-401 inside fetchWithAuth can't replay a streamed
+// FormData body.
+function xhrFormUpload<T>(args: {
+  url: string;
+  machineId: string;
+  file: File;
+  summary?: string;
+  folderPath?: string | null;
+  onProgress?: UploadProgress;
+}): Promise<T> {
   const token = getAccessToken();
   if (!token) throw new Error("Session expired");
 
@@ -294,11 +354,9 @@ export async function uploadAdminDocument(args: {
   if (args.summary) form.set("summary", args.summary);
   if (args.folderPath) form.set("folderPath", args.folderPath);
 
-  // Use XHR so we can track upload progress events. fetch() doesn't
-  // expose them yet across browsers.
-  return new Promise((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/admin/ingest");
+    xhr.open("POST", args.url);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.responseType = "json";
     xhr.upload.onprogress = (e) => {
@@ -308,7 +366,7 @@ export async function uploadAdminDocument(args: {
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as UploadResult);
+        resolve(xhr.response as T);
       } else {
         const message =
           (xhr.response as { error?: string } | null)?.error ??
@@ -319,6 +377,43 @@ export async function uploadAdminDocument(args: {
     xhr.onerror = () => reject(new Error("Upload fejlede (netværk)"));
     xhr.send(form);
   });
+}
+
+export async function previewAutoOrganize(
+  machineId: string,
+): Promise<AutoOrganizePreviewResponse> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/auto-organize`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "preview" }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Auto-organisering fejlede (${res.status})`);
+  }
+  return (await res.json()) as AutoOrganizePreviewResponse;
+}
+
+export async function applyAutoOrganize(
+  machineId: string,
+  moves: AutoOrganizeMove[],
+): Promise<AutoOrganizeApplyResponse> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/auto-organize`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "apply", moves }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke gemme (${res.status})`);
+  }
+  return (await res.json()) as AutoOrganizeApplyResponse;
 }
 
 export async function generateAdminMachineQr(
