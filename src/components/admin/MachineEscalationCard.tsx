@@ -170,16 +170,16 @@ export function MachineEscalationCard({
   }
 
   return (
-    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
-      <div className="flex items-start justify-between gap-4">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <Wrench className="h-5 w-5 text-[var(--color-foreground)]" />
-            <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
+            <Wrench className="h-5 w-5 shrink-0 text-[var(--color-foreground)]" />
+            <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
               {t("heading")}
             </h2>
           </div>
-          <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
+          <p className="mt-1 break-words text-[13px] text-[var(--color-muted-foreground)]">
             {t("description")}
             <span className="mt-1 block">
               {t("sharedAcrossPrefix")}{" "}
@@ -192,7 +192,7 @@ export function MachineEscalationCard({
         </div>
 
         {!editing && !loading && (
-          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <div className="flex flex-wrap gap-2 sm:shrink-0 sm:flex-nowrap">
             <Button
               variant="secondary"
               size="sm"
@@ -241,7 +241,7 @@ export function MachineEscalationCard({
         />
       ) : target ? (
         <div className="mt-4 flex flex-col gap-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Tag variant="positive" size="small">
               {t("active")}
             </Tag>
@@ -249,7 +249,7 @@ export function MachineEscalationCard({
               {CHANNEL_LABEL[target.channel]}
             </span>
           </div>
-          <p className="font-mono text-[14px] text-[var(--color-foreground)]">
+          <p className="break-all font-mono text-[14px] text-[var(--color-foreground)]">
             {formatTarget(target)}
           </p>
           {target.updatedBy && (

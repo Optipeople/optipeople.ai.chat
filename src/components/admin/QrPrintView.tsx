@@ -84,8 +84,8 @@ export function QrPrintView({ machineId }: { machineId: string }) {
   }
 
   return (
-    <div className="mx-auto flex max-w-[700px] flex-col items-center gap-8 p-12">
-      <div className="flex w-full items-center justify-between">
+    <div className="mx-auto flex max-w-[700px] flex-col items-center gap-5 p-4 sm:gap-8 sm:p-12">
+      <div className="flex w-full items-center justify-between gap-3">
         <Link
           href={`/admin/machines/${machineId}`}
           className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
@@ -109,26 +109,26 @@ export function QrPrintView({ machineId }: { machineId: string }) {
 
       {/* On-screen preview — visually mirrors the rendered PNG so the
           user can confirm the sticker looks right before downloading. */}
-      <div className="flex w-full flex-col items-center gap-6 rounded-[4px] border-2 border-[var(--color-foreground)] bg-white p-10 text-center">
+      <div className="flex w-full flex-col items-center gap-4 rounded-[4px] border-2 border-[var(--color-foreground)] bg-white p-5 text-center sm:gap-6 sm:p-10">
         <OptipeopleLogo
-          className="h-10 w-auto text-[var(--color-foreground)]"
+          className="h-8 w-auto text-[var(--color-foreground)] sm:h-10"
           aria-label="Optipeople"
         />
 
         <div className="flex flex-col gap-1">
-          <p className="text-[18px] uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">
+          <p className="text-[14px] uppercase tracking-[0.2em] text-[var(--color-muted-foreground)] sm:text-[18px]">
             {t("scanAndAsk")}
           </p>
-          <h1 className="text-[36px] font-semibold leading-tight tracking-tight text-[var(--color-foreground)]">
+          <h1 className="break-words text-[24px] font-semibold leading-tight tracking-tight text-[var(--color-foreground)] sm:text-[36px]">
             {machineName}
           </h1>
         </div>
 
-        <div className="rounded-[4px] bg-white p-4">
-          <QRCodeSVG value={url} size={320} level="M" includeMargin />
+        <div className="rounded-[4px] bg-white p-2 sm:p-4">
+          <QRCodeSVG value={url} size={240} level="M" includeMargin className="h-auto max-w-full" />
         </div>
 
-        <p className="max-w-md text-[16px] leading-relaxed text-[var(--color-foreground)]">
+        <p className="max-w-md text-[14px] leading-relaxed text-[var(--color-foreground)] sm:text-[16px]">
           {t("scanInstruction")}
         </p>
       </div>

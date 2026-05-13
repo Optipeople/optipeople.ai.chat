@@ -60,7 +60,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
   }, [machineId, page]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5 sm:gap-6">
       <Link
         href={`/admin/machines/${machineId}`}
         className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
@@ -70,10 +70,10 @@ export function EscalationsList({ machineId }: { machineId: string }) {
       </Link>
 
       <div>
-        <h1 className="text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
+        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
           {t("heading")}
         </h1>
-        <p className="mt-1 text-[14px] text-[var(--color-muted-foreground)]">
+        <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
           {t("description")}
         </p>
       </div>
@@ -92,7 +92,51 @@ export function EscalationsList({ machineId }: { machineId: string }) {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+          {/* Mobile cards */}
+          <div className="flex flex-col gap-2 sm:hidden">
+            {items.map((e) => (
+              <Link
+                key={e.id}
+                href={`/admin/machines/${machineId}/conversations/${e.conversationId}`}
+                className="flex flex-col gap-2 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
+                    <Wrench className="mr-1 h-3 w-3" />
+                    {CHANNEL_LABEL[e.channel]}
+                  </Tag>
+                  <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-muted-foreground)]">
+                    {DA_DT.format(new Date(e.createdAt))}
+                  </span>
+                </div>
+                <p className="break-all font-mono text-[12px] text-[var(--color-foreground)]">
+                  {e.target}
+                </p>
+                {e.note && (
+                  <p className="break-words text-[13px] text-[var(--color-muted-foreground)]">
+                    {e.note}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+                  <span>{t("colOperator")}: {e.createdBy ?? "—"}</span>
+                  {e.shareToken && (
+                    <a
+                      href={`/escalation/${e.shareToken}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(ev) => ev.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-amber-800 underline"
+                    >
+                      {t("open")}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          <div className="hidden overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] sm:block">
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>

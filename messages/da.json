@@ -75,6 +75,9 @@
   "chat": {
     "emptyPrompt": "Spørg om installation, vedligeholdelse, værktøjsskift, alarmer eller hvad som helst i din maskines manual.",
     "working": "Arbejder…",
+    "toolSearching": "Søger i manualerne…",
+    "toolFetchingMachineData": "Henter maskindata…",
+    "toolRunning": "Kører",
     "errorPrefix": "Fejl: {message}",
     "send": "Send",
     "callService": "Tilkald service",

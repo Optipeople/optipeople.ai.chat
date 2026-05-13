@@ -30,20 +30,20 @@ export function LoginScreen() {
 
   return (
     <div
-      className="relative flex h-full flex-col items-center justify-center"
+      className="relative flex h-full flex-col items-center justify-center overflow-y-auto px-4 py-6 sm:px-0 sm:py-0"
       style={{ backgroundColor: MIDNIGHT_GREEN }}
     >
       <form
         onSubmit={handleSubmit}
         className={cn(
-          "msg-in relative w-[400px] max-w-[calc(100%-2rem)] rounded-[4px] bg-white px-12 pt-12 pb-8",
+          "msg-in relative w-full max-w-[400px] rounded-[4px] bg-white px-6 pt-8 pb-6 sm:px-12 sm:pt-12 sm:pb-8",
           "border border-[#aab5b5]",
           "shadow-[inset_0_2px_2px_0_rgba(0,0,0,0.1)]",
         )}
       >
-        <div className="flex flex-col items-center pt-6 pb-8">
+        <div className="flex flex-col items-center pt-4 pb-6 sm:pt-6 sm:pb-8">
           <OptipeopleLogo
-            className="h-[50px] w-auto text-[#0f1a21]"
+            className="h-[42px] w-auto text-[#0f1a21] sm:h-[50px]"
             aria-label="Optipeople"
           />
         </div>
@@ -63,7 +63,7 @@ export function LoginScreen() {
             disabled={isLoggingIn}
             placeholder={t("emailPlaceholder")}
             className={cn(
-              "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
+              "h-11 w-full bg-white px-[10px] py-[6px] text-[16px] leading-[21px] text-[#212529] sm:h-[30px] sm:px-[7px] sm:text-[14px]",
               "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
               "placeholder:text-[#b9b8b7]",
               "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",
@@ -80,7 +80,7 @@ export function LoginScreen() {
             disabled={isLoggingIn}
             placeholder={t("passwordPlaceholder")}
             className={cn(
-              "h-[30px] w-full bg-white px-[7px] py-[6px] text-[14px] leading-[21px] text-[#212529]",
+              "h-11 w-full bg-white px-[10px] py-[6px] text-[16px] leading-[21px] text-[#212529] sm:h-[30px] sm:px-[7px] sm:text-[14px]",
               "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
               "placeholder:text-[#b9b8b7]",
               "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",

@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
+  ArrowUp,
   CheckCircle2,
   Copy,
   FileText,
-  ImagePlus,
   Loader2,
   Mic,
   AudioLines,
+  Plus,
   Square,
   ThumbsDown,
   ThumbsUp,
@@ -19,6 +20,7 @@ import {
 import type { EscalateResponse } from "@/app/api/chat/escalate/route";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { FieldFrame } from "@/components/ui/field";
 import { Markdown } from "@/components/ui/markdown";
 import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
@@ -139,12 +141,28 @@ type ChatAttachment = {
   mimeType: string;
 };
 
+// What the server tells us about a tool currently being invoked.
+// `source: "mcp"` flags Anthropic-handled MCP tools (which we don't
+// run ourselves); everything else is one of our custom tools
+// (currently just search_kb). Used to render the in-stream
+// "Searching the manuals…" / "Fetching machine data…" indicator.
+type ActiveTool = {
+  name: string;
+  source?: "mcp";
+  serverName?: string;
+};
+
 interface Message {
   role: Role;
   content: string;
   sources?: SourceRef[];
   images?: ImageSourceRef[];
   attachments?: ChatAttachment[];
+  // Only ever set on the currently-streaming assistant message;
+  // cleared by the next tool_result (MCP path) or when the stream
+  // ends. We deliberately only track the most recent one — the chat
+  // never fires enough tools in parallel for that to feel lossy.
+  activeTool?: ActiveTool;
 }
 
 // Local-only state for an attachment the operator is in the middle of
@@ -366,6 +384,18 @@ type EscalateState =
     }
   | { phase: "error"; message: string };
 
+// Fisher-Yates shuffle, returns up to `n` unique items from `items`.
+// Used to pick the visible suggestion chips out of a larger candidate
+// pool, and to pick the replacement when a chip rotates.
+function pickRandom<T>(items: T[], n: number): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, n);
+}
+
 function ChatApp({
   account,
   machine,
@@ -391,9 +421,19 @@ function ChatApp({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
   const [escalate, setEscalate] = useState<EscalateState>({ phase: "hidden" });
+  // Pool of candidate starter questions for this machine, fetched once.
+  // `visibleSuggestions` is the 3 currently rendered as chips; the rotation
+  // effect below swaps one of them out every few seconds so the empty
+  // state feels alive without re-hitting the server.
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [visibleSuggestions, setVisibleSuggestions] = useState<string[]>([]);
+  // Bumped per-chip when that slot is swapped — used in the React key so
+  // the chip remounts and replays its entrance animation.
+  const [chipVersions, setChipVersions] = useState<number[]>([0, 0, 0]);
+  const visibleSuggestionsRef = useRef<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [composerFocused, setComposerFocused] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -462,6 +502,8 @@ function ChatApp({
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
     setSuggestions([]);
+    setVisibleSuggestions([]);
+    setChipVersions([0, 0, 0]);
     setPendingAttachments((prev) => {
       for (const p of prev) URL.revokeObjectURL(p.previewUrl);
       return [];
@@ -471,8 +513,11 @@ function ChatApp({
   }, [machine?.id]);
 
   // Per-machine starter questions live on machine_kb and are regenerated
-  // on KB changes (ingest / reset / delete). Falls back to FALLBACK_QUESTIONS
-  // below if the array comes back empty or the fetch fails.
+  // on KB changes (ingest / reset / delete). We fetch the full candidate
+  // pool and immediately seed 3 visible chips out of it; the rotation
+  // effect further down swaps one chip at a time every few seconds.
+  // Falls back to FALLBACK_QUESTIONS below if the array comes back empty
+  // or the fetch fails.
   useEffect(() => {
     const id = machine?.id;
     if (!id) return;
@@ -485,8 +530,13 @@ function ChatApp({
         if (!res.ok) return;
         const body = (await res.json()) as { suggestions?: string[] };
         if (cancelled) return;
-        if (Array.isArray(body.suggestions)) {
-          setSuggestions(body.suggestions);
+        if (Array.isArray(body.suggestions) && body.suggestions.length > 0) {
+          const pool = body.suggestions;
+          const initial = pickRandom(pool, 3);
+          setSuggestions(pool);
+          setVisibleSuggestions(initial);
+          visibleSuggestionsRef.current = initial;
+          setChipVersions([0, 0, 0]);
         }
       } catch {
         // Swallow — UI already falls back to FALLBACK_QUESTIONS.
@@ -496,6 +546,32 @@ function ChatApp({
       cancelled = true;
     };
   }, [machine?.id]);
+
+  const isEmpty = messages.length === 0;
+
+  // Rotate one chip every ~9s while the empty state is on screen and
+  // there are unused questions in the pool. Skips entirely once the
+  // operator starts the conversation.
+  useEffect(() => {
+    if (!isEmpty) return;
+    if (suggestions.length <= 3) return;
+    const id = setInterval(() => {
+      const current = visibleSuggestionsRef.current;
+      const unused = suggestions.filter((q) => !current.includes(q));
+      if (unused.length === 0) return;
+      const next = [...current];
+      const pos = Math.floor(Math.random() * next.length);
+      next[pos] = unused[Math.floor(Math.random() * unused.length)];
+      visibleSuggestionsRef.current = next;
+      setVisibleSuggestions(next);
+      setChipVersions((v) => {
+        const nv = [...v];
+        nv[pos] = (v[pos] ?? 0) + 1;
+        return nv;
+      });
+    }, 9000);
+    return () => clearInterval(id);
+  }, [isEmpty, suggestions]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -887,8 +963,56 @@ function ChatApp({
 
           if (event === "delta") {
             pendingRef.current += data.text;
+            // Text streaming resumed → the model is now writing its
+            // reply, so any "Searching the manuals…" indicator from
+            // the previous tool_use should disappear.
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant" && last.activeTool) {
+                copy[copy.length - 1] = { ...last, activeTool: undefined };
+              }
+              return copy;
+            });
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
+          } else if (event === "tool_use") {
+            // Either a custom tool (search_kb) or an MCP-side tool
+            // Anthropic is invoking on our behalf. Stash the most
+            // recent one on the streaming assistant message so the
+            // row renders the indicator chip until text resumes (or
+            // until a tool_result clears it for MCP).
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") {
+                copy[copy.length - 1] = {
+                  ...last,
+                  activeTool: {
+                    name: typeof data.name === "string" ? data.name : "(tool)",
+                    source: data.source === "mcp" ? "mcp" : undefined,
+                    serverName:
+                      typeof data.serverName === "string"
+                        ? data.serverName
+                        : undefined,
+                  },
+                };
+              }
+              return copy;
+            });
+          } else if (event === "tool_result") {
+            // Only MCP emits these (custom tools' results land in
+            // synthetic user turns the next iteration). Clear the
+            // chip so the operator doesn't see a stale "Fetching …"
+            // label while the model is back to thinking/writing.
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant" && last.activeTool) {
+                copy[copy.length - 1] = { ...last, activeTool: undefined };
+              }
+              return copy;
+            });
           } else if (event === "sources") {
             const sources = Array.isArray(data.sources)
               ? (data.sources as SourceRef[])
@@ -953,7 +1077,6 @@ function ChatApp({
     }
   }
 
-  const isEmpty = messages.length === 0;
   const hasAssistantReply = messages.some(
     (m) => m.role === "assistant" && m.content.length > 0,
   );
@@ -986,13 +1109,13 @@ function ChatApp({
             + solid panel containing the input bar, optional "Afslut
             samtale" pill, and feedback card). Without enough room here,
             content scrolls under the panel. */}
-        <div className="mx-auto max-w-3xl px-6 pt-12 pb-72">
+        <div className="mx-auto max-w-3xl px-4 pt-6 pb-56 sm:px-6 sm:pt-12 sm:pb-72">
           {isEmpty ? (
-            <p className="msg-in max-w-2xl text-[22px] leading-[1.55] tracking-[-0.005em] text-[var(--color-foreground)]">
+            <p className="msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)] sm:text-[22px] sm:leading-[1.55]">
               {tChat("emptyPrompt")}
             </p>
           ) : (
-            <div className="flex flex-col gap-8">
+            <div className="flex flex-col gap-6 sm:gap-8">
               {messages.map((m, i) => (
                 <MessageRow
                   key={i}
@@ -1025,47 +1148,55 @@ function ChatApp({
             this, gaps to the sides of those (max-w-3xl) elements let
             scroll content bleed through. */}
         <div className="pointer-events-auto w-full bg-[var(--color-background)]">
-        <div className="mx-auto max-w-3xl px-4 pb-8 pt-2">
+        <div className="mx-auto max-w-3xl px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 sm:px-4 sm:pb-8">
           {isEmpty && (
-            <div className="msg-in mb-10 flex items-end gap-2">
-              <div className="flex flex-1 flex-wrap gap-2">
-                {(suggestions.length > 0 ? suggestions : FALLBACK_QUESTIONS).map(
-                  (q, i) => (
+            <div className="msg-in mb-6 sm:mb-10">
+              <div className="flex flex-wrap gap-2">
+                {(visibleSuggestions.length > 0
+                  ? visibleSuggestions
+                  : FALLBACK_QUESTIONS
+                ).map((q, i) => {
+                  const v = chipVersions[i] ?? 0;
+                  // On initial mount each slot uses chip-in (staggered
+                  // entrance); after a rotation the slot remounts under a
+                  // new key and uses chip-swap (snappy, no stagger).
+                  const isSwap = v > 0;
+                  return (
                     <Button
-                      key={q}
+                      key={`${i}-${v}-${q}`}
                       variant="secondary"
+                      size="sm"
                       onClick={() => send(q)}
                       disabled={streaming}
-                      className="chip-in rounded-full"
+                      className={cn(
+                        "max-w-full rounded-full whitespace-normal text-left sm:text-[14px]",
+                        isSwap ? "chip-swap" : "chip-in",
+                      )}
                       style={{ ["--chip-index" as string]: i }}
                     >
                       {q}
                     </Button>
-                  ),
-                )}
+                  );
+                })}
               </div>
-              <Button
-                size="lg"
-                aria-hidden
-                tabIndex={-1}
-                className="invisible pointer-events-none"
-              >
-                {tChat("send")}
-              </Button>
             </div>
           )}
           {showActionButtons && (
-            <div className="msg-in mb-6 flex justify-end gap-2">
+            <div className="msg-in mb-4 flex flex-wrap justify-end gap-2 sm:mb-6">
               <Button
                 variant="secondary"
+                size="sm"
                 onClick={() => setEscalate({ phase: "confirm", note: "" })}
+                className="sm:text-[14px]"
               >
                 <Wrench className="mr-1.5 h-4 w-4" />
                 {tChat("callService")}
               </Button>
               <Button
                 variant="secondary"
+                size="sm"
                 onClick={() => setFeedback({ phase: "prompt" })}
+                className="sm:text-[14px]"
               >
                 {tChat("endConversation")}
               </Button>
@@ -1154,79 +1285,126 @@ function ChatApp({
           />
           <div
             className={cn(
-              "flex items-end gap-2",
+              "flex items-stretch gap-1.5 sm:gap-2",
               inputLocked && "opacity-60",
             )}
           >
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onPaste={onPaste}
-              onKeyDown={onKeyDown}
-              placeholder={
-                feedback.phase === "thanks"
-                  ? tChat("endedPlaceholder")
-                  : voiceState === "recording"
-                    ? tChat("recordingPlaceholder")
+            <FieldFrame
+              focused={composerFocused}
+              className="flex min-w-0 flex-1 items-end gap-0.5 p-[6px] sm:gap-1 sm:p-[8px]"
+            >
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!canAttach}
+                aria-label={tChat("attachments.addAria")}
+                title={tChat("attachments.addAria")}
+                className={cn(
+                  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+                  "text-[var(--ds-grey-medium-04)] hover:bg-[var(--ds-grey-light-02)]",
+                  "disabled:opacity-40 disabled:hover:bg-transparent",
+                )}
+              >
+                <Plus className="h-5 w-5" />
+              </button>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onPaste={onPaste}
+                onKeyDown={onKeyDown}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = `${el.scrollHeight}px`;
+                }}
+                placeholder={
+                  feedback.phase === "thanks"
+                    ? tChat("endedPlaceholder")
+                    : voiceState === "recording"
+                      ? tChat("recordingPlaceholder")
+                      : voiceState === "transcribing"
+                        ? tChat("transcribingPlaceholder")
+                        : tChat("inputPlaceholder")
+                }
+                rows={1}
+                disabled={inputLocked || voiceState !== "idle"}
+                className={cn(
+                  "min-w-0 flex-1 resize-none overflow-hidden bg-transparent outline-none",
+                  "px-1.5 py-[8px] sm:px-2",
+                  "font-['Hanken_Grotesk',sans-serif] font-normal",
+                  "text-[16px] leading-[22px] sm:text-[19px] sm:leading-[26px]",
+                  "text-[var(--ds-grey-dark-09)]",
+                  "placeholder:text-[var(--ds-grey-light-03)]",
+                  "disabled:cursor-not-allowed disabled:text-[var(--ds-grey-medium-05)]",
+                )}
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  voiceState === "recording" ? stopVoice() : startVoice()
+                }
+                disabled={inputLocked || voiceState === "transcribing"}
+                aria-label={
+                  voiceState === "recording"
+                    ? tChat("voiceLabels.stopRecording")
                     : voiceState === "transcribing"
-                      ? tChat("transcribingPlaceholder")
-                      : tChat("inputPlaceholder")
-              }
-              rows={2}
-              disabled={inputLocked || voiceState !== "idle"}
-              autoGrow
-              size="medium"
-              className="flex-1"
-            />
+                      ? tChat("voiceLabels.transcribing")
+                      : tChat("voiceLabels.recordVoice")
+                }
+                title={
+                  voiceState === "recording"
+                    ? tChat("voiceLabels.stopRecording")
+                    : tChat("voiceLabels.recordVoice")
+                }
+                className={cn(
+                  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+                  "text-[var(--ds-grey-medium-04)] hover:bg-[var(--ds-grey-light-02)]",
+                  "disabled:opacity-40 disabled:hover:bg-transparent",
+                  voiceState === "recording" &&
+                    "bg-[var(--ds-red)] text-white hover:bg-[var(--ds-red-dark)] animate-pulse",
+                )}
+              >
+                {voiceState === "transcribing" ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : voiceState === "recording" ? (
+                  <Square className="h-4 w-4" fill="currentColor" />
+                ) : (
+                  <Mic className="h-5 w-5" />
+                )}
+              </button>
+            </FieldFrame>
             <Button
               size="lg"
               onClick={() => send()}
               disabled={!canSend}
-              className="h-[52px]"
+              aria-label={tChat("send")}
+              className="h-11 shrink-0 px-3 sm:h-auto sm:px-8"
             >
               {streaming ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
-                <span className={cn("inline-block", canSend && "send-nudge")}>
-                  {tChat("send")}
-                </span>
+                <>
+                  <span
+                    className={cn(
+                      "hidden sm:inline-block",
+                      canSend && "send-nudge",
+                    )}
+                  >
+                    {tChat("send")}
+                  </span>
+                  <ArrowUp
+                    className={cn(
+                      "h-5 w-5 sm:hidden",
+                      canSend && "send-nudge",
+                    )}
+                    aria-hidden
+                  />
+                </>
               )}
             </Button>
-            <button
-              type="button"
-              onClick={() =>
-                voiceState === "recording" ? stopVoice() : startVoice()
-              }
-              disabled={inputLocked || voiceState === "transcribing"}
-              aria-label={
-                voiceState === "recording"
-                  ? tChat("voiceLabels.stopRecording")
-                  : voiceState === "transcribing"
-                    ? tChat("voiceLabels.transcribing")
-                    : tChat("voiceLabels.recordVoice")
-              }
-              title={
-                voiceState === "recording"
-                  ? tChat("voiceLabels.stopRecording")
-                  : tChat("voiceLabels.recordVoice")
-              }
-              className={cn(
-                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
-                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
-                "hover:bg-[var(--color-muted)] disabled:opacity-60",
-                voiceState === "recording" &&
-                  "border-transparent bg-[var(--ds-red)] text-white hover:bg-[var(--ds-red-dark)] animate-pulse",
-              )}
-            >
-              {voiceState === "transcribing" ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : voiceState === "recording" ? (
-                <Square className="h-5 w-5" fill="currentColor" />
-              ) : (
-                <Mic className="h-5 w-5" />
-              )}
-            </button>
             <button
               type="button"
               onClick={() => setVoiceConvOpen(true)}
@@ -1239,26 +1417,12 @@ function ChatApp({
               aria-label={tChat("voiceLabels.startConversation")}
               title={tChat("voiceLabels.startConversation")}
               className={cn(
-                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[4px] border transition-colors sm:h-auto sm:w-[52px]",
                 "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
                 "hover:bg-[var(--color-muted)] disabled:opacity-60",
               )}
             >
               <AudioLines className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!canAttach}
-              aria-label={tChat("attachments.addAria")}
-              title={tChat("attachments.addAria")}
-              className={cn(
-                "inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[4px] border transition-colors",
-                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
-                "hover:bg-[var(--color-muted)] disabled:opacity-60",
-              )}
-            >
-              <ImagePlus className="h-5 w-5" />
             </button>
           </div>
         </div>
@@ -1297,14 +1461,14 @@ function MessageRow({
     return (
       <div className="msg-in flex flex-col items-end gap-2">
         {hasAttachments && (
-          <div className="flex max-w-[78%] flex-wrap justify-end gap-2">
+          <div className="flex max-w-[90%] flex-wrap justify-end gap-2 sm:max-w-[78%]">
             {message.attachments!.map((a) => (
               <a
                 key={a.id}
                 href={a.previewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block h-28 w-28 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)]"
+                className="block h-24 w-24 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)] sm:h-28 sm:w-28"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -1318,7 +1482,7 @@ function MessageRow({
         )}
         {hasText && (
           <div
-            className="max-w-[78%] rounded-[4px] px-5 py-3 text-[19px] leading-[1.55] whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+            className="max-w-[90%] rounded-[4px] px-4 py-2.5 text-[16px] leading-[1.5] whitespace-pre-wrap break-words shadow-[var(--shadow-sm)] sm:max-w-[78%] sm:px-5 sm:py-3 sm:text-[19px] sm:leading-[1.55]"
             style={{
               backgroundColor: "var(--color-accent)",
               color: "var(--color-primary-foreground)",
@@ -1332,6 +1496,12 @@ function MessageRow({
   }
 
   if (!message.content) {
+    // No text yet. If the model has already announced a tool call,
+    // surface that instead of the generic "thinking…" so the operator
+    // sees we're doing something specific.
+    if (message.activeTool) {
+      return <ToolUseIndicator tool={message.activeTool} />;
+    }
     return <WorkingRow />;
   }
 
@@ -1343,6 +1513,9 @@ function MessageRow({
           <span className="stream-caret -ml-0.5 align-baseline" aria-hidden />
         )}
       </div>
+      {isStreaming && message.activeTool ? (
+        <ToolUseIndicator tool={message.activeTool} />
+      ) : null}
       {!isStreaming && (
         <div className="-mt-1 flex items-center">
           <SpeakButton text={message.content} />
@@ -1415,6 +1588,32 @@ function WorkingRow() {
   return (
     <div className="msg-in flex items-center gap-2.5 text-[18px]">
       <span className="text-shimmer font-medium">{t("working")}</span>
+    </div>
+  );
+}
+
+// Tool-use indicator chip. Shown while a tool is currently being
+// invoked — either our search_kb or an Anthropic-handled MCP tool.
+// Friendly label mapping is best-effort; unknown tool names fall back
+// to the raw identifier. The shimmer matches WorkingRow so the two
+// indicators feel like one continuous "is doing something" state.
+function ToolUseIndicator({ tool }: { tool: ActiveTool }) {
+  const t = useTranslations("chat");
+  // Translation keys for the labels we know about. We add the MCP
+  // tool name as a hint at the end so the operator can see which
+  // specific portal endpoint fired without us having to enumerate
+  // every Optipeople tool here.
+  let label: string;
+  if (tool.name === "search_kb") {
+    label = t("toolSearching");
+  } else if (tool.source === "mcp") {
+    label = `${t("toolFetchingMachineData")} (${tool.name})`;
+  } else {
+    label = `${t("toolRunning")} ${tool.name}`;
+  }
+  return (
+    <div className="msg-in flex items-center gap-2.5 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
+      <span className="text-shimmer">{label}</span>
     </div>
   );
 }
@@ -1538,13 +1737,13 @@ function FeedbackCard({
   const tCommon = useTranslations("common");
   if (state.phase === "thanks") {
     return (
-      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
-        <div className="flex items-start gap-3">
+      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-md)] sm:p-4">
+        <div className="flex flex-col items-start gap-3 sm:flex-row">
           <CheckCircle2
             className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600"
             aria-hidden
           />
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <p className="text-[15px] font-medium text-[var(--color-foreground)]">
               {t("thanksTitle")}
             </p>
@@ -1552,7 +1751,12 @@ function FeedbackCard({
               {state.resolved ? t("thanksResolved") : t("thanksUnresolved")}
             </p>
           </div>
-          <Button variant="secondary" size="sm" onClick={onStartNew}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onStartNew}
+            className="w-full sm:w-auto"
+          >
             {t("startNew")}
           </Button>
         </div>
@@ -1586,9 +1790,9 @@ function FeedbackCard({
     (state.phase === "answered_yes" && state.submitting);
 
   return (
-    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
+    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-md)] sm:p-4">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-[15px] font-medium text-[var(--color-foreground)]">
             {t("prompt")}
           </p>
@@ -1600,7 +1804,7 @@ function FeedbackCard({
           type="button"
           onClick={onDismiss}
           disabled={submitting}
-          className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
+          className="shrink-0 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
           aria-label={tCommon("close")}
         >
           <X className="h-4 w-4" />
@@ -1608,7 +1812,7 @@ function FeedbackCard({
       </div>
 
       {state.phase === "prompt" || state.phase === "submitting" ? (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={onAnswerYes} disabled={submitting}>
             <ThumbsUp className="mr-1.5 h-4 w-4" />
             {t("yes")}
@@ -1703,14 +1907,17 @@ function EscalateCard({
   if (state.phase === "done") {
     const target = state.label ?? state.target;
     return (
-      <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-4 shadow-[var(--shadow-md)]">
-        <div className="flex items-start gap-3">
-          <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
-          <div className="flex-1">
+      <div className="rounded-[4px] border border-amber-200 bg-amber-50 p-3 shadow-[var(--shadow-md)] sm:p-4">
+        <div className="flex flex-col items-start gap-3 sm:flex-row">
+          <Wrench
+            className="mt-0.5 h-5 w-5 shrink-0 text-amber-700"
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
             <p className="text-[15px] font-medium text-amber-900">
               {t("doneTitle")}
             </p>
-            <p className="mt-0.5 text-[13px] text-amber-900/80">
+            <p className="mt-0.5 break-words text-[13px] text-amber-900/80">
               {state.channel === "sms"
                 ? t("doneSms", { target })
                 : state.channel === "email"
@@ -1723,7 +1930,12 @@ function EscalateCard({
               <ShareLinkRow url={state.shareUrl} />
             )}
           </div>
-          <Button variant="secondary" size="sm" onClick={onStartNew}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onStartNew}
+            className="w-full sm:w-auto"
+          >
             {t("startNew")}
           </Button>
         </div>
@@ -1757,9 +1969,9 @@ function EscalateCard({
   const note = state.note;
 
   return (
-    <div className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-4 shadow-[var(--shadow-md)]">
+    <div className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-3 shadow-[var(--shadow-md)] sm:p-4">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-[15px] font-medium text-amber-900">
             {t("confirmTitle")}
           </p>
@@ -1771,7 +1983,7 @@ function EscalateCard({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
+          className="shrink-0 text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
           aria-label={t("cancel")}
         >
           <X className="h-4 w-4" />
@@ -1829,17 +2041,17 @@ function ShareLinkRow({ url }: { url: string }) {
     }
   }
   return (
-    <div className="mt-3 flex items-center gap-2">
+    <div className="mt-3 flex flex-wrap items-center gap-2">
       <input
         readOnly
         value={url}
         onFocus={(e) => e.currentTarget.select()}
-        className="flex-1 truncate rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[12px] text-amber-900"
+        className="min-w-0 flex-1 truncate rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[12px] text-amber-900"
       />
       <button
         type="button"
         onClick={() => void copy()}
-        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[13px] text-amber-900 hover:bg-amber-100"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[13px] text-amber-900 hover:bg-amber-100"
       >
         {copied ? (
           <>

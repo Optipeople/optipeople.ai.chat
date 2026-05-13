@@ -72,7 +72,7 @@ function SourceChip({ source }: { source: SourceRef }) {
       disabled={loading}
       title={error ?? tCommon("openInNewTab", { title: `${source.title}${pageLabel}` })}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3 py-1 text-[12px] text-[var(--color-foreground)]",
+        "inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3 py-1 text-[12px] text-[var(--color-foreground)]",
         "border border-[var(--color-hairline)] shadow-[var(--shadow-sm)]",
         "transition-colors hover:border-[var(--color-brand)]/40 hover:bg-[var(--color-muted)]/40",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
@@ -81,17 +81,19 @@ function SourceChip({ source }: { source: SourceRef }) {
       )}
     >
       {loading ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
       ) : (
-        <FileText className="h-3 w-3" />
+        <FileText className="h-3 w-3 shrink-0" />
       )}
-      <span className="max-w-[260px] truncate">{source.title}</span>
+      <span className="min-w-0 max-w-[180px] truncate sm:max-w-[260px]">
+        {source.title}
+      </span>
       {source.pageFrom != null && (
-        <span className="text-[var(--color-muted-foreground)]">
+        <span className="shrink-0 text-[var(--color-muted-foreground)]">
           {tCommon("page", { n: source.pageFrom })}
         </span>
       )}
-      <ExternalLink className="h-3 w-3 text-[var(--color-muted-foreground)]" />
+      <ExternalLink className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)]" />
     </button>
   );
 }

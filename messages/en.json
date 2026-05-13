@@ -75,6 +75,9 @@
   "chat": {
     "emptyPrompt": "Ask about installation, maintenance, tool changes, alarms, or anything from your machine's manual.",
     "working": "Working…",
+    "toolSearching": "Searching the manuals…",
+    "toolFetchingMachineData": "Fetching machine data…",
+    "toolRunning": "Running",
     "errorPrefix": "Error: {message}",
     "send": "Send",
     "callService": "Call service",

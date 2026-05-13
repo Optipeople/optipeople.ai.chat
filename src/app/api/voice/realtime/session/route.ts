@@ -199,7 +199,12 @@ export async function POST(req: Request) {
           model: "gpt-4o-mini-transcribe",
           language: locale,
         },
-        turn_detection: { type: "server_vad" },
+        // Semantic VAD lets the model decide when the operator has
+        // actually finished a thought, rather than cutting on a fixed
+        // silence window. `eagerness: "low"` waits longer before
+        // responding — important on a noisy factory floor where
+        // operators pause mid-sentence to think or check the machine.
+        turn_detection: { type: "semantic_vad", eagerness: "low" },
         tools: [
           {
             type: "function",

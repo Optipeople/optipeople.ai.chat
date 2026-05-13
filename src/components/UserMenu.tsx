@@ -83,18 +83,21 @@ export function UserMenu() {
         aria-expanded={open}
         aria-label={user.email}
         className={cn(
-          "flex items-center gap-[10px] rounded-[2px]",
+          "flex min-w-0 items-center gap-2 rounded-[2px] sm:gap-[10px]",
           "transition-colors hover:bg-white/5",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
         )}
       >
-        <span className="text-[14px] leading-[14px] text-[#eaeeee] whitespace-nowrap">
+        <span className="hidden max-w-[40vw] truncate text-[14px] leading-[14px] text-[#eaeeee] sm:inline">
           {t("welcome", { name: displayName })}
+        </span>
+        <span className="max-w-[40vw] truncate text-[13px] leading-[13px] text-[#eaeeee] sm:hidden">
+          {displayName}
         </span>
         <span
           aria-hidden
           className={cn(
-            "flex h-[26px] items-center justify-center rounded-[2px] px-[7px] py-[3px]",
+            "flex h-[26px] shrink-0 items-center justify-center rounded-[2px] px-[7px] py-[3px]",
             "shadow-[0_0.5px_1.25px_rgba(0,0,0,0.3),0_0_0_rgba(0,0,0,0.05)]",
           )}
         >
@@ -114,7 +117,7 @@ export function UserMenu() {
         <div
           role="menu"
           className={cn(
-            "absolute right-0 top-[calc(100%+8px)] z-30 w-64 overflow-hidden",
+            "absolute right-0 top-[calc(100%+8px)] z-30 w-[min(calc(100vw-1.5rem),18rem)] overflow-hidden sm:w-64",
             "rounded-[6px] bg-[var(--color-surface)]",
             "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
           )}

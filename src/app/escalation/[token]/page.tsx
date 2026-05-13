@@ -87,29 +87,29 @@ export default async function EscalationPage({
         className="sticky top-0 z-10 border-b border-[var(--color-hairline)]"
         style={{ backgroundColor: "var(--color-brand)" }}
       >
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-6 py-3">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6">
           <OptipeopleLogo
-            className="h-7 w-auto text-white"
+            className="h-6 w-auto shrink-0 text-white sm:h-7"
             aria-label={t("logoLabel")}
           />
-          <div className="flex items-center gap-2 text-[13px] font-medium text-white/90">
+          <div className="flex shrink-0 items-center gap-2 text-[13px] font-medium text-white/90">
             <Wrench className="h-4 w-4" />
-            {t("serviceRequest")}
+            <span className="hidden sm:inline">{t("serviceRequest")}</span>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-8">
-        <section className="rounded-[var(--radius)] border border-amber-200 bg-amber-50 p-5">
-          <h1 className="text-[20px] font-semibold tracking-tight text-amber-900">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-5 sm:px-6 sm:py-8">
+        <section className="rounded-[var(--radius)] border border-amber-200 bg-amber-50 p-4 sm:p-5">
+          <h1 className="break-words text-[18px] font-semibold tracking-tight text-amber-900 sm:text-[20px]">
             {snapshot.machineName ?? t("unknownMachine")}
           </h1>
-          <p className="mt-1 text-[13px] text-amber-900/80">
+          <p className="mt-1 break-words text-[13px] text-amber-900/80">
             {t.rich("calledAt", {
               date: dt.format(new Date(result.created_at)),
               channel: channelLabel,
               target: () => (
-                <span className="font-mono">{result.target}</span>
+                <span className="font-mono break-all">{result.target}</span>
               ),
             })}
           </p>
@@ -118,18 +118,18 @@ export default async function EscalationPage({
               <p className="text-[12px] font-medium uppercase tracking-wide text-amber-800">
                 {t("operatorDescription")}
               </p>
-              <p className="mt-1 whitespace-pre-wrap text-[var(--color-foreground)]">
+              <p className="mt-1 whitespace-pre-wrap break-words text-[var(--color-foreground)]">
                 {result.note}
               </p>
             </div>
           )}
         </section>
 
-        <section className="mt-6 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-5">
+        <section className="mt-5 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:mt-6 sm:p-5">
           <dl className="grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
               <dt className="text-[var(--color-muted-foreground)]">{t("operator")}</dt>
-              <dd className="text-[var(--color-foreground)]">
+              <dd className="min-w-0 break-words text-[var(--color-foreground)]">
                 {snapshot.operator.name ?? snapshot.operator.email ?? "—"}
                 {snapshot.operator.name && snapshot.operator.email && (
                   <span className="ml-1 text-[var(--color-muted-foreground)]">
@@ -138,7 +138,7 @@ export default async function EscalationPage({
                 )}
               </dd>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
               <dt className="text-[var(--color-muted-foreground)]">
                 {t("conversationStarted")}
               </dt>
@@ -146,7 +146,7 @@ export default async function EscalationPage({
                 {dt.format(new Date(snapshot.startedAt))}
               </dd>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
               <dt className="text-[var(--color-muted-foreground)]">{t("messages")}</dt>
               <dd className="text-[var(--color-foreground)]">
                 {snapshot.messages.length}
@@ -203,12 +203,12 @@ function TranscriptRow({
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="flex max-w-[80%] flex-col items-end gap-1">
+        <div className="flex max-w-[92%] flex-col items-end gap-1 sm:max-w-[80%]">
           <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
             {operatorLabel} · {time}
           </span>
           <div
-            className="rounded-[var(--radius-lg)] rounded-br-[10px] px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+            className="rounded-[var(--radius-lg)] rounded-br-[10px] px-3 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap shadow-[var(--shadow-sm)] sm:px-4 sm:py-3"
             style={{
               backgroundColor: "var(--color-accent)",
               color: "var(--color-primary-foreground)",
@@ -225,7 +225,7 @@ function TranscriptRow({
       <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
         OptiAI · {time}
       </span>
-      <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 text-[15px]">
+      <div className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 text-[15px] sm:p-4">
         <Markdown>{message.content}</Markdown>
       </div>
     </div>

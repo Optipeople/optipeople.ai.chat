@@ -13,7 +13,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getSupabaseServerClient } from "./supabase";
 
 const MODEL = "claude-haiku-4-5-20251001";
-const TARGET_COUNT = 3;
+// A pool of candidates. The chat client picks 3 at random and rotates
+// one every few seconds while the empty state is visible, so a larger
+// pool means more variety per visit. Haiku produces all of them in a
+// single call so cost is still negligible.
+const TARGET_COUNT = 10;
 const MAX_DOC_SUMMARIES = 30;
 
 const SYSTEM_PROMPT = `You generate short starter questions for a chat assistant used by operators of wood-industry machines.
@@ -21,7 +25,7 @@ const SYSTEM_PROMPT = `You generate short starter questions for a chat assistant
 The operator is at the machine and wants fast, concrete answers from the manual. Your questions must be:
 - Written in the same language the manuals are written in (detect the language from the document summaries below). Use plain, everyday phrasing — operators stand on the factory floor.
 - Short — at most 8 words each.
-- Concrete and different — avoid overlap. Cover different areas: alarms, procedures, maintenance, settings, troubleshooting.
+- Concrete and different — avoid overlap. Aim for breadth across these areas: alarms / error codes, daily operation, maintenance schedules, settings & calibration, troubleshooting, safety. Don't repeat the same topic twice.
 - Grounded in the machine's actual manual content. Use ONLY alarm codes, button names, or components that explicitly appear in the manual extracts below — never invent codes or names.
 - Technical terms, alarm codes, and button names stay in the original language as they appear in the manual.
 
@@ -91,7 +95,7 @@ export async function regenerateSuggestedQuestions(
   const anthropic = new Anthropic();
   const res = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 300,
+    max_tokens: 600,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
   });

@@ -312,7 +312,7 @@ export function Markdown({
   return (
     <div
       className={cn(
-        "text-[19px] leading-[1.7] text-[var(--color-foreground)]",
+        "text-[16px] leading-[1.6] text-[var(--color-foreground)] break-words sm:text-[19px] sm:leading-[1.7]",
         className,
       )}
     >

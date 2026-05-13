@@ -128,6 +128,24 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+@media (max-width: 640px) {
+  body {
+    font-size: 16px;
+  }
+}
+
+/* Prevent iOS Safari from zooming when focusing inputs/textareas with
+   font-size < 16px. Keep the *visual* size separate (via line-height /
+   tailwind text-* utilities) but never let the effective font-size drop
+   below 16px in form controls on mobile. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 /* Soft, quick hover/active transition for all buttons app-wide.
    Component-level Tailwind `transition-*` classes override this via specificity. */
 button,
@@ -236,6 +254,13 @@ a[data-button] {
 .chip-in {
   animation: chip-in 850ms var(--ease-apple) both;
   animation-delay: calc(500ms + var(--chip-index, 0) * 220ms);
+}
+
+/* Suggestion chip rotation — same fade/rise, but no stagger delay so a
+   swapped chip appears promptly instead of waiting for the initial
+   entrance offset. */
+.chip-swap {
+  animation: chip-in 500ms var(--ease-apple) both;
 }
 
 /* Send-button invite — gentle nudge when input has text waiting. */

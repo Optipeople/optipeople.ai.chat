@@ -36,26 +36,26 @@ export function AccountSelectScreen() {
         className="relative z-20 shrink-0"
         style={{ backgroundColor: "var(--color-brand)" }}
       >
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-6">
+        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-3 px-4 sm:h-16 sm:px-6">
           <OptipeopleLogo
-            className="h-7 w-auto text-white"
+            className="h-6 w-auto shrink-0 text-white sm:h-7"
             aria-label="Optipeople"
           />
           <UserMenu />
         </div>
       </header>
 
-      <div className="flex flex-1 items-center justify-center px-6 py-10">
+      <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
         <div
           className={cn(
-            "msg-in w-full max-w-md rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-8",
+            "msg-in w-full max-w-md rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-5 sm:p-8",
             "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
           )}
         >
-          <h1 className="mb-1 text-[22px] font-semibold text-[var(--color-foreground)]">
+          <h1 className="mb-1 text-[20px] font-semibold text-[var(--color-foreground)] sm:text-[22px]">
             {t("heading")}
           </h1>
-          <p className="mb-6 text-[15px] text-[var(--color-muted-foreground)]">
+          <p className="mb-5 text-[14px] text-[var(--color-muted-foreground)] sm:mb-6 sm:text-[15px]">
             {t("subtitle")}
           </p>
 

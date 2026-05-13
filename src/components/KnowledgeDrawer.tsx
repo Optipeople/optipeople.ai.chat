@@ -132,10 +132,10 @@ function DrawerOverlay({
           "drawer-in",
         )}
       >
-        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-5 py-4">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-[var(--color-foreground)]" />
-            <h2 className="text-[16px] font-semibold tracking-tight text-[var(--color-foreground)]">
+        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-4 py-3 sm:px-5 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <BookOpen className="h-5 w-5 shrink-0 text-[var(--color-foreground)]" />
+            <h2 className="truncate text-[16px] font-semibold tracking-tight text-[var(--color-foreground)]">
               {t("heading")}
             </h2>
           </div>
@@ -143,12 +143,12 @@ function DrawerOverlay({
             type="button"
             onClick={onClose}
             aria-label={t("closeAria")}
-            className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" />
           </button>
         </header>
-        <p className="px-5 pt-3 text-[13px] text-[var(--color-muted-foreground)]">
+        <p className="px-4 pt-3 text-[13px] text-[var(--color-muted-foreground)] sm:px-5">
           {t("description")}
         </p>
         <div className="flex-1 overflow-y-auto px-2 py-3">

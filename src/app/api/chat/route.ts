@@ -1,14 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getTranslations } from "next-intl/server";
 import type {
-  ContentBlockParam,
-  ImageBlockParam,
-  Message,
-  MessageParam,
-  Tool,
-  ToolResultBlockParam,
-  ToolUseBlock,
-} from "@anthropic-ai/sdk/resources/messages";
+  BetaContentBlockParam as ContentBlockParam,
+  BetaImageBlockParam as ImageBlockParam,
+  BetaMessage as Message,
+  BetaMessageParam as MessageParam,
+  BetaTool as Tool,
+  BetaToolResultBlockParam as ToolResultBlockParam,
+  BetaToolUseBlock as ToolUseBlock,
+} from "@anthropic-ai/sdk/resources/beta/messages";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
 import {
   appendAssistantTurn,
@@ -17,6 +17,7 @@ import {
   createConversation,
   validateConversation,
 } from "@/lib/conversations";
+import { getMcpAccessForAccount, type McpAccess } from "@/lib/mcpConfig";
 import {
   readQrTokenFromRequest,
   resolveQrToken,
@@ -95,29 +96,33 @@ Formatting (answers render as Markdown):
 LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
 `;
 
-const TOOLS: Tool[] = [
-  {
-    name: "search_kb",
-    description:
-      "Search this machine's knowledge base (manuals, instructions, alarm references). Returns ranked snippets with their source document title and page numbers when available. Use this for any technical question before answering.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "Short, specific search query. Phrase it the way it would appear in a manual (e.g. 'alarm 731 reset', 'tool change procedure'). May be in any language; the index handles cross-lingual matching.",
-        },
-        top_k: {
-          type: "integer",
-          description: "How many results to return. Default 6, max 12.",
-          default: 6,
-        },
+const SEARCH_KB_TOOL: Tool = {
+  name: "search_kb",
+  description:
+    "Search this machine's knowledge base (manuals, instructions, alarm references). Returns ranked snippets with their source document title and page numbers when available. Use this for any technical question before answering.",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Short, specific search query. Phrase it the way it would appear in a manual (e.g. 'alarm 731 reset', 'tool change procedure'). May be in any language; the index handles cross-lingual matching.",
       },
-      required: ["query"],
+      top_k: {
+        type: "integer",
+        description: "How many results to return. Default 6, max 12.",
+        default: 6,
+      },
     },
+    required: ["query"],
   },
-];
+};
+
+// Our custom tools live here. Portal data is no longer a custom tool;
+// it now comes from the Optipeople MCP server, which Anthropic calls
+// directly via the `mcp_servers` connector when the chat's account
+// has authorized credentials. See docs/optipeople-data-access.md.
+const TOOLS: Tool[] = [SEARCH_KB_TOOL];
 
 // Client wire shape. User messages can include attachmentIds pointing at
 // rows in conversation_attachments — we re-sign each one per request so
@@ -509,7 +514,7 @@ export async function POST(req: Request) {
   // QR token (header X-QR-Token or body.qrToken) is the fallback for
   // shop-floor sticker access. Either path resolves to a uniform "who
   // is the operator" shape so the rest of the route doesn't branch.
-  const hasBearer = !!req.headers.get("authorization");
+  const hasBearer = /^Bearer\s/i.test(req.headers.get("authorization") ?? "");
   const qrToken = readQrTokenFromRequest(req, body);
 
   let user: { userId: string; email: string | null; name: string | null };
@@ -572,6 +577,23 @@ export async function POST(req: Request) {
   );
 
   const anthropic = new Anthropic();
+
+  // Look up MCP access for the resolved account. If the account has
+  // an authorized config and the token is fresh (or can be refreshed),
+  // we'll add the MCP server to the request so Anthropic can call its
+  // tools directly. Failures are logged but treated the same as "no
+  // MCP available" so chat continues to work with just search_kb.
+  let mcpAccess: McpAccess | null = null;
+  try {
+    mcpAccess = await getMcpAccessForAccount(resolvedAccountId);
+  } catch (err) {
+    console.error("chat: getMcpAccessForAccount failed:", err);
+  }
+  if (mcpAccess) {
+    console.log(
+      `chat: MCP enabled for account=${resolvedAccountId} server=${mcpAccess.serverUrl}`,
+    );
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -682,7 +704,17 @@ export async function POST(req: Request) {
           // has started rendering text we can't cleanly restart.
           let final: Message | null = null;
           for (let attempt = 0; ; attempt++) {
-            const s = anthropic.messages.stream({
+            // When the account has an authorized MCP config, route
+            // through the beta endpoint with `mcp_servers`. Anthropic
+            // discovers and calls the MCP tools itself; we never see
+            // them in `toolUses` below. When no MCP is available we
+            // stay on the GA endpoint — same behavior as before.
+            // Always go through beta.messages — the API is a superset
+            // of GA (so non-MCP requests still behave identically) and
+            // it gives us one code path to maintain. mcp_servers is
+            // conditionally included only when the account has an
+            // authorized config.
+            const s = anthropic.beta.messages.stream({
               model: MODEL,
               max_tokens: 2048,
               system: [
@@ -694,12 +726,53 @@ export async function POST(req: Request) {
               ],
               tools: TOOLS,
               messages: conversation,
+              ...(mcpAccess
+                ? {
+                    // The MCP connector is gated behind a beta opt-in
+                    // header; without it the API rejects mcp_servers.
+                    // See https://docs.claude.com/en/docs/agents-and-tools/mcp-connector
+                    betas: ["mcp-client-2025-04-04"],
+                    mcp_servers: [
+                      {
+                        name: "optipeople",
+                        type: "url" as const,
+                        url: mcpAccess.serverUrl,
+                        authorization_token: mcpAccess.accessToken,
+                      },
+                    ],
+                  }
+                : {}),
             });
 
             let streamed = false;
             s.on("text", (delta) => {
               streamed = true;
               send("delta", { text: delta });
+            });
+            // Emit tool_use events progressively as each content block
+            // finalizes, rather than only after the whole assistant
+            // turn completes. Covers both our custom tools (search_kb,
+            // type "tool_use") and Anthropic-handled MCP tools (type
+            // "mcp_tool_use"). MCP results stream back too — we mirror
+            // them as tool_result events so the UI can collapse the
+            // "Fetching machine data…" indicator and optionally show
+            // a summary.
+            s.on("contentBlock", (block) => {
+              if (block.type === "tool_use") {
+                send("tool_use", { name: block.name, input: block.input });
+              } else if (block.type === "mcp_tool_use") {
+                send("tool_use", {
+                  name: block.name,
+                  input: block.input,
+                  serverName: block.server_name,
+                  source: "mcp" as const,
+                });
+              } else if (block.type === "mcp_tool_result") {
+                send("tool_result", {
+                  toolUseId: block.tool_use_id,
+                  isError: block.is_error ?? false,
+                });
+              }
             });
 
             try {
@@ -756,20 +829,20 @@ export async function POST(req: Request) {
           );
 
           if (toolUses.length === 0) {
-            // Model is done — no more tools requested.
+            // Model is done — no more tools requested. (tool_use SSE
+            // events were already emitted via the contentBlock listener
+            // above, so the UI already knows what fired this turn.)
             break;
-          }
-
-          // Show the operator-facing client which tools are firing —
-          // useful for "Searching the manuals…" indicators later.
-          for (const tu of toolUses) {
-            send("tool_use", { name: tu.name, input: tu.input });
           }
 
           const toolResults: ToolResultBlockParam[] = await Promise.all(
             toolUses.map(async (tu) => {
               try {
-                const exec = await executeTool(tu.name, tu.input, resolvedMachineId);
+                const exec = await executeTool(
+                  tu.name,
+                  tu.input,
+                  resolvedMachineId,
+                );
                 for (const d of exec.documents) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);

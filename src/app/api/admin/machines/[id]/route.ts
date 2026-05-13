@@ -7,6 +7,7 @@
 
 import { AuthError, requireSuperAdmin } from "@/lib/auth";
 import { cleanupStuckDocuments } from "@/lib/ingestion";
+import { getMcpConfigSummary, type McpStatus } from "@/lib/mcpConfig";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -29,6 +30,19 @@ export type AdminDocument = {
   operatorVisible: boolean;
 };
 
+// MCP integration status for the machine's account. Null means the
+// account has no MCP config row at all (admin hasn't registered yet);
+// otherwise we surface the status + label so the machine page can
+// show a "Connected via Optipeople / Not connected / Token expired"
+// badge without a second round-trip.
+export type AdminMachineMcp = {
+  status: McpStatus;
+  label: string | null;
+  statusMessage: string | null;
+  serverUrl: string;
+  accessTokenExpiresAt: string | null;
+};
+
 export type AdminMachineDetail = {
   machineId: string;
   accountId: string;
@@ -43,6 +57,8 @@ export type AdminMachineDetail = {
   // Explicit folder list, including empty folders. Tree rendering merges
   // these with folders implied by document paths so nothing is missed.
   folders: string[];
+  // Null when this machine's account has never been wired to MCP.
+  mcp: AdminMachineMcp | null;
 };
 
 async function gate(req: Request): Promise<Response | null> {
@@ -113,6 +129,24 @@ export async function GET(
     qr_token_created_at: string | null;
   };
 
+  // MCP lookup is best-effort and isolated from the rest of the
+  // response — a DB hiccup here shouldn't 500 the whole page.
+  let mcp: AdminMachineMcp | null = null;
+  try {
+    const summary = await getMcpConfigSummary(m.account_id);
+    if (summary) {
+      mcp = {
+        status: summary.status,
+        label: summary.label,
+        statusMessage: summary.statusMessage,
+        serverUrl: summary.serverUrl,
+        accessTokenExpiresAt: summary.accessTokenExpiresAt,
+      };
+    }
+  } catch (err) {
+    console.error("admin/machines/[id] MCP lookup failed:", err);
+  }
+
   const result: AdminMachineDetail = {
     machineId: m.machine_id,
     accountId: m.account_id,
@@ -157,6 +191,7 @@ export async function GET(
         operatorVisible: r.operator_visible === true,
       };
     }),
+    mcp,
   };
 
   return Response.json(result);

@@ -83,7 +83,7 @@ export function ConversationDetail({
   const cacheHits = data.messages.filter((m) => m.cacheHit).length;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5 sm:gap-6">
       <Link
         href={`/admin/machines/${machineId}/conversations`}
         className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
@@ -92,14 +92,14 @@ export function ConversationDetail({
         {t("backAll")}
       </Link>
 
-      <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
-        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)]">
+      <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
+        <h1 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[20px]">
           {t("heading", { date: DA_DT.format(new Date(data.startedAt)) })}
         </h1>
         <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-3">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5">
             <dt className="text-[var(--color-muted-foreground)]">{t("operator")}</dt>
-            <dd className="text-[var(--color-foreground)]">
+            <dd className="min-w-0 break-words text-[var(--color-foreground)]">
               {data.userName ?? data.userEmail ?? "—"}
               {data.userName && data.userEmail && (
                 <span className="ml-1 text-[var(--color-muted-foreground)]">
@@ -108,13 +108,13 @@ export function ConversationDetail({
               )}
             </dd>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5">
             <dt className="text-[var(--color-muted-foreground)]">{t("messages")}</dt>
             <dd className="text-[var(--color-foreground)]">
               {data.messages.length}
             </dd>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5">
             <dt className="text-[var(--color-muted-foreground)]">{t("tokens")}</dt>
             <dd className="text-[var(--color-foreground)]">
               {t("tokensValue", { tokensIn: totalIn.toLocaleString(), tokensOut: totalOut.toLocaleString() })}
@@ -128,10 +128,10 @@ export function ConversationDetail({
         </dl>
 
         {data.escalation && (
-          <div className="mt-5 flex items-start gap-3 rounded-[4px] border border-amber-200 bg-amber-50 p-4 text-[14px]">
+          <div className="mt-5 flex items-start gap-3 rounded-[4px] border border-amber-200 bg-amber-50 p-3 text-[14px] sm:p-4">
             <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-            <div className="flex-1">
-              <p className="font-medium text-amber-900">
+            <div className="min-w-0 flex-1">
+              <p className="break-words font-medium text-amber-900">
                 {t("escalatedToPrefix")}{" "}
                 {data.escalation.channel === "sms"
                   ? t("channelSms")
@@ -140,7 +140,7 @@ export function ConversationDetail({
                     : data.escalation.channel === "webhook"
                       ? t("channelWebhook")
                       : t("channelServiceTicket")}{" "}
-                <span className="font-mono">{data.escalation.target}</span>
+                <span className="font-mono break-all">{data.escalation.target}</span>
               </p>
               {data.escalation.note && (
                 <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-[var(--color-foreground)]">
@@ -174,7 +174,7 @@ export function ConversationDetail({
         {data.feedback && (
           <div
             className={cn(
-              "mt-5 flex items-start gap-3 rounded-[4px] border p-4 text-[14px]",
+              "mt-5 flex items-start gap-3 rounded-[4px] border p-3 text-[14px] sm:p-4",
               data.feedback.resolved
                 ? "border-emerald-200 bg-emerald-50"
                 : "border-red-200 bg-red-50",
@@ -185,7 +185,7 @@ export function ConversationDetail({
             ) : (
               <ThumbsDown className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />
             )}
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <p
                 className={cn(
                   "font-medium",
@@ -229,12 +229,12 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="flex max-w-[78%] flex-col items-end gap-1">
+        <div className="flex max-w-[92%] flex-col items-end gap-1 sm:max-w-[78%]">
           <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
             {t("operatorRole")} · {time}
           </span>
           <div
-            className="rounded-[4px] px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap shadow-[var(--shadow-sm)]"
+            className="rounded-[4px] px-3 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap shadow-[var(--shadow-sm)] sm:px-4 sm:py-3"
             style={{
               backgroundColor: "var(--color-accent)",
               color: "var(--color-primary-foreground)",
@@ -265,11 +265,11 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
         )}
       </span>
       {message.content ? (
-        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 text-[15px]">
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 text-[15px] sm:p-4">
           <Markdown>{message.content}</Markdown>
         </div>
       ) : message.toolName ? (
-        <div className="rounded-[4px] border border-dashed border-[var(--color-hairline)] bg-[var(--color-surface)] px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
+        <div className="rounded-[4px] border border-dashed border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-3 text-[13px] text-[var(--color-muted-foreground)] sm:px-4">
           {t("toolCallsOnly")}
         </div>
       ) : null}
@@ -294,17 +294,17 @@ function ToolMessage({
       : null;
 
   return (
-    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-muted)]/40 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
-          <Wrench className="h-3.5 w-3.5" />
+    <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-muted)]/40 p-3 sm:p-4">
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
+          <Wrench className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium text-[var(--color-foreground)]">
             {message.toolName ?? t("toolFallback")}
           </span>
           {query && (
             <>
-              <Search className="h-3 w-3" />
-              <code className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[12px]">
+              <Search className="h-3 w-3 shrink-0" />
+              <code className="min-w-0 max-w-full truncate rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[12px]">
                 {query}
               </code>
             </>
@@ -314,7 +314,7 @@ function ToolMessage({
         <button
           type="button"
           onClick={() => setShowInput((v) => !v)}
-          className="text-[12px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          className="shrink-0 text-[12px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
         >
           {showInput ? t("hideInput") : t("showInput")}
         </button>
@@ -358,7 +358,7 @@ function ChunkRow({ chunk }: { chunk: AdminChunkRef }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px]"
+        className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-left text-[13px]"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
@@ -366,7 +366,7 @@ function ChunkRow({ chunk }: { chunk: AdminChunkRef }) {
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
         )}
         <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]" />
-        <span className="font-medium text-[var(--color-foreground)]">
+        <span className="min-w-0 break-words font-medium text-[var(--color-foreground)]">
           {chunk.documentTitle}
         </span>
         <span className="text-[12px] text-[var(--color-muted-foreground)]">

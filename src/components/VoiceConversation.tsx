@@ -73,7 +73,7 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
     >
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-6 py-8"
+        className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8"
       >
         <div className="mx-auto flex max-w-2xl flex-col gap-4">
           {transcript.length === 0 && state !== "connecting" ? (
@@ -93,16 +93,16 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
         </div>
       </div>
 
-      <div className="flex items-center justify-center px-6 pb-4">
+      <div className="flex items-center justify-center px-4 pb-3 sm:px-6 sm:pb-4">
         <VoiceStatusPill state={state} muted={muted} label={statusLabel} />
       </div>
 
-      <footer className="border-t border-[var(--color-border)] px-6 py-6">
-        <div className="mx-auto flex max-w-2xl items-center justify-center gap-3">
+      <footer className="border-t border-[var(--color-border)] px-3 py-4 pb-[max(env(safe-area-inset-bottom),1rem)] sm:px-6 sm:py-6">
+        <div className="mx-auto flex max-w-2xl items-center justify-center gap-2 sm:gap-3">
           <Button
             variant={muted ? "destructive" : "secondary"}
             size="lg"
-            className="gap-2"
+            className="flex-1 gap-2 px-3 sm:flex-none sm:px-8"
             onClick={toggleMute}
             disabled={state !== "active"}
             aria-label={muted ? t("muteOn") : t("muteOff")}
@@ -112,17 +112,17 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
             ) : (
               <Mic className="h-5 w-5" />
             )}
-            {muted ? t("muteOn") : t("muteOff")}
+            <span className="truncate">{muted ? t("muteOn") : t("muteOff")}</span>
           </Button>
           <Button
             variant="destructive"
             size="lg"
-            className="gap-2"
+            className="flex-1 gap-2 px-3 sm:flex-none sm:px-8"
             onClick={handleEnd}
             aria-label={t("end")}
           >
             <AudioLines className="h-5 w-5" />
-            {t("end")}
+            <span className="truncate">{t("end")}</span>
           </Button>
         </div>
       </footer>
@@ -178,7 +178,7 @@ function TranscriptBubble({ turn }: { turn: RealtimeTranscriptTurn }) {
     <div className={cn("flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "max-w-[80%] rounded-[8px] px-4 py-3 text-[16px] leading-[1.5] whitespace-pre-wrap",
+          "max-w-[90%] rounded-[8px] px-3 py-2.5 text-[15px] leading-[1.5] whitespace-pre-wrap break-words sm:max-w-[80%] sm:px-4 sm:py-3 sm:text-[16px]",
           isUser
             ? "bg-[var(--color-accent)] text-[var(--color-primary-foreground)]"
             : "bg-[var(--color-muted)] text-[var(--color-foreground)]",
@@ -188,7 +188,7 @@ function TranscriptBubble({ turn }: { turn: RealtimeTranscriptTurn }) {
         {turn.text || (turn.final ? "" : "…")}
       </div>
       {sources && sources.length > 0 && (
-        <div className="max-w-[80%]">
+        <div className="max-w-[90%] sm:max-w-[80%]">
           <SourceChips sources={sources} />
         </div>
       )}

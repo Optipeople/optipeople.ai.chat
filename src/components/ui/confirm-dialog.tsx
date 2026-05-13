@@ -82,7 +82,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:px-4"
         >
           <button
             type="button"
@@ -94,21 +94,21 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             className={cn(
               "dialog-panel relative w-full max-w-md rounded-[var(--radius-lg)]",
               "bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
-              "border border-[var(--color-hairline)] p-6",
+              "border border-[var(--color-hairline)] p-4 sm:p-6",
             )}
           >
             <h2
               id="confirm-dialog-title"
-              className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]"
+              className="break-words text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]"
             >
               {pending.opts.title}
             </h2>
             {pending.opts.description && (
-              <div className="mt-2 text-[14px] leading-relaxed text-[var(--color-muted-foreground)]">
+              <div className="mt-2 break-words text-[14px] leading-relaxed text-[var(--color-muted-foreground)]">
                 {pending.opts.description}
               </div>
             )}
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-5 flex flex-wrap justify-end gap-2 sm:mt-6">
               <button
                 ref={cancelRef}
                 type="button"

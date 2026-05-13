@@ -7,7 +7,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-full flex-col bg-[var(--color-background)]">
       <AppHeader />
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-3 py-5 sm:px-6 sm:py-10">
         <AdminGate>{children}</AdminGate>
       </main>
 

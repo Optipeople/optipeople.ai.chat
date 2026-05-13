@@ -59,6 +59,7 @@ import {
   useUploadQueue,
 } from "@/components/admin/uploadQueue";
 import { MachineEscalationCard } from "@/components/admin/MachineEscalationCard";
+import { McpStatusBadge } from "@/components/admin/McpStatusBadge";
 import { AutoOrganizeDialog } from "@/components/admin/AutoOrganizeDialog";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
@@ -165,7 +166,7 @@ export function MachineDetail({ machineId }: { machineId: string }) {
         (d) => d.status !== "ready" && d.status !== "failed",
       )}
     >
-      <div className="flex flex-col gap-8 pb-32">
+      <div className="flex flex-col gap-5 pb-24 sm:gap-8 sm:pb-32">
         <Link
           href="/admin/machines"
           className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
@@ -284,8 +285,8 @@ function MachineSummary({
   const chatHref = `/?account=${encodeURIComponent(machine.accountId)}&machine=${encodeURIComponent(machine.machineId)}`;
 
   return (
-    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
-      <div className="flex items-start justify-between gap-4">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">
           {editing ? (
             <div className="flex items-center gap-2">
@@ -302,8 +303,8 @@ function MachineSummary({
                 autoFocus
                 disabled={saving}
                 className={cn(
-                  "h-9 flex-1 rounded-[4px] border border-[var(--color-hairline)]",
-                  "bg-[var(--color-background)] px-3 text-[20px] font-semibold",
+                  "h-10 flex-1 min-w-0 rounded-[4px] border border-[var(--color-hairline)]",
+                  "bg-[var(--color-background)] px-3 text-[18px] font-semibold sm:text-[20px]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
                 )}
               />
@@ -331,16 +332,16 @@ function MachineSummary({
           ) : (
             <button
               onClick={() => setEditing(true)}
-              className="group flex items-center gap-2 text-left"
+              className="group flex w-full items-center gap-2 text-left"
             >
-              <h1 className="truncate text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
+              <h1 className="min-w-0 truncate text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
                 {machine.displayName ?? t("noName")}
               </h1>
-              <Pencil className="h-4 w-4 text-[var(--color-muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100" />
+              <Pencil className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100" />
             </button>
           )}
         </div>
-        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+        <div className="flex flex-wrap gap-2 sm:shrink-0 sm:flex-nowrap">
           <Link
             href={`/admin/machines/${machine.machineId}/conversations`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
@@ -387,7 +388,7 @@ function MachineSummary({
         <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>
       )}
       <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
             {t("machineName")}
             <span
@@ -398,9 +399,9 @@ function MachineSummary({
               <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
             </span>
           </dt>
-          <dd className="text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
+          <dd className="min-w-0 break-words text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
             {t("accountName")}
             <span
@@ -411,24 +412,55 @@ function MachineSummary({
               <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
             </span>
           </dt>
-          <dd className="text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
+          <dd className="min-w-0 break-words text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("machineIdLabel")}</dt>
-          <dd className="font-mono text-[var(--color-foreground)]">{machine.machineId}</dd>
+          <dd className="min-w-0 break-all font-mono text-[var(--color-foreground)]">{machine.machineId}</dd>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("accountIdLabel")}</dt>
-          <dd className="font-mono text-[var(--color-foreground)]">{machine.accountId}</dd>
+          <dd className="min-w-0 break-all font-mono text-[var(--color-foreground)]">{machine.accountId}</dd>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("documentsLabel")}</dt>
           <dd className="text-[var(--color-foreground)]">{machine.documents.length}</dd>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("updatedLabel")}</dt>
           <dd className="text-[var(--color-foreground)]">
             {DA_DATE.format(new Date(machine.updatedAt))}
+          </dd>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <dt className="text-[var(--color-muted-foreground)]">MCP</dt>
+          <dd className="flex min-w-0 flex-wrap items-center gap-2 text-[var(--color-foreground)]">
+            {machine.mcp ? (
+              <>
+                <McpStatusBadge status={machine.mcp.status} />
+                {machine.mcp.label ? (
+                  <span className="text-[var(--color-muted-foreground)]">
+                    {machine.mcp.label}
+                  </span>
+                ) : null}
+                <a
+                  href="/admin/mcp"
+                  className="text-[12px] text-[var(--color-muted-foreground)] underline hover:text-[var(--color-foreground)]"
+                >
+                  Manage
+                </a>
+              </>
+            ) : (
+              <>
+                <McpStatusBadge status="unconfigured" />
+                <a
+                  href="/admin/mcp"
+                  className="text-[12px] text-[var(--color-muted-foreground)] underline hover:text-[var(--color-foreground)]"
+                >
+                  Set up
+                </a>
+              </>
+            )}
           </dd>
         </div>
       </dl>
@@ -517,12 +549,12 @@ function MachineQrCard({
     : null;
 
   return (
-    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
-      <div className="flex items-start justify-between gap-4">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <QrCode className="h-5 w-5 text-[var(--color-foreground)]" />
-            <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
+            <QrCode className="h-5 w-5 shrink-0 text-[var(--color-foreground)]" />
+            <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
               {t("qrHeading")}
             </h2>
           </div>
@@ -531,7 +563,7 @@ function MachineQrCard({
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+        <div className="flex flex-wrap gap-2 sm:shrink-0 sm:flex-nowrap">
           {machine.qrToken && (
             <Link
               href={`/admin/machines/${machine.machineId}/qr`}
@@ -587,15 +619,15 @@ function MachineQrCard({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
               {tokenUrl ?? ""}
             </code>
             <button
               type="button"
               onClick={() => void copy()}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
+                "inline-flex shrink-0 items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
                 "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
                 "transition-colors hover:bg-[var(--color-muted)]",
               )}
@@ -671,7 +703,7 @@ function UploadCard({
   }
 
   return (
-    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6">
+    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
       <h2 className="text-[16px] font-semibold text-[var(--color-foreground)]">
         {t("uploadHeading")}
       </h2>
@@ -1015,7 +1047,7 @@ function DocumentsTree({
 
   return (
     <section className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
-      <div className="flex items-center justify-between gap-3 bg-[var(--color-muted)] px-4 py-2 text-[12px]">
+      <div className="flex flex-col gap-2 bg-[var(--color-muted)] px-3 py-2 text-[12px] sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
         <div className="flex items-center gap-3">
           <span className="font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
             {t("documents")}
@@ -1026,7 +1058,7 @@ function DocumentsTree({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {selected.size > 0 && (
             <>
               <button
@@ -1111,7 +1143,8 @@ function DocumentsTree({
           {t("emptyTree")}
         </div>
       ) : (
-        <div className="grid grid-cols-[auto_2fr_2fr_auto_auto_auto_auto_auto_auto]">
+        <div className="overflow-x-auto">
+        <div className="grid min-w-[860px] grid-cols-[auto_2fr_2fr_auto_auto_auto_auto_auto_auto]">
       <div className="col-span-full grid grid-cols-subgrid items-center gap-x-4 bg-[var(--color-muted)] px-4 py-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
         <input
           type="checkbox"
@@ -1184,6 +1217,7 @@ function DocumentsTree({
           onToggleSelected={toggleSelected}
         />
       ))}
+        </div>
         </div>
       )}
     </section>

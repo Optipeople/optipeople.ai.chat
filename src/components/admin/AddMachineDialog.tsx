@@ -138,15 +138,15 @@ export function AddMachineDialog({
       role="dialog"
       aria-modal="true"
       aria-label={t("dialogAria")}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-3 sm:px-4 sm:py-8"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}
     >
-      <div className="flex w-full max-w-lg flex-col gap-5 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 shadow-xl">
+      <div className="my-auto flex w-full max-w-lg flex-col gap-4 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-xl sm:gap-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]">
+          <div className="min-w-0">
+            <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
               {t("heading")}
             </h2>
             <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">

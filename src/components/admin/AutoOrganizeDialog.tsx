@@ -148,19 +148,19 @@ export function AutoOrganizeDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="auto-organize-title"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 py-8 sm:items-center"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-3 sm:items-center sm:px-4 sm:py-8"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="flex max-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--color-hairline)] px-6 py-5">
-          <div>
+      <div className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-2xl flex-col rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-xl sm:max-h-[calc(100vh-4rem)]">
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--color-hairline)] px-4 py-3 sm:gap-4 sm:px-6 sm:py-5">
+          <div className="min-w-0">
             <h2
               id="auto-organize-title"
-              className="flex items-center gap-2 text-[18px] font-semibold tracking-tight text-[var(--color-foreground)]"
+              className="flex items-center gap-2 text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]"
             >
-              <Sparkles className="h-4 w-4 text-[var(--color-brand)]" />
+              <Sparkles className="h-4 w-4 shrink-0 text-[var(--color-brand)]" />
               {t("heading")}
             </h2>
             <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
@@ -178,7 +178,7 @@ export function AutoOrganizeDialog({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           {phase === "loading" && (
             <div className="flex flex-col items-center justify-center gap-3 py-10 text-[14px] text-[var(--color-muted-foreground)]">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -211,7 +211,7 @@ export function AutoOrganizeDialog({
                   const noneChecked = checkedCount === 0;
                   return (
                     <section key={f.path}>
-                      <header className="mb-2 flex items-center gap-2">
+                      <header className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <Checkbox
                           checked={allChecked}
                           indeterminate={!allChecked && !noneChecked}
@@ -220,8 +220,8 @@ export function AutoOrganizeDialog({
                           }
                           disabled={busy}
                         />
-                        <Folder className="h-4 w-4 text-[var(--color-muted-foreground)]" />
-                        <span className="text-[14px] font-semibold text-[var(--color-foreground)]">
+                        <Folder className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                        <span className="min-w-0 break-words text-[14px] font-semibold text-[var(--color-foreground)]">
                           {f.path}
                         </span>
                         <span className="text-[12px] text-[var(--color-muted-foreground)]">

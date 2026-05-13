@@ -65,7 +65,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
   }, [machineId, page]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5 sm:gap-6">
       <Link
         href={`/admin/machines/${machineId}`}
         className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
@@ -75,10 +75,10 @@ export function ConversationsList({ machineId }: { machineId: string }) {
       </Link>
 
       <div>
-        <h1 className="text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]">
+        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
           {t("heading")}
         </h1>
-        <p className="mt-1 text-[14px] text-[var(--color-muted-foreground)]">
+        <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
           {t("description")}
         </p>
       </div>
@@ -97,7 +97,44 @@ export function ConversationsList({ machineId }: { machineId: string }) {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)]">
+          {/* Mobile cards */}
+          <div className="flex flex-col gap-2 sm:hidden">
+            {items.map((c) => {
+              const badge = resolutionBadge(c.resolution, t);
+              return (
+                <Link
+                  key={c.id}
+                  href={`/admin/machines/${machineId}/conversations/${c.id}`}
+                  className="flex items-start gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[14px] font-medium text-[var(--color-foreground)]">
+                        {c.userName ?? c.userEmail ?? "—"}
+                      </p>
+                      {badge && (
+                        <Tag variant={badge.variant} size="small">
+                          {badge.label}
+                        </Tag>
+                      )}
+                    </div>
+                    {c.userName && c.userEmail && (
+                      <p className="truncate text-[12px] text-[var(--color-muted-foreground)]">
+                        {c.userEmail}
+                      </p>
+                    )}
+                    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+                      <span className="tabular-nums">{DA_DT.format(new Date(c.startedAt))}</span>
+                      <span>{t("colMessages")}: <span className="tabular-nums text-[var(--color-foreground)]">{c.messageCount}</span></span>
+                    </div>
+                  </div>
+                  <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                </Link>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] sm:block">
             <table className="w-full text-[14px]">
               <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                 <tr>
