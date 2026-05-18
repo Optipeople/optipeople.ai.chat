@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "ingest": "tsx --env-file=.env.local scripts/ingest.ts"
+    "ingest": "tsx --env-file=.env.local scripts/ingest.ts",
+    "regenerate-suggestions": "tsx --env-file=.env.local scripts/regenerate-suggestions.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.0",
@@ -37,7 +38,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.5",
-    "supabase": "^2.98.2",
+    "supabase": "^2.99.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"

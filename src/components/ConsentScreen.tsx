@@ -1,0 +1,203 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { ExternalLink, Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { OptipeopleLogo } from "@/components/logo";
+import { UserMenu } from "@/components/UserMenu";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/auth/AuthContext";
+import { cn } from "@/lib/utils";
+
+export function ConsentScreen() {
+  const { acceptConsent } = useAuth();
+  const t = useTranslations("consent");
+  const tc = useTranslations("common");
+
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
+  const [acceptAnalytics, setAcceptAnalytics] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit = acceptTerms && acceptPrivacy && !submitting;
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await acceptConsent(acceptAnalytics);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : tc("unknownError"));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="relative flex h-full flex-col bg-[var(--color-background)]">
+      <header
+        className="relative z-20 shrink-0"
+        style={{ backgroundColor: "var(--color-brand)" }}
+      >
+        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-3 px-4 sm:h-16 sm:px-6">
+          <OptipeopleLogo
+            className="h-6 w-auto shrink-0 text-white sm:h-7"
+            aria-label="Optipeople"
+          />
+          <UserMenu />
+        </div>
+      </header>
+
+      <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
+        <form
+          onSubmit={handleSubmit}
+          className={cn(
+            "msg-in w-full max-w-xl rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-5 sm:p-8",
+            "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
+          )}
+        >
+          <h1 className="mb-2 text-[20px] font-semibold text-[var(--color-foreground)] sm:text-[22px]">
+            {t("heading")}
+          </h1>
+          <p className="mb-5 text-[14px] text-[var(--color-muted-foreground)] sm:mb-6 sm:text-[15px]">
+            {t("subtitle")}
+          </p>
+
+          <div className="flex flex-col gap-3">
+            <ConsentRow
+              id="consent-terms"
+              checked={acceptTerms}
+              onChange={setAcceptTerms}
+              disabled={submitting}
+              required
+              label={t("termsLabel")}
+              linkHref="/legal/terms"
+              linkLabel={t("termsLink")}
+              tc={tc}
+            />
+            <ConsentRow
+              id="consent-privacy"
+              checked={acceptPrivacy}
+              onChange={setAcceptPrivacy}
+              disabled={submitting}
+              required
+              label={t("privacyLabel")}
+              linkHref="/legal/privacy"
+              linkLabel={t("privacyLink")}
+              tc={tc}
+            />
+            <ConsentRow
+              id="consent-analytics"
+              checked={acceptAnalytics}
+              onChange={setAcceptAnalytics}
+              disabled={submitting}
+              required={false}
+              label={t("analyticsLabel")}
+              description={t("analyticsDescription")}
+            />
+          </div>
+
+          {error && (
+            <p className="mt-4 text-[14px] text-[#b00020]">{error}</p>
+          )}
+
+          <div className="mt-6 flex items-center justify-end gap-3">
+            <Button type="submit" disabled={!canSubmit}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                t("submit")
+              )}
+            </Button>
+          </div>
+
+          <p className="mt-6 text-[12px] leading-[1.55] text-[var(--color-muted-foreground)]">
+            {t("requiredHint")}
+          </p>
+        </form>
+      </div>
+
+      <div className="brand-stripe" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </div>
+    </div>
+  );
+}
+
+function ConsentRow({
+  id,
+  checked,
+  onChange,
+  disabled,
+  required,
+  label,
+  linkHref,
+  linkLabel,
+  description,
+  tc,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled: boolean;
+  required: boolean;
+  label: string;
+  linkHref?: string;
+  linkLabel?: string;
+  description?: string;
+  tc?: ReturnType<typeof useTranslations>;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 sm:p-4",
+        "transition-colors hover:border-[var(--color-brand)]/40",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+        className="mt-[2px] size-[16px] cursor-pointer accent-[var(--color-brand)]"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] leading-[1.5] text-[var(--color-foreground)] sm:text-[15px]">
+          {required && (
+            <span aria-hidden className="mr-1 text-[var(--color-brand)]">
+              *
+            </span>
+          )}
+          {label}
+        </p>
+        {linkHref && linkLabel && tc && (
+          <a
+            href={linkHref}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 inline-flex items-center gap-1 text-[13px] font-medium text-[var(--color-brand)] underline underline-offset-2 sm:text-[14px]"
+          >
+            {linkLabel}
+            <ExternalLink className="h-3 w-3" />
+            <span className="sr-only">
+              {tc("openInNewTab", { title: linkLabel })}
+            </span>
+          </a>
+        )}
+        {description && (
+          <p className="mt-1 text-[12.5px] leading-[1.55] text-[var(--color-muted-foreground)] sm:text-[13px]">
+            {description}
+          </p>
+        )}
+      </div>
+    </label>
+  );
+}

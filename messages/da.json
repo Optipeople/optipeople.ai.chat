@@ -50,6 +50,24 @@
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
   },
+  "consent": {
+    "heading": "Inden du fortsætter",
+    "subtitle": "OptiAssist leveres til din arbejdsgiver under en hovedaftale med Optipeople. Bekræft venligst, at du har læst de to korte dokumenter herunder.",
+    "termsLabel": "Jeg har læst og accepterer brugervilkårene.",
+    "termsLink": "Læs brugervilkårene",
+    "privacyLabel": "Jeg har læst privatlivspolitikken og forstår, hvordan mine oplysninger behandles.",
+    "privacyLink": "Læs privatlivspolitikken",
+    "analyticsLabel": "Jeg accepterer anonym produktanalyse (frivilligt).",
+    "analyticsDescription": "Hjælper Optipeople med at forbedre produktet. Du kan altid ændre valget. Påvirker ikke, hvad der logges af hensyn til audit.",
+    "submit": "Fortsæt",
+    "requiredHint": "* Påkrævet. Optipeople registrerer din accept mod din e-mail med henblik på audit.",
+    "qrBanner": {
+      "ariaLabel": "Information om vilkår og privatliv",
+      "title": "Ved brug af OptiAssist på denne maskine",
+      "body": "Du accepterer <terms>brugervilkårene</terms> og <privacy>privatlivspolitikken</privacy>. Din virksomhed har allerede underskrevet hovedaftalen med Optipeople.",
+      "acknowledge": "Forstået"
+    }
+  },
   "accountSelect": {
     "heading": "Vælg konto",
     "subtitle": "Du har adgang til flere konti. Vælg den du vil arbejde i.",

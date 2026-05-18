@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   ArrowUp,
   CheckCircle2,
@@ -24,8 +24,10 @@ import { FieldFrame } from "@/components/ui/field";
 import { Markdown } from "@/components/ui/markdown";
 import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
+import { ConsentScreen } from "@/components/ConsentScreen";
 import { AccountSelectScreen } from "@/components/AccountSelectScreen";
 import { MachineSelectScreen } from "@/components/MachineSelectScreen";
+import { QrConsentBanner } from "@/components/QrConsentBanner";
 import { KnowledgeDrawer } from "@/components/KnowledgeDrawer";
 import { SpeakButton } from "@/components/SpeakButton";
 import { VoiceConversation } from "@/components/VoiceConversation";
@@ -292,6 +294,7 @@ export default function Home() {
     accountsForbidden,
     currentMachine,
     machinesForbidden,
+    consentStatus,
   } = useAuth();
   useDeepLinkSelection();
 
@@ -307,7 +310,12 @@ export default function Home() {
     return <QrErrorScreen message={qrPhase.message} />;
   }
   if (qrPhase.kind === "active") {
-    return <ChatApp account={qrPhase.target.account} machine={qrPhase.target.machine} />;
+    return (
+      <>
+        <ChatApp account={qrPhase.target.account} machine={qrPhase.target.machine} />
+        <QrConsentBanner />
+      </>
+    );
   }
 
   if (isInitializing) {
@@ -319,6 +327,17 @@ export default function Home() {
   }
 
   if (!user) return <LoginScreen />;
+  // Block on mandatory consent before any app context loads. consentStatus
+  // starts as null while the fetch is in flight — show the spinner rather
+  // than risk flashing the account picker behind the gate.
+  if (!consentStatus) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
+        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+      </div>
+    );
+  }
+  if (consentStatus.needsConsent) return <ConsentScreen />;
   if (!currentAccount && !accountsForbidden) return <AccountSelectScreen />;
   // Operator-role users (accountsForbidden) have no account context and
   // therefore can't pick a machine either — skip straight to chat.
@@ -404,6 +423,7 @@ function ChatApp({
   machine: { id: string; name: string } | null;
 }) {
   const tChat = useTranslations("chat");
+  const locale = useLocale();
   // Shown when the machine's KB is empty (or the suggestions fetch fails).
   // Intentionally broad so they make sense even without manual content.
   const FALLBACK_QUESTIONS = [
@@ -422,15 +442,10 @@ function ChatApp({
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "hidden" });
   const [escalate, setEscalate] = useState<EscalateState>({ phase: "hidden" });
   // Pool of candidate starter questions for this machine, fetched once.
-  // `visibleSuggestions` is the 3 currently rendered as chips; the rotation
-  // effect below swaps one of them out every few seconds so the empty
-  // state feels alive without re-hitting the server.
+  // `visibleSuggestions` is the 3 currently rendered as chips, picked once
+  // per page load — no rotation.
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [visibleSuggestions, setVisibleSuggestions] = useState<string[]>([]);
-  // Bumped per-chip when that slot is swapped — used in the React key so
-  // the chip remounts and replays its entrance animation.
-  const [chipVersions, setChipVersions] = useState<number[]>([0, 0, 0]);
-  const visibleSuggestionsRef = useRef<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -503,7 +518,6 @@ function ChatApp({
     setEscalate({ phase: "hidden" });
     setSuggestions([]);
     setVisibleSuggestions([]);
-    setChipVersions([0, 0, 0]);
     setPendingAttachments((prev) => {
       for (const p of prev) URL.revokeObjectURL(p.previewUrl);
       return [];
@@ -512,31 +526,30 @@ function ChatApp({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [machine?.id]);
 
-  // Per-machine starter questions live on machine_kb and are regenerated
-  // on KB changes (ingest / reset / delete). We fetch the full candidate
-  // pool and immediately seed 3 visible chips out of it; the rotation
-  // effect further down swaps one chip at a time every few seconds.
-  // Falls back to FALLBACK_QUESTIONS below if the array comes back empty
-  // or the fetch fails.
+  // Per-machine starter questions live on machine_kb keyed by locale and
+  // are regenerated on KB changes (ingest / reset / delete). We fetch the
+  // pool for the current operator language and pick 3 visible chips out
+  // of it. Falls back to FALLBACK_QUESTIONS below if the array comes back
+  // empty or the fetch fails. Re-runs when locale changes so a profile
+  // language switch swaps the chips into the new language.
   useEffect(() => {
     const id = machine?.id;
     if (!id) return;
     let cancelled = false;
+    setSuggestions([]);
+    setVisibleSuggestions([]);
     (async () => {
       try {
         const res = await fetch(
-          `/api/machines/${encodeURIComponent(id)}/suggestions`,
+          `/api/machines/${encodeURIComponent(id)}/suggestions?lang=${encodeURIComponent(locale)}`,
         );
         if (!res.ok) return;
         const body = (await res.json()) as { suggestions?: string[] };
         if (cancelled) return;
         if (Array.isArray(body.suggestions) && body.suggestions.length > 0) {
           const pool = body.suggestions;
-          const initial = pickRandom(pool, 3);
           setSuggestions(pool);
-          setVisibleSuggestions(initial);
-          visibleSuggestionsRef.current = initial;
-          setChipVersions([0, 0, 0]);
+          setVisibleSuggestions(pickRandom(pool, 3));
         }
       } catch {
         // Swallow — UI already falls back to FALLBACK_QUESTIONS.
@@ -545,33 +558,9 @@ function ChatApp({
     return () => {
       cancelled = true;
     };
-  }, [machine?.id]);
+  }, [machine?.id, locale]);
 
   const isEmpty = messages.length === 0;
-
-  // Rotate one chip every ~9s while the empty state is on screen and
-  // there are unused questions in the pool. Skips entirely once the
-  // operator starts the conversation.
-  useEffect(() => {
-    if (!isEmpty) return;
-    if (suggestions.length <= 3) return;
-    const id = setInterval(() => {
-      const current = visibleSuggestionsRef.current;
-      const unused = suggestions.filter((q) => !current.includes(q));
-      if (unused.length === 0) return;
-      const next = [...current];
-      const pos = Math.floor(Math.random() * next.length);
-      next[pos] = unused[Math.floor(Math.random() * unused.length)];
-      visibleSuggestionsRef.current = next;
-      setVisibleSuggestions(next);
-      setChipVersions((v) => {
-        const nv = [...v];
-        nv[pos] = (v[pos] ?? 0) + 1;
-        return nv;
-      });
-    }, 9000);
-    return () => clearInterval(id);
-  }, [isEmpty, suggestions]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -1156,22 +1145,14 @@ function ChatApp({
                   ? visibleSuggestions
                   : FALLBACK_QUESTIONS
                 ).map((q, i) => {
-                  const v = chipVersions[i] ?? 0;
-                  // On initial mount each slot uses chip-in (staggered
-                  // entrance); after a rotation the slot remounts under a
-                  // new key and uses chip-swap (snappy, no stagger).
-                  const isSwap = v > 0;
                   return (
                     <Button
-                      key={`${i}-${v}-${q}`}
+                      key={`${i}-${q}`}
                       variant="secondary"
                       size="sm"
                       onClick={() => send(q)}
                       disabled={streaming}
-                      className={cn(
-                        "max-w-full rounded-full whitespace-normal text-left sm:text-[14px]",
-                        isSwap ? "chip-swap" : "chip-in",
-                      )}
+                      className="chip-in max-w-full rounded-full whitespace-normal text-left sm:text-[14px]"
                       style={{ ["--chip-index" as string]: i }}
                     >
                       {q}
@@ -1333,7 +1314,7 @@ function ChatApp({
                 disabled={inputLocked || voiceState !== "idle"}
                 className={cn(
                   "min-w-0 flex-1 resize-none overflow-hidden bg-transparent outline-none",
-                  "px-1.5 py-[8px] sm:px-2",
+                  "px-1.5 py-[7px] sm:px-2 sm:py-[5px]",
                   "font-['Hanken_Grotesk',sans-serif] font-normal",
                   "text-[16px] leading-[22px] sm:text-[19px] sm:leading-[26px]",
                   "text-[var(--ds-grey-dark-09)]",

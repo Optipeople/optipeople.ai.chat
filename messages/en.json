@@ -50,6 +50,24 @@
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
   },
+  "consent": {
+    "heading": "Before you continue",
+    "subtitle": "OptiAssist is provided to your employer under a master agreement with Optipeople. Please confirm you've read the two short documents below.",
+    "termsLabel": "I have read and accept the end-user terms of use.",
+    "termsLink": "Read the terms of use",
+    "privacyLabel": "I have read the privacy notice and understand how my data is processed.",
+    "privacyLink": "Read the privacy notice",
+    "analyticsLabel": "I agree to anonymous product analytics (optional).",
+    "analyticsDescription": "Helps Optipeople improve the product. You can change this at any time. Has no effect on what's logged for audit purposes.",
+    "submit": "Continue",
+    "requiredHint": "* Required. Optipeople records your acceptance against your email for audit purposes.",
+    "qrBanner": {
+      "ariaLabel": "Notice about terms and privacy",
+      "title": "By using OptiAssist on this machine",
+      "body": "You agree to the <terms>end-user terms of use</terms> and the <privacy>privacy notice</privacy>. Your factory has already signed the master agreement with Optipeople.",
+      "acknowledge": "I understand"
+    }
+  },
   "accountSelect": {
     "heading": "Choose account",
     "subtitle": "You have access to several accounts. Choose the one you want to work in.",

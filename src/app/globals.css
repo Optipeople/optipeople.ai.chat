@@ -256,13 +256,6 @@ a[data-button] {
   animation-delay: calc(500ms + var(--chip-index, 0) * 220ms);
 }
 
-/* Suggestion chip rotation — same fade/rise, but no stagger delay so a
-   swapped chip appears promptly instead of waiting for the initial
-   entrance offset. */
-.chip-swap {
-  animation: chip-in 500ms var(--ease-apple) both;
-}
-
 /* Send-button invite — gentle nudge when input has text waiting. */
 @keyframes send-nudge {
   0%, 100% { transform: translateX(0); }

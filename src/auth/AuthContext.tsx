@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 import { login as apiLogin } from "./authApi";
+import { fetchConsentStatus, postConsent } from "./consentApi";
+import type { ConsentStatus } from "@/lib/consent";
 import { getCurrentUser } from "./currentUserApi";
 import {
   AccountsForbiddenError,
@@ -72,6 +74,8 @@ export type AuthContextValue = {
   loginError: string | null;
   accountsError: string | null;
   machinesError: string | null;
+  consentStatus: ConsentStatus | null;
+  acceptConsent: (acceptAnalytics: boolean) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   selectAccount: (accountId: string) => void;
@@ -124,6 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [machinesError, setMachinesError] = useState<string | null>(null);
   const [accountsForbidden, setAccountsForbidden] = useState(false);
   const [machinesForbidden, setMachinesForbidden] = useState(false);
+  const [consentStatus, setConsentStatus] = useState<ConsentStatus | null>(
+    null,
+  );
 
   const logout = useCallback(() => {
     clearSession();
@@ -137,6 +144,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoginError(null);
     setAccountsError(null);
     setMachinesError(null);
+    setConsentStatus(null);
+  }, []);
+
+  // Best-effort load of the consent status. A failure here leaves the
+  // status null, which the gate treats as "still loading" and shows
+  // the spinner rather than letting the user past unilaterally.
+  const refreshConsent = useCallback(async () => {
+    try {
+      const status = await fetchConsentStatus();
+      if (status) setConsentStatus(status);
+    } catch {
+      // ignore — the gate will keep showing the spinner until next try
+    }
+  }, []);
+
+  const acceptConsent = useCallback(async (acceptAnalytics: boolean) => {
+    const status = await postConsent({
+      acceptTerms: true,
+      acceptPrivacy: true,
+      acceptAnalytics,
+    });
+    setConsentStatus(status);
   }, []);
 
   const reloadMachines = useCallback(async () => {
@@ -309,9 +338,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* eslint-enable react-hooks/set-state-in-effect */
       void reloadAccounts();
       void refreshRole();
+      void refreshConsent();
     }
     setIsInitializing(false);
-  }, [reloadAccounts, refreshRole]);
+  }, [reloadAccounts, refreshRole, refreshConsent]);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -330,7 +360,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // the app re-renders. Best-effort: if the lookup fails we leave
         // the existing cookie alone.
         void applyStoredLocale(resolvedEmail);
-        await Promise.all([reloadAccounts(), refreshRole()]);
+        await Promise.all([reloadAccounts(), refreshRole(), refreshConsent()]);
       } catch (err) {
         setLoginError(err instanceof Error ? err.message : "Login failed");
         throw err;
@@ -338,7 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoggingIn(false);
       }
     },
-    [reloadAccounts, refreshRole],
+    [reloadAccounts, refreshRole, refreshConsent],
   );
 
   const selectAccount = useCallback(
@@ -398,6 +428,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginError,
       accountsError,
       machinesError,
+      consentStatus,
+      acceptConsent,
       login,
       logout,
       selectAccount,
@@ -422,6 +454,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginError,
       accountsError,
       machinesError,
+      consentStatus,
+      acceptConsent,
       login,
       logout,
       selectAccount,
