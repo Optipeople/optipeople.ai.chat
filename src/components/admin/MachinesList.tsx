@@ -134,8 +134,6 @@ export function MachinesList() {
                 </div>
                 <a
                   href={`/?account=${encodeURIComponent(m.accountId)}&machine=${encodeURIComponent(m.machineId)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   title={t("openChatTitle")}
                   aria-label={t("openChatAria")}
@@ -186,8 +184,6 @@ export function MachinesList() {
                     <td className="px-4 py-3 text-right">
                       <a
                         href={`/?account=${encodeURIComponent(m.accountId)}&machine=${encodeURIComponent(m.machineId)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
                         title={t("openChatTitle")}
                         aria-label={t("openChatAria")}

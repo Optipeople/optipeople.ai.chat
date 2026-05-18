@@ -20,7 +20,8 @@
   },
   "metadata": {
     "title": "Opti Assist",
-    "description": "AI assistant for operators in the wood industry — fast answers from the machine's manuals."
+    "description": "AI assistant for factory floors — fast, grounded answers from your machines, manuals, and data.",
+    "siteName": "Opti Assist"
   },
   "userMenu": {
     "welcome": "Welcome, {name}",
@@ -50,6 +51,32 @@
     "forgotPassword": "forgotten my password",
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
+  },
+  "forgotPassword": {
+    "heading": "Reset your password",
+    "body": "Enter your account email. We'll send you a link to choose a new password.",
+    "emailPlaceholder": "Email",
+    "submit": "Send reset link",
+    "sentBody": "If an account exists for {email}, we've sent a reset link.",
+    "sentHint": "Check your inbox — and your spam folder, just in case. The link is valid for a limited time.",
+    "backToLogin": "Back to login",
+    "genericError": "Something went wrong. Try again."
+  },
+  "resetPassword": {
+    "heading": "Choose a new password",
+    "body": "Set a new password for {email}.",
+    "passwordPlaceholder": "New password",
+    "confirmPlaceholder": "Repeat new password",
+    "submit": "Save new password",
+    "doneBody": "Your password has been updated. You can now log in with the new password.",
+    "toLogin": "Go to login",
+    "backToLogin": "Back to login",
+    "linkInvalid": "This reset link isn't valid.",
+    "linkInvalidHint": "The link may have expired or already been used.",
+    "requestNew": "Request a new reset link",
+    "tooShort": "Password must be at least {min} characters.",
+    "mismatch": "The two passwords don't match.",
+    "genericError": "Something went wrong. Try again."
   },
   "legal": {
     "tableOfContents": "Contents"
@@ -182,7 +209,7 @@
     "closeAria": "Close",
     "drawerAria": "Knowledge base",
     "heading": "Documents",
-    "description": "Browse the documents your administrator has made available for this machine. Click a document to open it in a new tab.",
+    "description": "Manuals and documents for this machine. Click any item to open it.",
     "empty": "No documents available yet. Ask your administrator to make manuals visible here.",
     "retry": "Try again",
     "missingUrl": "Missing URL in response",

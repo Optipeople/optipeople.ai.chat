@@ -4,12 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   BookOpen,
-  ExternalLink,
+  ChevronRight,
   FileText,
   Folder,
   Image as ImageIcon,
   Loader2,
-  X,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
@@ -20,17 +21,37 @@ import type {
   OperatorDocumentsResponse,
 } from "@/app/api/machines/[id]/documents/route";
 
-// Right-edge handle + slide-out overlay listing the operator-visible
-// documents for the current machine. The list is grouped by folder; each
-// row opens the original PDF / image in a new tab via the existing
-// /api/documents/[id]/url endpoint, which respects both bearer and QR
-// auth modes.
+// Inline left sidebar listing operator-visible documents for the
+// current machine. Sits next to the chat column (not an overlay) and
+// defaults to open. Collapses to a thin rail with an open button.
+// Rows open the original PDF / image via the FileViewer, which respects
+// both bearer and QR auth modes.
+const MOBILE_MQ = "(max-width: 639px)";
+
 export function KnowledgeDrawer({ machineId }: { machineId: string }) {
   const t = useTranslations("knowledgeDrawer");
-  const [open, setOpen] = useState(false);
+  // Track viewport size so we can render an overlay drawer on small
+  // screens and an inline sidebar on >= sm. Lazy initializers read
+  // matchMedia on first client render so mobile users don't see the
+  // drawer expand and then snap closed.
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(MOBILE_MQ).matches;
+  });
+  const [open, setOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !window.matchMedia(MOBILE_MQ).matches;
+  });
   const [loading, setLoading] = useState(false);
   const [docs, setDocs] = useState<OperatorDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_MQ);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,158 +74,258 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
     }
   }, [machineId]);
 
-  // Lazy: only fetch when the drawer is first opened, and refetch on
-  // each reopen so newly-promoted documents show up without a page
-  // reload.
+  // Fetch when first opened, and refetch on each reopen so newly
+  // promoted documents show up without a page reload.
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
 
-  // Close on Escape.
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  return (
+  const docList = (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label={t("openAria")}
-        title={t("openTitle")}
-        className={cn(
-          "fixed right-0 top-1/2 z-20 -translate-y-1/2",
-          "flex h-20 w-7 items-center justify-center rounded-l-[6px]",
-          "border border-r-0 border-[var(--color-hairline)] bg-[var(--color-surface)]",
-          "text-[var(--color-muted-foreground)] shadow-[var(--shadow-sm)]",
-          "transition-all hover:w-8 hover:text-[var(--color-foreground)]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-        )}
-      >
-        <BookOpen className="h-4 w-4" />
-      </button>
-
-      {open && (
-        <DrawerOverlay
-          onClose={() => setOpen(false)}
-          loading={loading}
-          docs={docs}
-          error={error}
-          onRetry={() => void load()}
-        />
+      {loading && (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-white/70" />
+        </div>
+      )}
+      {!loading && error && (
+        <div className="mx-3 rounded-[4px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="mt-2 text-[13px] font-medium text-red-700 underline hover:text-red-800"
+          >
+            {t("retry")}
+          </button>
+        </div>
+      )}
+      {!loading && !error && docs && docs.length === 0 && (
+        <div className="px-4 py-8 text-center text-[15px] text-white/70 sm:px-6">
+          {t("empty")}
+        </div>
+      )}
+      {!loading && !error && docs && docs.length > 0 && (
+        <DocumentTree docs={docs} />
       )}
     </>
   );
-}
 
-function DrawerOverlay({
-  onClose,
-  loading,
-  docs,
-  error,
-  onRetry,
-}: {
-  onClose: () => void;
-  loading: boolean;
-  docs: OperatorDocument[] | null;
-  error: string | null;
-  onRetry: () => void;
-}) {
-  const t = useTranslations("knowledgeDrawer");
-  return (
-    <div className="fixed inset-0 z-30">
-      <div
-        className="absolute inset-0 bg-black/20 backdrop-blur-[1px]"
-        onClick={onClose}
-        aria-hidden
-      />
+  // Desktop (>= sm): single inline aside that animates its width
+  // between the 40px rail and the 288/320px panel. Two layered layouts
+  // cross-fade — the rail open button (top-left) when collapsed, and
+  // the full panel with the close button on the right when open.
+  if (!isMobile) {
+    return (
       <aside
-        role="dialog"
+        role="complementary"
         aria-label={t("drawerAria")}
         className={cn(
-          "absolute right-0 top-0 flex h-full w-full max-w-md flex-col",
-          "border-l border-[var(--color-hairline)] bg-[var(--color-background)]",
-          "shadow-[var(--shadow-md)]",
-          "drawer-in",
+          "relative h-full shrink-0 overflow-hidden",
+          "bg-[var(--color-brand)]",
+          "transition-[width] duration-[220ms] ease-out",
+          open ? "w-72 sm:w-80" : "w-[35px]",
         )}
       >
-        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-hairline)] px-4 py-3 sm:px-5 sm:py-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <BookOpen className="h-5 w-5 shrink-0 text-[var(--color-foreground)]" />
-            <h2 className="truncate text-[16px] font-semibold tracking-tight text-[var(--color-foreground)]">
-              {t("heading")}
-            </h2>
-          </div>
+        {/* Rail layout — visible when collapsed. */}
+        <div
+          className={cn(
+            "absolute left-0 top-0 flex w-[35px] flex-col items-center pt-5 transition-opacity",
+            open
+              ? "pointer-events-none opacity-0 duration-100"
+              : "opacity-100 duration-200 delay-100",
+          )}
+          aria-hidden={open}
+        >
           <button
             type="button"
-            onClick={onClose}
-            aria-label={t("closeAria")}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+            onClick={() => setOpen(true)}
+            aria-label={t("openAria")}
+            title={t("openTitle")}
+            tabIndex={open ? -1 : 0}
+            className={cn(
+              "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+              "hover:bg-white/10 hover:text-white",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+            )}
           >
-            <X className="h-5 w-5" />
+            <PanelLeftOpen className="h-5 w-5" />
           </button>
-        </header>
-        <p className="px-4 pt-3 text-[13px] text-[var(--color-muted-foreground)] sm:px-5">
-          {t("description")}
-        </p>
-        <div className="flex-1 overflow-y-auto px-2 py-3">
-          {loading && (
-            <div className="flex h-full items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+        </div>
+
+        {/* Open panel layout — fixed at full open width, clipped by the
+            outer overflow-hidden while collapsing. */}
+        <div
+          className={cn(
+            "absolute left-0 top-0 flex h-full w-72 flex-col sm:w-80 transition-opacity",
+            open
+              ? "opacity-100 duration-200 delay-100"
+              : "pointer-events-none opacity-0 duration-100",
+          )}
+          aria-hidden={!open}
+        >
+          <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 pt-5 pb-3 sm:px-6">
+            <div className="flex min-w-0 items-center gap-2">
+              <BookOpen className="h-5 w-5 shrink-0 text-white" />
+              <h2 className="truncate text-[17px] font-semibold tracking-tight text-white">
+                {t("heading")}
+              </h2>
             </div>
-          )}
-          {!loading && error && (
-            <div className="mx-3 rounded-[4px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
-              <p>{error}</p>
-              <button
-                type="button"
-                onClick={onRetry}
-                className="mt-2 text-[13px] font-medium text-red-700 underline hover:text-red-800"
-              >
-                {t("retry")}
-              </button>
-            </div>
-          )}
-          {!loading && !error && docs && docs.length === 0 && (
-            <div className="px-3 py-8 text-center text-[14px] text-[var(--color-muted-foreground)]">
-              {t("empty")}
-            </div>
-          )}
-          {!loading && !error && docs && docs.length > 0 && (
-            <DocumentTree docs={docs} />
-          )}
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label={t("closeAria")}
+              tabIndex={open ? 0 : -1}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
+            >
+              <PanelLeftClose className="h-5 w-5" />
+            </button>
+          </header>
+          <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
+            {t("description")}
+          </p>
+          <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
         </div>
       </aside>
-    </div>
+    );
+  }
+
+  // Mobile (< sm): always-inline 40px rail + always-mounted overlay
+  // that animates in/out (backdrop fade + panel slide-from-left). The
+  // chat content underneath is never pushed.
+  return (
+    <aside
+      aria-label={t("drawerAria")}
+      className={cn(
+        "flex h-full w-[42px] shrink-0 flex-col items-center pt-5",
+        "bg-[var(--color-brand)]",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={open ? t("closeAria") : t("openAria")}
+        aria-expanded={open}
+        title={open ? t("closeAria") : t("openTitle")}
+        className={cn(
+          "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+          "hover:bg-white/10 hover:text-white",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+        )}
+      >
+        {open ? (
+          <PanelLeftClose className="h-5 w-5" />
+        ) : (
+          <PanelLeftOpen className="h-5 w-5" />
+        )}
+      </button>
+      <div
+        className={cn(
+          "fixed inset-0 z-40",
+          open ? "pointer-events-auto" : "pointer-events-none",
+        )}
+        aria-hidden={!open}
+      >
+        <div
+          onClick={() => setOpen(false)}
+          aria-hidden
+          className={cn(
+            "absolute inset-0 bg-black/30 transition-opacity ease-out",
+            open ? "opacity-100 duration-200" : "opacity-0 duration-150",
+          )}
+        />
+        <div
+          role="dialog"
+          aria-label={t("drawerAria")}
+          aria-modal={open}
+          className={cn(
+            "absolute bottom-0 left-0 top-0 flex w-72 max-w-[85vw] flex-col",
+            "bg-[var(--color-brand)]",
+            "shadow-[var(--shadow-md)]",
+            "transition-transform duration-[220ms] ease-out",
+            open ? "translate-x-0" : "-translate-x-full",
+          )}
+        >
+          <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 pt-5 pb-3 sm:px-6">
+            <div className="flex min-w-0 items-center gap-2">
+              <BookOpen className="h-5 w-5 shrink-0 text-white" />
+              <h2 className="truncate text-[17px] font-semibold tracking-tight text-white">
+                {t("heading")}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label={t("closeAria")}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
+            >
+              <PanelLeftClose className="h-5 w-5" />
+            </button>
+          </header>
+          <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
+            {t("description")}
+          </p>
+          <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
+        </div>
+      </div>
+    </aside>
   );
 }
 
 function DocumentTree({ docs }: { docs: OperatorDocument[] }) {
   const groups = useMemo(() => groupByFolder(docs), [docs]);
+  // Folder open state — keyed by folder path. Defaults to closed; root
+  // (null) items are always shown.
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const toggle = (folder: string) =>
+    setOpenFolders((s) => ({ ...s, [folder]: !s[folder] }));
+
   return (
-    <div className="flex flex-col gap-3">
-      {groups.map((g) => (
-        <section key={g.folder ?? "__root__"} className="flex flex-col">
-          {g.folder && (
-            <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
-              <Folder className="h-3.5 w-3.5" />
-              <span>{g.folder}</span>
-            </div>
-          )}
-          <ul className="flex flex-col">
-            {g.docs.map((d) => (
-              <li key={d.id}>
-                <DocumentLink doc={d} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+    <div className="flex flex-col gap-1">
+      {groups.map((g) => {
+        const isRoot = g.folder === null;
+        const isOpen = isRoot || !!openFolders[g.folder!];
+        return (
+          <section key={g.folder ?? "__root__"} className="flex flex-col">
+            {!isRoot && (
+              <button
+                type="button"
+                onClick={() => toggle(g.folder!)}
+                aria-expanded={isOpen}
+                className={cn(
+                  "flex items-center justify-between gap-2 px-4 py-3 text-left text-[13px] font-medium uppercase tracking-wide text-white/70 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] sm:px-6",
+                  "hover:bg-white/5 hover:text-white",
+                  isOpen && "bg-white/5 text-white",
+                )}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Folder className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{g.folder}</span>
+                </span>
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 shrink-0 transition-transform duration-150",
+                    isOpen && "rotate-90",
+                  )}
+                />
+              </button>
+            )}
+            {isOpen && (
+              <ul
+                className={cn(
+                  "flex flex-col",
+                  !isRoot && "bg-black/15",
+                )}
+              >
+                {g.docs.map((d) => (
+                  <li key={d.id}>
+                    <DocumentLink doc={d} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -241,25 +362,24 @@ function DocumentLink({ doc }: { doc: OperatorDocument }) {
         viewer.open({ kind: "doc", id: doc.id, title: doc.title })
       }
       className={cn(
-        "group flex w-full items-start gap-2.5 rounded-[4px] px-3 py-2 text-left",
-        "transition-colors hover:bg-[var(--color-muted)]/60",
+        "group flex w-full items-start gap-2.5 rounded-[4px] px-4 py-3 pr-10 text-left sm:px-6 sm:pr-12",
+        "transition-colors hover:bg-white/10",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
       )}
     >
-      <span className="mt-0.5 shrink-0 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]">
-        <Icon className="h-4 w-4" />
+      <span className="mt-0.5 shrink-0 text-white/70 group-hover:text-white">
+        <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14px] font-medium text-[var(--color-foreground)]">
+        <span className="block truncate text-[16px] font-medium text-white">
           {doc.title}
         </span>
         {doc.summary && (
-          <span className="block truncate text-[12px] text-[var(--color-muted-foreground)]">
+          <span className="block truncate text-[13px] text-white/70">
             {doc.summary}
           </span>
         )}
       </span>
-      <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]/70 group-hover:text-[var(--color-foreground)]" />
     </button>
   );
 }

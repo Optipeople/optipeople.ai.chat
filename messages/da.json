@@ -20,7 +20,8 @@
   },
   "metadata": {
     "title": "Opti Assist",
-    "description": "AI-assistent for operatører i træindustrien — hurtige svar fra maskinens manualer."
+    "description": "AI-assistent til produktionen — hurtige, faktabaserede svar fra maskiner, manualer og data.",
+    "siteName": "Opti Assist"
   },
   "userMenu": {
     "welcome": "Velkommen, {name}",
@@ -50,6 +51,32 @@
     "forgotPassword": "glemt min adgangskode",
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
+  },
+  "forgotPassword": {
+    "heading": "Nulstil din adgangskode",
+    "body": "Indtast e-mailen til din konto. Vi sender dig et link til at vælge en ny adgangskode.",
+    "emailPlaceholder": "E-mail",
+    "submit": "Send nulstillingslink",
+    "sentBody": "Hvis der findes en konto for {email}, har vi sendt et nulstillingslink.",
+    "sentHint": "Tjek din indbakke — og spam-mappen for en sikkerheds skyld. Linket er gyldigt i begrænset tid.",
+    "backToLogin": "Tilbage til login",
+    "genericError": "Noget gik galt. Prøv igen."
+  },
+  "resetPassword": {
+    "heading": "Vælg en ny adgangskode",
+    "body": "Vælg en ny adgangskode for {email}.",
+    "passwordPlaceholder": "Ny adgangskode",
+    "confirmPlaceholder": "Gentag ny adgangskode",
+    "submit": "Gem ny adgangskode",
+    "doneBody": "Din adgangskode er opdateret. Du kan nu logge ind med den nye adgangskode.",
+    "toLogin": "Gå til login",
+    "backToLogin": "Tilbage til login",
+    "linkInvalid": "Dette nulstillingslink er ikke gyldigt.",
+    "linkInvalidHint": "Linket kan være udløbet eller allerede brugt.",
+    "requestNew": "Anmod om et nyt nulstillingslink",
+    "tooShort": "Adgangskoden skal være mindst {min} tegn.",
+    "mismatch": "De to adgangskoder er ikke ens.",
+    "genericError": "Noget gik galt. Prøv igen."
   },
   "legal": {
     "tableOfContents": "Indhold"
@@ -182,7 +209,7 @@
     "closeAria": "Luk",
     "drawerAria": "Vidensbase",
     "heading": "Dokumenter",
-    "description": "Gennemse de dokumenter din administrator har gjort tilgængelige for denne maskine. Klik på et dokument for at åbne det i en ny fane.",
+    "description": "Manualer og dokumenter for denne maskine. Klik på et element for at åbne det.",
     "empty": "Ingen dokumenter er tilgængelige endnu. Bed din administrator om at gøre manualer synlige her.",
     "retry": "Prøv igen",
     "missingUrl": "Manglende URL i svaret",

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -119,12 +120,12 @@ export function LoginScreen() {
           {t("help")}
           <br aria-hidden />
           {t("forgotPasswordPrefix")}
-          <button
-            type="button"
+          <Link
+            href="/forgot-password"
             className="text-[#134343] underline decoration-solid hover:opacity-70"
           >
             {t("forgotPassword")}
-          </button>
+          </Link>
           {t("forgotPasswordSuffix")}
         </p>
       </form>

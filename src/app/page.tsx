@@ -1280,9 +1280,17 @@ function ChatApp({
     (escalate.phase === "hidden" || escalate.phase === "error");
 
   return (
-    <div className="relative flex h-full flex-col bg-[var(--color-background)]">
+    <div className="flex h-full flex-col bg-[var(--color-background)]">
       <AppHeader />
 
+      <div className="flex min-h-0 flex-1 bg-[var(--color-brand)]">
+        {machine?.id ? <KnowledgeDrawer machineId={machine.id} /> : null}
+        <div
+          className={cn(
+            "relative flex min-w-0 flex-1 flex-col bg-[var(--color-background)]",
+            machine?.id && "overflow-hidden rounded-tl-[var(--radius)]",
+          )}
+        >
       <div ref={scrollRef} className="scroll-area flex-1 overflow-y-auto">
         {/* pb sized to clear the absolutely-positioned footer (24px fade
             + solid panel containing the input bar, optional "Afslut
@@ -1718,13 +1726,14 @@ function ChatApp({
           </div>
         </div>
         </div>
-        <div className="brand-stripe" aria-hidden>
-          <span />
-          <span />
-          <span />
-        </div>
       </footer>
-      {machine?.id ? <KnowledgeDrawer machineId={machine.id} /> : null}
+        </div>
+      </div>
+      <div className="brand-stripe" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </div>
       {voiceConvOpen && machine?.id && account?.id ? (
         <VoiceConversation
           machineId={machine.id}

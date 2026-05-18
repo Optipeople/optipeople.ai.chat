@@ -21,9 +21,28 @@ export const viewport: Viewport = {
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("metadata");
+  const locale = await getLocale();
+  const title = t("title");
+  const description = t("description");
+  const siteName = t("siteName");
+  const ogImage = "/optipeople-logo-icon.png";
   return {
-    title: t("title"),
-    description: t("description"),
+    title,
+    description,
+    openGraph: {
+      type: "website",
+      siteName,
+      title,
+      description,
+      locale,
+      images: [{ url: ogImage }],
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+      images: [ogImage],
+    },
   };
 }
 
