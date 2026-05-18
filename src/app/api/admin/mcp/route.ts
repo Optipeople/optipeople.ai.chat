@@ -26,7 +26,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_CLIENT_NAME = "OptiAI";
+const DEFAULT_CLIENT_NAME = "Opti Assist";
 const PREFERRED_SCOPE = "mcp:tools";
 
 async function gate(req: Request): Promise<Response | null> {

@@ -28,8 +28,6 @@ export function AccountSelectScreen() {
     return accounts.filter((a) => a.name.toLowerCase().includes(q));
   }, [accounts, query]);
 
-  const showSearch = accounts.length > 5;
-
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
       <header
@@ -48,8 +46,8 @@ export function AccountSelectScreen() {
       <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
         <div
           className={cn(
-            "msg-in w-full max-w-md rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-5 sm:p-8",
-            "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
+            "msg-in w-full max-w-md rounded-[4px] bg-[var(--color-surface)] p-5 sm:p-8",
+            "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
           )}
         >
           <h1 className="mb-1 text-[20px] font-semibold text-[var(--color-foreground)] sm:text-[22px]">
@@ -67,13 +65,12 @@ export function AccountSelectScreen() {
           )}
 
           {accountsError && (
-            <div className="mb-4 rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-muted)] p-4">
+            <div className="mb-4 rounded-[4px] border border-[var(--ds-grey-light-02)] bg-[var(--color-muted)] p-4">
               <p className="mb-3 text-[14px] text-[#b00020]">{accountsError}</p>
               <Button
                 type="button"
                 onClick={() => void reloadAccounts()}
                 disabled={isLoadingAccounts}
-                className="h-9 rounded-[var(--radius-sm)]"
               >
                 {isLoadingAccounts ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -101,34 +98,32 @@ export function AccountSelectScreen() {
 
           {accounts.length > 0 && (
             <>
-              {showSearch && (
-                <div
-                  className={cn(
-                    "mb-3 flex items-center gap-2 rounded-[var(--radius-sm)] px-3",
-                    "border border-[var(--color-input)] bg-[var(--color-surface)]",
-                    "focus-within:border-[var(--color-brand)]/40 focus-within:ring-2 focus-within:ring-[var(--color-ring)]",
-                  )}
-                >
-                  <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={t("search")}
-                    className="h-11 flex-1 bg-transparent text-[15px] text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-muted-foreground)]"
-                  />
-                  {query && (
-                    <button
-                      type="button"
-                      onClick={() => setQuery("")}
-                      aria-label={tc("clearSearch")}
-                      className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              )}
+              <div
+                className={cn(
+                  "mb-3 flex items-center gap-2 rounded-[4px] px-3",
+                  "border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)]",
+                  "focus-within:border-[var(--ds-grey-light-03)] focus-within:ring-2 focus-within:ring-[var(--ds-green-80)]",
+                )}
+              >
+                <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t("search")}
+                  className="h-11 flex-1 bg-transparent text-[15px] text-[var(--color-foreground)] outline-none placeholder:text-[var(--color-muted-foreground)]"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    aria-label={tc("clearSearch")}
+                    className="flex h-6 w-6 items-center justify-center rounded-[2px] text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
 
               {filtered.length === 0 ? (
                 <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
@@ -142,11 +137,11 @@ export function AccountSelectScreen() {
                         type="button"
                         onClick={() => selectAccount(account.id)}
                         className={cn(
-                          "group flex w-full items-center justify-between gap-3 rounded-[var(--radius-sm)] px-4 py-3 text-left",
-                          "border border-[var(--color-hairline)] bg-[var(--color-surface)]",
-                          "transition-[border-color,box-shadow,transform] duration-200 ease-[var(--ease-apple)]",
-                          "hover:-translate-y-[1px] hover:border-[var(--color-brand)]/40 hover:shadow-[var(--shadow-md)]",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+                          "group flex w-full items-center justify-between gap-3 rounded-[4px] px-4 py-3 text-left",
+                          "border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)]",
+                          "transition-[border-color,box-shadow] duration-150 ease-out",
+                          "hover:border-[var(--ds-grey-light-03)] hover:shadow-[var(--ds-shadow-button)]",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
                         )}
                       >
                         <div className="min-w-0">

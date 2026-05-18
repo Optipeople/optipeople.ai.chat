@@ -466,7 +466,7 @@ function AddMcpDialog({
   // /api/Account/GetAll call as AddMachineDialog.
   useEffect(() => {
     // Filter to accounts that have at least one machine onboarded into
-    // this OptiAI instance — same intersection the login picker uses
+    // this Opti Assist instance — same intersection the login picker uses
     // (AuthContext.reloadAccounts). Configuring MCP for accounts that
     // have no machines here would be wasted work since no chat session
     // would ever consume those credentials.

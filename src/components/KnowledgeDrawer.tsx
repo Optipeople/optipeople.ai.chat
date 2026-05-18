@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
+import { useFileViewer } from "@/components/FileViewer";
 import { cn } from "@/lib/utils";
 import type {
   OperatorDocument,
@@ -230,56 +231,23 @@ function groupByFolder(docs: OperatorDocument[]): {
 }
 
 function DocumentLink({ doc }: { doc: OperatorDocument }) {
-  const t = useTranslations("knowledgeDrawer");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function open() {
-    if (loading) return;
-    setError(null);
-    setLoading(true);
-    // Open the placeholder window synchronously inside the click handler
-    // so popup blockers count it as user-initiated.
-    const popup =
-      typeof window !== "undefined" ? window.open("", "_blank") : null;
-    try {
-      const res = await fetchWithAuth(
-        `/api/documents/${encodeURIComponent(doc.id)}/url`,
-      );
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const body = (await res.json()) as { url?: string };
-      if (!body.url) throw new Error(t("missingUrl"));
-      if (popup) popup.location.href = body.url;
-      else window.open(body.url, "_blank");
-    } catch (err) {
-      if (popup) popup.close();
-      setError(err instanceof Error ? err.message : t("openFailed"));
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  const viewer = useFileViewer();
   const Icon = doc.sourceType === "image" ? ImageIcon : FileText;
 
   return (
     <button
       type="button"
-      onClick={() => void open()}
-      disabled={loading}
+      onClick={() =>
+        viewer.open({ kind: "doc", id: doc.id, title: doc.title })
+      }
       className={cn(
         "group flex w-full items-start gap-2.5 rounded-[4px] px-3 py-2 text-left",
         "transition-colors hover:bg-[var(--color-muted)]/60",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-        "disabled:opacity-60",
-        error && "bg-red-50",
       )}
     >
       <span className="mt-0.5 shrink-0 text-[var(--color-muted-foreground)] group-hover:text-[var(--color-foreground)]">
-        {loading ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Icon className="h-4 w-4" />
-        )}
+        <Icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[14px] font-medium text-[var(--color-foreground)]">
@@ -289,9 +257,6 @@ function DocumentLink({ doc }: { doc: OperatorDocument }) {
           <span className="block truncate text-[12px] text-[var(--color-muted-foreground)]">
             {doc.summary}
           </span>
-        )}
-        {error && (
-          <span className="block text-[12px] text-red-700">{error}</span>
         )}
       </span>
       <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-muted-foreground)]/70 group-hover:text-[var(--color-foreground)]" />

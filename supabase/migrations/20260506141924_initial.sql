@@ -1,4 +1,4 @@
--- OptiAI Chat — initial schema
+-- Opti Assist Chat — initial schema
 -- Architecture: docs/architecture.md §3.2
 
 -- Extensions
@@ -111,7 +111,7 @@ create table escalations (
 );
 
 -- RLS: enable on every table. No policies = no access for anon/authenticated
--- roles. The service role (used by the OptiAI backend) bypasses RLS, which is
+-- roles. The service role (used by the Opti Assist backend) bypasses RLS, which is
 -- the security model for Phase 1: backend is the security boundary.
 alter table machine_kb    enable row level security;
 alter table kb_documents  enable row level security;

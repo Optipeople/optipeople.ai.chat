@@ -1,6 +1,6 @@
-# Optipeople portal data access from OptiAI
+# Optipeople portal data access from Opti Assist
 
-OptiAI surfaces machine data (stops, KPIs, telemetry, …) inside the
+Opti Assist surfaces machine data (stops, KPIs, telemetry, …) inside the
 chat by connecting to the **Optipeople MCP server** with a per-account
 OAuth client. Anthropic's MCP connector (`mcp_servers` on the beta
 Messages API) handles tool discovery and invocation; the chat route's
@@ -9,7 +9,7 @@ calling the model.
 
 ## Architecture in one paragraph
 
-Each Optipeople account that wants OptiAI to call its portal gets a
+Each Optipeople account that wants Opti Assist to call its portal gets a
 row in `account_mcp_config`. The row stores the MCP server URL, an
 OAuth `client_id` + `client_secret` we got from dynamic client
 registration (RFC 7591), and the long-lived `refresh_token` we got

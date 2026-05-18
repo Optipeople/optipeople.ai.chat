@@ -9,6 +9,10 @@ import type {
   BetaToolResultBlockParam as ToolResultBlockParam,
   BetaToolUseBlock as ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/beta/messages";
+import {
+  listEnabledAccountAiRules,
+  renderRulesSection,
+} from "@/lib/aiRules";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
 import {
   appendAssistantTurn,
@@ -56,28 +60,57 @@ function isTransientAnthropicError(err: unknown): boolean {
 // Map Anthropic SDK errors to translation keys for the user-facing
 // message. Anything we don't recognize falls through to a generic
 // "aiError" so we never leak raw JSON payloads to operators.
-function anthropicErrorKey(err: unknown): string {
-  if (err instanceof Anthropic.APIConnectionError) return "aiUnavailable";
+// "outage" / "overloaded" mean Anthropic itself is unhealthy — we link
+// to their status page so operators can see if it's a known incident.
+// "rate_limit" is our key's quota, not a global outage, so no link.
+type ErrorKind = "outage" | "overloaded" | "rate_limit" | "error";
+type ErrorI18nKey =
+  | "aiUnavailable"
+  | "aiOverloaded"
+  | "aiRateLimited"
+  | "aiError";
+
+const ANTHROPIC_STATUS_URL = "https://status.anthropic.com";
+
+function classifyAnthropicError(err: unknown): {
+  kind: ErrorKind;
+  i18nKey: ErrorI18nKey;
+  statusUrl?: string;
+} {
+  if (err instanceof Anthropic.APIConnectionError) {
+    return { kind: "outage", i18nKey: "aiUnavailable", statusUrl: ANTHROPIC_STATUS_URL };
+  }
   if (err instanceof Anthropic.APIError) {
     const status = err.status ?? 0;
     const type = (err as { error?: { error?: { type?: string } } }).error
       ?.error?.type;
-    if (type === "overloaded_error" || status === 529) return "aiOverloaded";
-    if (status === 429) return "aiRateLimited";
-    if (status >= 500 && status < 600) return "aiUnavailable";
+    if (type === "overloaded_error" || status === 529) {
+      return { kind: "overloaded", i18nKey: "aiOverloaded", statusUrl: ANTHROPIC_STATUS_URL };
+    }
+    if (status === 429) return { kind: "rate_limit", i18nKey: "aiRateLimited" };
+    if (status >= 500 && status < 600) {
+      return { kind: "outage", i18nKey: "aiUnavailable", statusUrl: ANTHROPIC_STATUS_URL };
+    }
   }
-  return "aiError";
+  return { kind: "error", i18nKey: "aiError" };
 }
 
-const SYSTEM_PREAMBLE = `You are OptiAI, an assistant for operators of wood-industry machines (CNC, nesting, drilling, etc.).
+const SYSTEM_PREAMBLE = `You are Opti Assist, an assistant for operators of industrial machines.
 
 Your job: help operators get fast, reliable answers from their machine manuals so they don't have to dig through hundreds of pages or wait hours for support. Use plain, everyday language — operators stand on the factory floor, not in an office. Keep technical terms, alarm codes, button names and menu items in the language they appear on the machine itself (e.g. **RESET**, **M06**, **Alarm 731**).
 
-Rules:
+Tool & formatting rules:
 - Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
+- Use the **list_documents** tool when the operator asks what manuals are available, asks for a link / the PDF / the file itself, asks "where do I find the manual", or wants to browse the knowledge base. The tool returns every operator-visible document for this machine; each one is then rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the operator you cannot share links — you can, by calling this tool.
 - Be brief and to the point. Operators are at the machine — they want the solution, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result.
+- Document hits from **search_kb** and **list_documents** appear automatically as clickable chips below your reply — the operator can tap them to open the PDF at the right page. The chips below are always there as a catalog; on top of that, you can **embed an inline clickable link** directly in your prose when it specifically helps the reader, using this exact form:
+  - \`[Operatørmanual](opti:doc/<document_id>)\` — opens the PDF in a new tab.
+  - \`[Operatørmanual, side 12](opti:doc/<document_id>?page=12)\` — opens at a specific page.
+  The \`<document_id>\` is the \`document_id\` value returned by **search_kb** or **list_documents**. NEVER invent IDs and NEVER paste raw https URLs — the platform's signed URLs expire after a few minutes; only the \`opti:doc/<id>\` form is stable.
+- When a **search_kb** result has \`is_image: true\` AND an \`asset_id\`, you can **embed the figure inline** in your reply using this exact form: \`![short alt text](opti:asset/<asset_id>)\`. Place it on its own line, ideally right where you reference the figure in the prose. The operator-side renderer fetches the actual image. Same rules as for documents: only use \`asset_id\` values from tool results, never invent them, never paste raw URLs. If you embed a figure inline you can skip mentioning it again — the chip rail below still renders the same thumbnail for navigation.
+- There is also a knowledge drawer (book icon on the right edge of the screen) where the operator can browse every manual for this machine on their own. You may mention it if they ask how to access the documents in general.
 - If the question is ambiguous, ask one clarifying question before searching or guessing.
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
 
@@ -118,11 +151,21 @@ const SEARCH_KB_TOOL: Tool = {
   },
 };
 
+const LIST_DOCUMENTS_TOOL: Tool = {
+  name: "list_documents",
+  description:
+    "List every operator-visible manual / document for this machine. Use when the operator asks what manuals are available, asks for links to the documents, or wants to browse the knowledge base. Each returned document is automatically rendered as a clickable chip under the assistant reply that opens the original PDF in a new tab — you do not need to paste URLs yourself.",
+  input_schema: {
+    type: "object",
+    properties: {},
+  },
+};
+
 // Our custom tools live here. Portal data is no longer a custom tool;
 // it now comes from the Optipeople MCP server, which Anthropic calls
 // directly via the `mcp_servers` connector when the chat's account
 // has authorized credentials. See docs/optipeople-data-access.md.
-const TOOLS: Tool[] = [SEARCH_KB_TOOL];
+const TOOLS: Tool[] = [SEARCH_KB_TOOL, LIST_DOCUMENTS_TOOL];
 
 // Client wire shape. User messages can include attachmentIds pointing at
 // rows in conversation_attachments — we re-sign each one per request so
@@ -239,16 +282,39 @@ type DocumentManifest = {
   page_count: number | null;
 };
 
-async function buildSystemPrompt(machineId: string): Promise<string> {
+async function buildSystemPrompt(
+  machineId: string,
+  accountId: string,
+  hasMcp: boolean,
+): Promise<string> {
   const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("kb_documents")
-    .select("id, title, summary, page_count")
-    .eq("machine_id", machineId)
-    .eq("status", "ready")
-    .order("title", { ascending: true });
-  if (error) throw error;
-  const docs = (data ?? []) as DocumentManifest[];
+  // Parallel: doc manifest (per-machine) + machine identity + account-
+  // level AI rules. All three are needed before the system prompt can
+  // be assembled.
+  const [docsRes, machineRes, adminRules] = await Promise.all([
+    supabase
+      .from("kb_documents")
+      .select("id, title, summary, page_count")
+      .eq("machine_id", machineId)
+      .eq("status", "ready")
+      .order("title", { ascending: true }),
+    supabase
+      .from("machine_kb")
+      .select("display_name")
+      .eq("machine_id", machineId)
+      .maybeSingle(),
+    listEnabledAccountAiRules(accountId).catch((err) => {
+      // Rules are a "soft" enhancement — if the lookup fails, the
+      // locked rule still gets rendered below, so chat keeps working.
+      console.error("buildSystemPrompt: listEnabledAccountAiRules failed:", err);
+      return [] as Awaited<ReturnType<typeof listEnabledAccountAiRules>>;
+    }),
+  ]);
+  if (docsRes.error) throw docsRes.error;
+  const docs = (docsRes.data ?? []) as DocumentManifest[];
+  const displayName =
+    (machineRes.data as { display_name: string | null } | null)?.display_name ??
+    null;
 
   const manifest =
     docs.length === 0
@@ -260,7 +326,37 @@ async function buildSystemPrompt(machineId: string): Promise<string> {
           )
           .join("\n");
 
-  return `${SYSTEM_PREAMBLE}
+  // Machine identity block. Tells the model "this whole conversation is
+  // about ONE specific machine" so it doesn't fall back to account-wide
+  // MCP tools when the operator asks a generic question like "what
+  // errors happened today" — the answer is implicitly "on this machine".
+  const machineIdentity = `Active machine for this conversation:
+- machine_id: ${machineId}
+- display_name: ${displayName ?? "(unnamed)"}
+
+Every question the operator asks is about THIS machine unless they explicitly name a different one. Never list other machines or ask the operator which machine they mean — there is only one in scope.`;
+
+  // Only emit MCP guidance when the account actually has MCP connected;
+  // otherwise the model would be told about tools it can't see.
+  const mcpGuidance = hasMcp
+    ? `
+
+Optipeople MCP rules (machine-scoped data — uptime, stops, KPIs, telemetry):
+- ALWAYS pass machine_id="${machineId}" to any MCP tool that accepts it (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_stops_concluesion_statistic, get_time_distribution_statistic, get_total_uptime_by_date, get_total_working_hours_by_date, get_part_counter_log, get_telemetry_data, get_kpi_report_by_date, etc.). Do NOT call the account-wide variants (e.g. get_machines_basic_info, get_factories_data) for operator questions — they return data for other machines the operator doesn't care about.
+- If you genuinely need to resolve a name to an id, use the machine_id above directly; do NOT call get_machine_id or get_machines_basic_info just to find it.
+- When the operator asks something open-ended like "what's been going on today" or "any errors", scope the query to machine_id="${machineId}" and today's date. Never ask the operator which machine they mean.`
+    : "";
+
+  // Inviolable rules go first so they take primacy over anything that
+  // follows. The locked system rule is always rule #1; admin rules are
+  // appended below it.
+  const rulesSection = renderRulesSection(adminRules);
+
+  return `${rulesSection}
+
+${SYSTEM_PREAMBLE}
+${machineIdentity}${mcpGuidance}
+
 Available documents for this machine (use search_kb to find content):
 ${manifest}
 `;
@@ -452,17 +548,89 @@ async function executeSearchKb(
           page_to: r.page_to,
           score: r.rrf_score,
           text: r.text,
-          // The model uses these two fields to spot image hits — it can
-          // then mention the figure in prose ("se figur s. 12") and the
-          // operator-side UI renders the actual thumbnail.
+          // The model uses these three fields to spot image hits and
+          // optionally embed the figure inline in its reply via
+          // ![alt](opti:asset/<asset_id>). When it doesn't embed inline,
+          // the operator-side UI still renders the thumbnail below.
           is_image: !!asset,
           image_alt: asset?.alt_text ?? null,
+          asset_id: assetId ?? null,
         };
       }),
     },
     chunkIds: rows.map((r) => r.chunk_id),
     documents: Array.from(hitsByDoc.values()),
     images: imageHits,
+  };
+}
+
+// Returns every operator-visible, ready document for this machine, and
+// folds each one into the docHits stream so the operator sees clickable
+// source chips under the model's reply. Used when the operator asks
+// "what manuals do you have" / "give me the link to the manual" — the
+// model has no other way to surface a manual that wasn't matched by a
+// content search.
+async function executeListDocuments(
+  machineId: string,
+): Promise<ToolExecResult> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_documents")
+    .select("id, title, summary, folder_path, source_type, page_count")
+    .eq("machine_id", machineId)
+    .eq("operator_visible", true)
+    .eq("status", "ready")
+    .order("folder_path", { ascending: true, nullsFirst: true })
+    .order("title", { ascending: true });
+
+  if (error) {
+    console.error("list_documents query failed:", error);
+    return {
+      modelPayload: { error: error.message },
+      chunkIds: [],
+      documents: [],
+      images: [],
+    };
+  }
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    title: string;
+    summary: string;
+    folder_path: string | null;
+    source_type: string;
+    page_count: number | null;
+  }>;
+
+  // Synthetic high score so list_documents hits sort above per-chunk
+  // search_kb hits in the chip rail when both fire in the same turn.
+  // (search_kb rrf_score is typically << 1.)
+  const SYNTHETIC_SCORE = 1000;
+  const documents: DocHit[] = rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    pageFrom: null,
+    score: SYNTHETIC_SCORE,
+  }));
+
+  return {
+    modelPayload: {
+      results: rows.map((r) => ({
+        document_id: r.id,
+        title: r.title,
+        summary: r.summary,
+        folder_path: r.folder_path,
+        source_type: r.source_type,
+        page_count: r.page_count,
+      })),
+      note:
+        rows.length === 0
+          ? "No operator-visible documents are available for this machine."
+          : "Each result is rendered as a clickable chip below your reply that opens the original PDF in a new tab. Reference the titles in prose if helpful; do not paste URLs.",
+    },
+    chunkIds: [],
+    documents,
+    images: [],
   };
 }
 
@@ -473,6 +641,9 @@ async function executeTool(
 ): Promise<ToolExecResult> {
   if (name === "search_kb") {
     return executeSearchKb(machineId, input as Record<string, unknown>);
+  }
+  if (name === "list_documents") {
+    return executeListDocuments(machineId);
   }
   return {
     modelPayload: { error: `Unknown tool: ${name}` },
@@ -615,7 +786,11 @@ export async function POST(req: Request) {
       }
 
       try {
-        const systemPrompt = await buildSystemPrompt(resolvedMachineId);
+        const systemPrompt = await buildSystemPrompt(
+          resolvedMachineId,
+          resolvedAccountId,
+          !!mcpAccess,
+        );
 
         // Conversation lifecycle: client sends conversationId on
         // follow-ups; we validate it. Otherwise we create a fresh row
@@ -749,25 +924,32 @@ export async function POST(req: Request) {
               streamed = true;
               send("delta", { text: delta });
             });
-            // Emit tool_use events progressively as each content block
-            // finalizes, rather than only after the whole assistant
-            // turn completes. Covers both our custom tools (search_kb,
-            // type "tool_use") and Anthropic-handled MCP tools (type
-            // "mcp_tool_use"). MCP results stream back too — we mirror
-            // them as tool_result events so the UI can collapse the
-            // "Fetching machine data…" indicator and optionally show
-            // a summary.
-            s.on("contentBlock", (block) => {
+            // Emit tool_use the moment the content block opens — before
+            // input JSON streams in and (crucially) before MCP execution
+            // completes. The client uses this to start an elapsed timer,
+            // so the operator sees motion immediately instead of staring
+            // at a frozen label for tens of seconds. `id` lets the client
+            // pair the eventual mcp_tool_result with the right step.
+            s.on("streamEvent", (event) => {
+              if (event.type !== "content_block_start") return;
+              const block = event.content_block;
               if (block.type === "tool_use") {
-                send("tool_use", { name: block.name, input: block.input });
+                send("tool_use", { id: block.id, name: block.name });
               } else if (block.type === "mcp_tool_use") {
                 send("tool_use", {
+                  id: block.id,
                   name: block.name,
-                  input: block.input,
                   serverName: block.server_name,
                   source: "mcp" as const,
                 });
-              } else if (block.type === "mcp_tool_result") {
+              }
+            });
+            // MCP results arrive as their own finalized block. We mirror
+            // them as tool_result events so the UI can mark the matching
+            // step complete and surface an error icon if Anthropic
+            // reported one.
+            s.on("contentBlock", (block) => {
+              if (block.type === "mcp_tool_result") {
                 send("tool_result", {
                   toolUseId: block.tool_use_id,
                   isError: block.is_error ?? false,
@@ -929,16 +1111,26 @@ export async function POST(req: Request) {
       } catch (err) {
         console.error("Chat error:", err);
         // For Anthropic API errors, surface a clean translated message
+        // (and a status-page link when it points at an upstream outage)
         // rather than leaking the raw JSON payload to the operator.
         const isAnthropic =
           err instanceof Anthropic.APIError ||
           err instanceof Anthropic.APIConnectionError;
-        const message = isAnthropic
-          ? t(anthropicErrorKey(err) as never)
-          : err instanceof Error
-            ? err.message
-            : "Unknown error";
-        send("error", { message });
+        if (isAnthropic) {
+          const c = classifyAnthropicError(err);
+          send("error", {
+            kind: c.kind,
+            title: t(`${c.i18nKey}Title` as never),
+            message: t(c.i18nKey as never),
+            statusUrl: c.statusUrl,
+          });
+        } else {
+          send("error", {
+            kind: "error" as const,
+            title: t("aiErrorTitle" as never),
+            message: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
         controller.close();
       }
     },

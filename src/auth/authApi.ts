@@ -89,7 +89,7 @@ function withQrHeader(init: RequestInit, token: string): RequestInit {
 // Concurrent callers share a single in-flight refresh, so a token that's
 // expired at app-load doesn't trigger N parallel refreshes.
 //
-// In QR-session mode (sessionStorage holds an OptiAI QR token), the
+// In QR-session mode (sessionStorage holds an Opti Assist QR token), the
 // request is signed with X-QR-Token instead of an Optipeople bearer.
 // Server-side, the operator endpoints accept either path. This way
 // chat / feedback / source-link calls work uniformly across both

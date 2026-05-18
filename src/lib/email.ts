@@ -34,7 +34,7 @@ function getFrom(): string {
   // address; that one only works because Resend allows it without
   // domain verification, but it'll trigger spam filters — set
   // RESEND_FROM to a verified-domain address in real environments.
-  return process.env.RESEND_FROM ?? "OptiAI <onboarding@resend.dev>";
+  return process.env.RESEND_FROM ?? "Opti Assist <onboarding@resend.dev>";
 }
 
 export type SendEmailInput = {

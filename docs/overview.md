@@ -1,8 +1,8 @@
-# OptiAI Chat — Overview
+# Opti Assist Chat — Overview
 
 ## What this is
 
-OptiAI Chat is an extension to the **Optipeople** platform, our MES / digital
+Opti Assist Chat is an extension to the **Optipeople** platform, our MES / digital
 operations platform for factories. Where Optipeople covers the broader
 production, people, and operations layer of a factory, this app focuses
 specifically on giving **machine operators on the shop floor** an AI assistant
@@ -24,7 +24,7 @@ best equipped to interpret a dense service manual under pressure.
 
 ## What the app does
 
-OptiAI Chat gives the operator a single place to ask: a chat interface they
+Opti Assist Chat gives the operator a single place to ask: a chat interface they
 can open right at the machine. Behind the chat sits:
 
 1. **A per-machine knowledge base** — manuals, technical drawings,
@@ -43,7 +43,7 @@ have to become a documentation archaeologist, to get back into production.
 ## Why it fits inside Optipeople
 
 Optipeople already knows which operator is at which machine, what is being
-produced, and what the operational context looks like. OptiAI Chat plugs into
+produced, and what the operational context looks like. Opti Assist Chat plugs into
 that: the assistant isn't a generic chatbot — it knows *which* machine the
 operator is standing in front of, and scopes its answers and its knowledge
 base accordingly.

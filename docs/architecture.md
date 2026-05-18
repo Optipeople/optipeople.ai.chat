@@ -1,4 +1,4 @@
-# OptiAI Chat — Product Architecture & Roadmap
+# Opti Assist Chat — Product Architecture & Roadmap
 
 This document turns the current MVP into a real product. It defines the
 target architecture, the data model, the backends we need to build, and
@@ -54,7 +54,7 @@ That is what we are fixing.
                                              │ OAuth2 (bearer)
                                              ▼
  ┌────────────────────────┐    ┌──────────────────────────────┐    ┌─────────────────────┐
- │  Operator client (PWA) │◄──►│        OptiAI backend        │◄──►│  Anthropic API      │
+ │  Operator client (PWA) │◄──►│        Opti Assist backend        │◄──►│  Anthropic API      │
  │  - chat                │    │  (Node/Express, evolves into │    │  Haiku 4.5 / Sonnet │
  │  - QR entry            │    │   a small service)           │    │  + prompt caching   │
  │  - escalation button   │    │                              │    └─────────────────────┘
@@ -220,7 +220,7 @@ system prompt and a set of tools, and pulls what it needs.
 **System prompt (cached, ~stable per machine)**
 
 ```
-- Persona: OptiAI, dansk, kort og præcis…  (the existing preamble)
+- Persona: Opti Assist, dansk, kort og præcis…  (the existing preamble)
 - Safety rules
 - Tool schemas (below)
 - Per-machine manifest: list of {document_id, title, summary, page_count}
@@ -270,7 +270,7 @@ the manifest, and never reads chunk bodies.
 ## 4. Roles and authorization
 
 We can lean on Optipeople for identity but we still need our own role
-table or claim mapping for OptiAI-specific permissions:
+table or claim mapping for Opti Assist-specific permissions:
 
 | Role | Can do |
 |---|---|

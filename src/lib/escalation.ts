@@ -101,7 +101,7 @@ export async function sendEscalationWebhook(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "OptiAI-Webhook/1",
+        "User-Agent": "OptiAssist-Webhook/1",
       },
       body: JSON.stringify(payload),
       signal: controller.signal,

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getLocale } from "next-intl/server";
+import { LegalDocLayout } from "@/components/LegalDocLayout";
 import { LocaleToggle } from "@/components/LocaleToggle";
 import { Markdown } from "@/components/ui/markdown";
 import { OptipeopleLogo } from "@/components/logo";
@@ -29,7 +30,7 @@ export default async function LegalDocPage({
         className="relative z-20 shrink-0"
         style={{ backgroundColor: "var(--color-brand)" }}
       >
-        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-3 px-4 sm:h-16 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:h-16 sm:px-6">
           <OptipeopleLogo
             className="h-6 w-auto shrink-0 text-white sm:h-7"
             aria-label="Optipeople"
@@ -38,17 +39,22 @@ export default async function LegalDocPage({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
-        <article
-          className={cn(
-            "msg-in rounded-[4px] bg-[var(--color-surface)] p-6 sm:p-10",
-            "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
-          )}
-        >
-          <Markdown className="text-[15px] leading-[1.65] sm:text-[16px] sm:leading-[1.7]">
-            {content.body}
-          </Markdown>
-        </article>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
+        <LegalDocLayout toc={content.toc}>
+          <article
+            className={cn(
+              "msg-in rounded-[4px] bg-[var(--color-surface)] p-6 sm:p-10",
+              "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
+            )}
+          >
+            <Markdown
+              withHeadingIds
+              className="text-[15px] leading-[1.65] sm:text-[16px] sm:leading-[1.7]"
+            >
+              {content.body}
+            </Markdown>
+          </article>
+        </LegalDocLayout>
       </main>
 
       <div className="brand-stripe" aria-hidden>

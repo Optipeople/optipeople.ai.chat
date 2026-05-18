@@ -255,7 +255,7 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-        OptiAI · {time}
+        Opti Assist · {time}
         {message.tokensIn != null && message.tokensOut != null && (
           <span className="ml-1 normal-case">
             {" "}

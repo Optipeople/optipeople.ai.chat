@@ -19,7 +19,7 @@
     "openInNewTab": "Open {title} in a new tab"
   },
   "metadata": {
-    "title": "OptiAI",
+    "title": "Opti Assist",
     "description": "AI assistant for operators in the wood industry — fast answers from the machine's manuals."
   },
   "userMenu": {
@@ -29,6 +29,7 @@
     "account": "Account",
     "machine": "Machine",
     "admin": "Admin",
+    "aiRules": "AI rules",
     "switchAccount": "Switch account",
     "switchMachine": "Switch machine",
     "language": "Language",
@@ -49,6 +50,9 @@
     "forgotPassword": "forgotten my password",
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
+  },
+  "legal": {
+    "tableOfContents": "Contents"
   },
   "consent": {
     "heading": "Before you continue",
@@ -92,23 +96,63 @@
   },
   "chat": {
     "emptyPrompt": "Ask about installation, maintenance, tool changes, alarms, or anything from your machine's manual.",
+    "disclaimerTitle": "I can make mistakes.",
+    "disclaimerBody": "Always check the manual or ask a colleague before doing anything on the machine.",
+    "disclaimerLink": "Read the terms of use",
     "working": "Working…",
     "toolSearching": "Searching the manuals…",
+    "toolListing": "Listing manuals…",
     "toolFetchingMachineData": "Fetching machine data…",
     "toolRunning": "Running",
+    "toolLabels": {
+      "get_account_information": "Fetching account information…",
+      "get_factories_data": "Fetching factory data…",
+      "get_kpi_per_day_report_by_date": "Fetching daily KPI report…",
+      "get_kpi_report_by_date": "Fetching KPI report…",
+      "get_machine_basic_info": "Fetching machine details…",
+      "get_machine_id": "Looking up machine ID…",
+      "get_machines_basic_info": "Fetching machine list…",
+      "get_part_counter_log": "Fetching part counter log…",
+      "get_shifts_info": "Fetching shift schedule…",
+      "get_stop_group_by_day_statistic": "Fetching daily stop statistics…",
+      "get_stop_per_week_statistic": "Fetching weekly stop statistics…",
+      "get_stops_concluesion_statistic": "Fetching stop reasons…",
+      "get_system_context": "Fetching system context…",
+      "get_telemetry_configurations": "Fetching telemetry configuration…",
+      "get_telemetry_data": "Fetching telemetry…",
+      "get_time_distribution_per_day_statistic": "Fetching daily time distribution…",
+      "get_time_distribution_statistic": "Fetching time distribution…",
+      "get_total_uptime_by_date": "Fetching total uptime…",
+      "get_total_uptime_per_day_by_date": "Fetching daily uptime…",
+      "get_total_working_hours_by_date": "Fetching working hours…",
+      "get_total_working_hours_per_day_by_date": "Fetching daily working hours…"
+    },
     "errorPrefix": "Error: {message}",
+    "errorCheckStatus": "Check Anthropic status",
+    "errorTryAgain": "Try again",
+    "errorConnectionTitle": "Connection problem",
     "send": "Send",
+    "stop": "Stop",
+    "stopAria": "Stop generating",
+    "copy": "Copy",
+    "copied": "Copied",
+    "regenerate": "Regenerate",
+    "newChat": "New chat",
+    "newChatAria": "Start a new chat",
+    "jumpToLatest": "Jump to latest",
+    "showSuggestions": "Show starter questions",
+    "hideSuggestions": "Hide starter questions",
     "callService": "Call service",
-    "endConversation": "End conversation",
+    "endConversation": "End chat",
     "inputPlaceholder": "Write your question here…",
-    "endedPlaceholder": "Conversation ended. Start a new one above.",
+    "endedPlaceholder": "Chat ended. Start a new one above.",
     "recordingPlaceholder": "Recording… press stop when done.",
     "transcribingPlaceholder": "Transcribing…",
     "voiceLabels": {
       "stopRecording": "Stop recording",
       "transcribing": "Transcribing",
-      "recordVoice": "Record voice",
-      "startConversation": "Start conversation"
+      "recordVoice": "Dictate text",
+      "startConversation": "Voice conversation"
     },
     "sources": "Sources",
     "openDocFailed": "Could not open document",
@@ -122,8 +166,15 @@
       "addAria": "Attach image",
       "tooMany": "You can attach up to {max} images per message.",
       "unsupported": "Unsupported file. Use PNG, JPEG or WebP under 10 MB.",
-      "failed": "Upload failed"
+      "failed": "Upload failed",
+      "dropHere": "Drop image to attach"
     }
+  },
+  "viewer": {
+    "openInNewTab": "Open in new tab",
+    "openFailed": "Could not open file",
+    "missingUrl": "Missing URL in response",
+    "cannotPreview": "This file type can't be previewed."
   },
   "knowledgeDrawer": {
     "openAria": "Open knowledge base",
@@ -146,7 +197,7 @@
     "thanksTitle": "Thanks for your feedback.",
     "thanksResolved": "Marked as resolved. This helps the next operator with the same issue.",
     "thanksUnresolved": "Marked as unresolved. We'll look into it.",
-    "startNew": "Start new conversation",
+    "startNew": "Start new chat",
     "errorTitle": "Could not save feedback",
     "solutionLabel": "What worked? (optional — will be shared with the next operator)",
     "solutionPlaceholder": "E.g. The RESET button + restart the controller after reading the alarm code.",
@@ -154,13 +205,13 @@
     "submit": "Send"
   },
   "voice": {
-    "dialogLabel": "Voice conversation with OptiAI",
+    "dialogLabel": "Voice conversation with Opti Assist",
     "heading": "Voice conversation",
     "end": "End",
     "muteOn": "Turn microphone on",
     "muteOff": "Turn microphone off",
     "sayPrompt": "Say what you need help with.",
-    "connectingHint": "Connecting to OptiAI…",
+    "connectingHint": "Connecting to Opti Assist…",
     "status": {
       "connecting": "Connecting…",
       "muted": "Microphone off",
@@ -503,7 +554,7 @@
       "download": "Download",
       "scanAndAsk": "Scan & ask",
       "noName": "(no name)",
-      "scanInstruction": "Scan the code with the camera on your phone and ask your question directly to OptiAI for this machine.",
+      "scanInstruction": "Scan the code with the camera on your phone and ask your question directly to Opti Assist for this machine.",
       "pngHint": "The PNG is 1200×1500 px — suitable for printing on an A6 label or pasting into Word documents before printing."
     },
     "uploadQueue": {
@@ -540,9 +591,13 @@
     "notFound": "Not found",
     "missingField": "{field} is required",
     "aiOverloaded": "The AI is overloaded right now. Please try again in a moment.",
+    "aiOverloadedTitle": "AI is overloaded",
     "aiUnavailable": "The AI service is temporarily unavailable. Please try again.",
+    "aiUnavailableTitle": "AI temporarily unavailable",
     "aiRateLimited": "Too many requests right now. Please wait a moment and try again.",
+    "aiRateLimitedTitle": "Too many requests",
     "aiError": "The AI ran into a problem. Please try again.",
+    "aiErrorTitle": "Something went wrong",
     "escalation": {
       "noTarget": "Service escalation is not configured for this account. Ask an admin to set it up.",
       "emailFailed": "Could not send email: {detail}",
@@ -559,12 +614,12 @@
       "emailUnknownMachine": "(unknown machine)",
       "emailUnknownOperator": "(unknown operator)",
       "emailGreeting": "Hi,",
-      "emailIntro": "An operator has requested service via OptiAI.",
+      "emailIntro": "An operator has requested service via Opti Assist.",
       "emailMachineLine": "Machine: {machine}",
       "emailOperatorLine": "Operator: {operator}",
       "emailNoteHeading": "Operator's description:",
       "emailLinkIntro": "Read the full conversation here (valid until {expires}):",
-      "emailSignature": "— OptiAI"
+      "emailSignature": "— Opti Assist"
     },
     "webhook": {
       "timeout": "Webhook timeout after {seconds}s",
@@ -601,7 +656,7 @@
   },
   "sms": {
     "escalation": {
-      "body": "OptiAI service request: {machine}. View conversation: {url}",
+      "body": "Opti Assist service request: {machine}. View conversation: {url}",
       "unknownMachine": "unknown machine"
     }
   },
@@ -619,6 +674,6 @@
     "errorTitle": "Could not call service",
     "copy": "Copy",
     "copied": "Copied",
-    "startNew": "Start new conversation"
+    "startNew": "Start new chat"
   }
 }

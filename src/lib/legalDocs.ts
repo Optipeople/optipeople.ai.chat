@@ -8,6 +8,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locale } from "@/i18n/config";
+import { slugify } from "@/lib/slug";
+
+export { slugify };
 
 export type LegalDocId = "terms" | "privacy";
 
@@ -26,11 +29,39 @@ const FILE_MAP: Record<LegalDocId, Record<Locale, string>> = {
   },
 };
 
+export type TocEntry = {
+  slug: string;
+  title: string;
+};
+
 export type LegalDocContent = {
   title: string;
   version: string;
   body: string;
+  toc: TocEntry[];
 };
+
+// Extracts the H2 outline. Skips fenced code blocks so a stray "## " in
+// example text can't pollute the TOC. Our legal docs don't have code
+// blocks today, but cheap to be safe.
+export function extractToc(body: string): TocEntry[] {
+  const entries: TocEntry[] = [];
+  let inFence = false;
+  for (const raw of body.split("\n")) {
+    const line = raw.trimEnd();
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = line.match(/^##\s+(.+)$/);
+    if (m) {
+      const title = m[1].trim();
+      entries.push({ slug: slugify(title), title });
+    }
+  }
+  return entries;
+}
 
 // Minimal YAML frontmatter parser. Handles the simple key: value (or
 // key: "value") shape we use in docs/legal/. A full parser would be
@@ -70,5 +101,6 @@ export async function loadLegalDoc(
     title: meta.title ?? doc,
     version: meta.version ?? "",
     body,
+    toc: extractToc(body),
   };
 }

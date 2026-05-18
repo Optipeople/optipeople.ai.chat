@@ -164,7 +164,7 @@ export async function downloadQrStickerPng(args: {
     1240,
   );
   ctx.fillText(
-    "og stil dit spørgsmål direkte til OptiAI.",
+    "og stil dit spørgsmål direkte til Opti Assist.",
     W / 2,
     1280,
   );

@@ -1,6 +1,6 @@
 -- Per-account MCP configuration for the Optipeople MCP server.
 --
--- Each Optipeople account that wants OptiAI to access its portal data
+-- Each Optipeople account that wants Opti Assist to access its portal data
 -- creates a Client ID + Client Secret in the Optipeople portal (see
 -- Account → MCP tab) and an admin enters them here. We then run an
 -- OAuth authorization-code flow against the MCP server to obtain an

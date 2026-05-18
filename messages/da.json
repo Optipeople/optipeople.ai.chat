@@ -19,7 +19,7 @@
     "openInNewTab": "Åbn {title} i ny fane"
   },
   "metadata": {
-    "title": "OptiAI",
+    "title": "Opti Assist",
     "description": "AI-assistent for operatører i træindustrien — hurtige svar fra maskinens manualer."
   },
   "userMenu": {
@@ -29,6 +29,7 @@
     "account": "Konto",
     "machine": "Maskine",
     "admin": "Admin",
+    "aiRules": "AI-regler",
     "switchAccount": "Skift konto",
     "switchMachine": "Skift maskine",
     "language": "Sprog",
@@ -49,6 +50,9 @@
     "forgotPassword": "glemt min adgangskode",
     "forgotPasswordSuffix": ".",
     "termsOfService": "Terms of Service"
+  },
+  "legal": {
+    "tableOfContents": "Indhold"
   },
   "consent": {
     "heading": "Inden du fortsætter",
@@ -92,23 +96,63 @@
   },
   "chat": {
     "emptyPrompt": "Spørg om installation, vedligeholdelse, værktøjsskift, alarmer eller hvad som helst i din maskines manual.",
+    "disclaimerTitle": "Jeg kan tage fejl.",
+    "disclaimerBody": "Tjek altid manualen eller spørg en kollega, før du gør noget ved maskinen.",
+    "disclaimerLink": "Læs brugervilkårene",
     "working": "Arbejder…",
     "toolSearching": "Søger i manualerne…",
+    "toolListing": "Henter manualoversigt…",
     "toolFetchingMachineData": "Henter maskindata…",
     "toolRunning": "Kører",
+    "toolLabels": {
+      "get_account_information": "Henter kontooplysninger…",
+      "get_factories_data": "Henter fabriksdata…",
+      "get_kpi_per_day_report_by_date": "Henter KPI-rapport pr. dag…",
+      "get_kpi_report_by_date": "Henter KPI-rapport…",
+      "get_machine_basic_info": "Henter maskinens detaljer…",
+      "get_machine_id": "Slår maskine-ID op…",
+      "get_machines_basic_info": "Henter maskinoversigt…",
+      "get_part_counter_log": "Henter emnetæller-log…",
+      "get_shifts_info": "Henter skifteplan…",
+      "get_stop_group_by_day_statistic": "Henter stopstatistik pr. dag…",
+      "get_stop_per_week_statistic": "Henter ugentlig stopstatistik…",
+      "get_stops_concluesion_statistic": "Henter stoporsager…",
+      "get_system_context": "Henter systemkontekst…",
+      "get_telemetry_configurations": "Henter telemetri-opsætning…",
+      "get_telemetry_data": "Henter telemetri…",
+      "get_time_distribution_per_day_statistic": "Henter tidsfordeling pr. dag…",
+      "get_time_distribution_statistic": "Henter tidsfordeling…",
+      "get_total_uptime_by_date": "Henter samlet oppetid…",
+      "get_total_uptime_per_day_by_date": "Henter oppetid pr. dag…",
+      "get_total_working_hours_by_date": "Henter arbejdstimer…",
+      "get_total_working_hours_per_day_by_date": "Henter arbejdstimer pr. dag…"
+    },
     "errorPrefix": "Fejl: {message}",
+    "errorCheckStatus": "Tjek Anthropic-status",
+    "errorTryAgain": "Prøv igen",
+    "errorConnectionTitle": "Forbindelsesfejl",
     "send": "Send",
+    "stop": "Stop",
+    "stopAria": "Stop generering",
+    "copy": "Kopiér",
+    "copied": "Kopieret",
+    "regenerate": "Generér igen",
+    "newChat": "Ny chat",
+    "newChatAria": "Start en ny chat",
+    "jumpToLatest": "Hop til seneste",
+    "showSuggestions": "Vis startspørgsmål",
+    "hideSuggestions": "Skjul startspørgsmål",
     "callService": "Tilkald service",
-    "endConversation": "Afslut samtale",
+    "endConversation": "Afslut chat",
     "inputPlaceholder": "Skriv dit spørgsmål her…",
-    "endedPlaceholder": "Samtalen er afsluttet. Start en ny ovenfor.",
+    "endedPlaceholder": "Chatten er afsluttet. Start en ny ovenfor.",
     "recordingPlaceholder": "Optager… tryk på stop når du er færdig.",
     "transcribingPlaceholder": "Transskriberer…",
     "voiceLabels": {
       "stopRecording": "Stop optagelse",
       "transcribing": "Transskriberer",
-      "recordVoice": "Optag stemme",
-      "startConversation": "Start samtale"
+      "recordVoice": "Diktér tekst",
+      "startConversation": "Talesamtale"
     },
     "sources": "Kilder",
     "openDocFailed": "Kunne ikke åbne dokument",
@@ -122,8 +166,15 @@
       "addAria": "Vedhæft billede",
       "tooMany": "Du kan vedhæfte op til {max} billeder pr. besked.",
       "unsupported": "Filtypen understøttes ikke. Brug PNG, JPEG eller WebP under 10 MB.",
-      "failed": "Upload mislykkedes"
+      "failed": "Upload mislykkedes",
+      "dropHere": "Slip billede for at vedhæfte"
     }
+  },
+  "viewer": {
+    "openInNewTab": "Åbn i ny fane",
+    "openFailed": "Kunne ikke åbne filen",
+    "missingUrl": "Manglende URL i svaret",
+    "cannotPreview": "Denne filtype kan ikke vises her."
   },
   "knowledgeDrawer": {
     "openAria": "Åbn vidensbase",
@@ -146,7 +197,7 @@
     "thanksTitle": "Tak for din feedback.",
     "thanksResolved": "Markeret som løst. Det hjælper næste operatør med samme problem.",
     "thanksUnresolved": "Markeret som uløst. Vi kigger på det.",
-    "startNew": "Start ny samtale",
+    "startNew": "Start ny chat",
     "errorTitle": "Kunne ikke gemme feedback",
     "solutionLabel": "Hvad virkede? (valgfrit — bliver delt med næste operatør)",
     "solutionPlaceholder": "F.eks. RESET-knappen + genstart styringen efter alarm-koden var læst.",
@@ -154,13 +205,13 @@
     "submit": "Send"
   },
   "voice": {
-    "dialogLabel": "Stemme-samtale med OptiAI",
+    "dialogLabel": "Stemme-samtale med Opti Assist",
     "heading": "Stemme-samtale",
     "end": "Afslut",
     "muteOn": "Slå mikrofon til",
     "muteOff": "Slå mikrofon fra",
     "sayPrompt": "Sig hvad du har brug for hjælp til.",
-    "connectingHint": "Forbinder til OptiAI…",
+    "connectingHint": "Forbinder til Opti Assist…",
     "status": {
       "connecting": "Forbinder…",
       "muted": "Mikrofon slået fra",
@@ -503,7 +554,7 @@
       "download": "Download",
       "scanAndAsk": "Scan & spørg",
       "noName": "(uden navn)",
-      "scanInstruction": "Scan koden med kameraet på din telefon og stil dit spørgsmål direkte til OptiAI for denne maskine.",
+      "scanInstruction": "Scan koden med kameraet på din telefon og stil dit spørgsmål direkte til Opti Assist for denne maskine.",
       "pngHint": "PNG'en er 1200×1500 px — egnet til print på A6 etiket eller indsætning i Word-dokumenter inden printet."
     },
     "uploadQueue": {
@@ -540,9 +591,13 @@
     "notFound": "Ikke fundet",
     "missingField": "{field} er påkrævet",
     "aiOverloaded": "AI'en er overbelastet lige nu. Prøv igen om et øjeblik.",
+    "aiOverloadedTitle": "AI'en er overbelastet",
     "aiUnavailable": "AI-tjenesten er midlertidigt utilgængelig. Prøv igen.",
+    "aiUnavailableTitle": "AI'en er midlertidigt utilgængelig",
     "aiRateLimited": "For mange forespørgsler lige nu. Vent et øjeblik og prøv igen.",
+    "aiRateLimitedTitle": "For mange forespørgsler",
     "aiError": "AI'en stødte på et problem. Prøv igen.",
+    "aiErrorTitle": "Noget gik galt",
     "escalation": {
       "noTarget": "Service-eskalering er ikke konfigureret for denne konto. Bed en admin om at sætte den op.",
       "emailFailed": "Kunne ikke sende e-mail: {detail}",
@@ -559,12 +614,12 @@
       "emailUnknownMachine": "(ukendt maskine)",
       "emailUnknownOperator": "(ukendt operatør)",
       "emailGreeting": "Hej,",
-      "emailIntro": "En operatør har bedt om service via OptiAI.",
+      "emailIntro": "En operatør har bedt om service via Opti Assist.",
       "emailMachineLine": "Maskine: {machine}",
       "emailOperatorLine": "Operatør: {operator}",
       "emailNoteHeading": "Operatørens beskrivelse:",
       "emailLinkIntro": "Læs hele samtalen her (gyldig til {expires}):",
-      "emailSignature": "— OptiAI"
+      "emailSignature": "— Opti Assist"
     },
     "webhook": {
       "timeout": "Webhook timeout efter {seconds}s",
@@ -601,7 +656,7 @@
   },
   "sms": {
     "escalation": {
-      "body": "OptiAI service-anmodning: {machine}. Se samtalen: {url}",
+      "body": "Opti Assist service-anmodning: {machine}. Se samtalen: {url}",
       "unknownMachine": "ukendt maskine"
     }
   },
@@ -619,6 +674,6 @@
     "errorTitle": "Kunne ikke tilkalde service",
     "copy": "Kopiér",
     "copied": "Kopieret",
-    "startNew": "Start ny samtale"
+    "startNew": "Start ny chat"
   }
 }

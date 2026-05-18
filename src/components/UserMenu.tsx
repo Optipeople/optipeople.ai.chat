@@ -11,6 +11,7 @@ import {
   LogOut,
   Repeat,
   Settings,
+  ShieldCheck,
   Wrench,
 } from "lucide-react";
 import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
@@ -170,6 +171,18 @@ export function UserMenu() {
               >
                 <Settings className="h-4 w-4" />
                 {t("admin")}
+              </Link>
+              <Link
+                href="/admin/rules"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
+                  "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+                )}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                {t("aiRules")}
               </Link>
               <div className="h-px bg-[var(--color-hairline)]" />
             </>

@@ -1,4 +1,4 @@
-# OptiAI — Current Status & Next Iteration
+# Opti Assist — Current Status & Next Iteration
 
 Living document. Reflects where the project is *right now* and the next chunk of
 work to pick up. For long-term direction see [architecture.md](architecture.md);
@@ -108,8 +108,8 @@ administrator", since onboarding is on Optipeople.
 | Feedback → KB auto-promote | On "Ja + solution_text", the route synchronously builds a Q&A chunk (first user question + solution), embeds via Voyage, and inserts a `kb_documents` row of `source_type='feedback'` with the new chunk. `feedback.promoted_doc_id` is set. Re-submitting on the same conversation drops the prior promoted doc and re-promotes from the new answer. Admins demote by deleting the doc — `feedback.promoted_doc_id` becomes null via `on delete set null`. |
 | Source chips in chat | Each assistant reply gets a "Kilder" row of clickable chips (one per unique document hit), deep-linked to the best-scoring page via `#page=N`. Backed by `/api/documents/[id]/url` (operator-auth, 10-min signed URL). Chat route streams a `sources` SSE event derived from search_kb results. |
 | QR access | Per-machine permanent revocable token on `machine_kb.qr_token`. Operator scans `/?qr=<token>` → token resolved via `/api/qr/resolve` → stashed in sessionStorage → chat renders without login or pickers. `fetchWithAuth` sends `X-QR-Token` instead of bearer when in QR mode. Admin card on machine detail handles generate/regenerate/revoke. Sticker is downloaded as a 1200×1500 PNG (logo + machine name + QR rendered to canvas) at `/admin/machines/[id]/qr` — preview-then-download, no browser print. |
-| Service escalation | Per-account target row in `escalation_targets` (channel = `phone` \| `email` \| `service_ticket` \| `webhook`, target, label). Configured via the **MachineEscalationCard** on any machine detail page (admin sees a "shared across the account" hint). Operator chat shows a "Tilkald service" pill next to "Afslut samtale" once a conversation exists. Submit → `POST /api/chat/escalate` snapshots the conversation into `escalations.context_blob`, mints a 30-day share token, sets `resolution='escalated'`. **Phone**: client opens `tel:` to the target. **Email**: server sends via Resend (`OptiAI <noreply@optipeople.dk>`, EU region) with the share URL in the body — hard-fails the request if Resend rejects, so operator knows mail didn't go out. **Service-ticket**: client surfaces share URL for copy/paste. **Webhook**: server POSTs the conversation snapshot + signed share URL as JSON to the configured URL; hard-fails on non-2xx or 10s timeout. Service tech opens `/escalation/<token>` — public, token-gated — and reads the frozen transcript. Audit drilldown surfaces the escalation as an amber card above the feedback verdict with a click-through to the tech link. **Per-machine list** at `/admin/machines/[id]/escalations` paginates every escalation for the machine. |
-| E-mail delivery | Resend, EU region, sender `OptiAI <noreply@optipeople.dk>`. SDK wrapped in [src/lib/email.ts](../src/lib/email.ts). Domain DNS verified at the registrar; `RESEND_API_KEY` + `RESEND_FROM` mirrored to Vercel for both preview and production. Reply-to is set to the operator's e-mail when available so techs reply to the operator, not the no-reply mailbox. |
+| Service escalation | Per-account target row in `escalation_targets` (channel = `phone` \| `email` \| `service_ticket` \| `webhook`, target, label). Configured via the **MachineEscalationCard** on any machine detail page (admin sees a "shared across the account" hint). Operator chat shows a "Tilkald service" pill next to "Afslut samtale" once a conversation exists. Submit → `POST /api/chat/escalate` snapshots the conversation into `escalations.context_blob`, mints a 30-day share token, sets `resolution='escalated'`. **Phone**: client opens `tel:` to the target. **Email**: server sends via Resend (`Opti Assist <noreply@optipeople.dk>`, EU region) with the share URL in the body — hard-fails the request if Resend rejects, so operator knows mail didn't go out. **Service-ticket**: client surfaces share URL for copy/paste. **Webhook**: server POSTs the conversation snapshot + signed share URL as JSON to the configured URL; hard-fails on non-2xx or 10s timeout. Service tech opens `/escalation/<token>` — public, token-gated — and reads the frozen transcript. Audit drilldown surfaces the escalation as an amber card above the feedback verdict with a click-through to the tech link. **Per-machine list** at `/admin/machines/[id]/escalations` paginates every escalation for the machine. |
+| E-mail delivery | Resend, EU region, sender `Opti Assist <noreply@optipeople.dk>`. SDK wrapped in [src/lib/email.ts](../src/lib/email.ts). Domain DNS verified at the registrar; `RESEND_API_KEY` + `RESEND_FROM` mirrored to Vercel for both preview and production. Reply-to is set to the operator's e-mail when available so techs reply to the operator, not the no-reply mailbox. |
 | Admin → operator deep-link | `MessageSquare` icon on every machine row + "Test chat" button on the detail header opens `/?account=…&machine=…` in a new tab. |
 | Confirm dialog | Branded `<ConfirmProvider>` + `useConfirm()` hook replaces `window.confirm`. Esc/Enter/click-outside, danger flag. |
 | Knowledge base for the test machine | Felder (test) — `machine_id 700a3579-8cdf-4afa-2bb8-08db9ef8e885`, account `8452d639-8953-46ea-a57a-08db9ef8b057`. Document count drifts as we test reprocess flows; check `/admin/machines/<id>` for the live total. |
@@ -234,7 +234,7 @@ Then check `.env.local` contains all of:
 ANTHROPIC_API_KEY=...
 VOYAGE_API_KEY=...
 RESEND_API_KEY=...
-RESEND_FROM=OptiAI <noreply@optipeople.dk>
+RESEND_FROM=Opti Assist <noreply@optipeople.dk>
 OPTIPEOPLE_API_TARGET=https://api-staging.optipeople.dk
 SUPABASE_URL=https://wnswhzitolcfbfulchra.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
@@ -276,7 +276,7 @@ Expected response (truncated):
   "checks": {
     "anthropic_key": { "ok": true },
     "voyage_key":    { "ok": true },
-    "resend_key":    { "ok": true, "detail": "OptiAI <noreply@optipeople.dk>" },
+    "resend_key":    { "ok": true, "detail": "Opti Assist <noreply@optipeople.dk>" },
     "optipeople_target": { "ok": true, "detail": "https://api-staging.optipeople.dk" },
     "supabase":      { "ok": true, "detail": "machine_kb rows: 1" }
   }

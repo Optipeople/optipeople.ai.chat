@@ -3,15 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  AlertCircle,
+  ArrowDown,
   ArrowUp,
+  Check,
   CheckCircle2,
   Copy,
   FileText,
+  Info,
+  Lightbulb,
   Loader2,
   Mic,
   AudioLines,
   Plus,
+  RefreshCw,
   Square,
+  SquarePen,
   ThumbsDown,
   ThumbsUp,
   Wrench,
@@ -32,6 +39,8 @@ import { KnowledgeDrawer } from "@/components/KnowledgeDrawer";
 import { SpeakButton } from "@/components/SpeakButton";
 import { VoiceConversation } from "@/components/VoiceConversation";
 import { SourceChips, type SourceRef } from "@/components/SourceChips";
+import { useFileViewer } from "@/components/FileViewer";
+import { OutageCard, type OutageInfo } from "@/components/OutageCard";
 import { useLiveTranscription } from "@/lib/useLiveTranscription";
 import { useAuth } from "@/auth/AuthContext";
 import { fetchWithAuth } from "@/auth/authApi";
@@ -143,28 +152,41 @@ type ChatAttachment = {
   mimeType: string;
 };
 
-// What the server tells us about a tool currently being invoked.
-// `source: "mcp"` flags Anthropic-handled MCP tools (which we don't
-// run ourselves); everything else is one of our custom tools
-// (currently just search_kb). Used to render the in-stream
-// "Searching the manuals…" / "Fetching machine data…" indicator.
-type ActiveTool = {
+// One tool invocation in the current assistant turn. We keep the
+// whole sequence (not just the active one) so the operator can watch
+// progress accumulate — ✓ Henter maskinoversigt (2s), then
+// ⋯ Henter telemetri (currently 14s) — rather than the indicator
+// flicking between labels with no sense of progress. `source: "mcp"`
+// flags Anthropic-handled MCP tools (which we don't run ourselves);
+// otherwise it's one of our custom tools (search_kb, list_documents).
+type ToolStep = {
+  id: string;
   name: string;
   source?: "mcp";
   serverName?: string;
+  startedAt: number;
+  // Set when the tool finishes — via `tool_result` for MCP, or when
+  // text resumes (for custom tools whose result is folded into the
+  // next user turn server-side).
+  completedAt?: number;
+  isError?: boolean;
 };
 
 interface Message {
   role: Role;
   content: string;
+  createdAt: number;
   sources?: SourceRef[];
   images?: ImageSourceRef[];
   attachments?: ChatAttachment[];
-  // Only ever set on the currently-streaming assistant message;
-  // cleared by the next tool_result (MCP path) or when the stream
-  // ends. We deliberately only track the most recent one — the chat
-  // never fires enough tools in parallel for that to feel lossy.
-  activeTool?: ActiveTool;
+  // Set on the currently-streaming assistant message. Each step is
+  // appended on `tool_use` and marked complete on `tool_result` (or
+  // when text resumes, for non-MCP tools).
+  toolSteps?: ToolStep[];
+  // Set when this turn failed (Anthropic outage, network error, …).
+  // The MessageRow renders an OutageCard instead of the markdown
+  // bubble; the "Try again" button rewinds and re-streams the turn.
+  error?: OutageInfo;
 }
 
 // Local-only state for an attachment the operator is in the middle of
@@ -449,6 +471,16 @@ function ChatApp({
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
+  // True when the operator is within ~120px of the bottom — auto-scroll
+  // only kicks in then, so reading sources mid-stream doesn't fight us.
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  // Drag-and-drop state for image attachments. Counter (not boolean) so
+  // nested dragenter/leave events from child elements don't drop us out
+  // of the drag-active visual prematurely.
+  const [dragDepth, setDragDepth] = useState(0);
+  // Lets the operator re-surface the starter chips after the first send.
+  // Defaults to false — chips show by default when the chat is empty.
+  const [forceShowSuggestions, setForceShowSuggestions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -523,6 +555,9 @@ function ChatApp({
       return [];
     });
     setAttachmentError(null);
+    setForceShowSuggestions(false);
+    setIsAtBottom(true);
+    setDragDepth(0);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [machine?.id]);
 
@@ -562,12 +597,38 @@ function ChatApp({
 
   const isEmpty = messages.length === 0;
 
+  // Only auto-scroll if the operator is parked near the bottom. Scrolling
+  // up to read a source mid-stream should NOT yank the view back; we'll
+  // show a "Jump to latest" pill instead.
   useEffect(() => {
+    if (!isAtBottom) return;
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, streaming]);
+  }, [messages, streaming, isAtBottom]);
+
+  // Track scroll position so we can disable sticky-bottom when the user
+  // intentionally scrolls up. Threshold is generous (120px) so small
+  // pixel jitter near the bottom doesn't toggle the state.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setIsAtBottom(distance < 120);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  function jumpToLatest() {
+    setIsAtBottom(true);
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -759,6 +820,11 @@ function ChatApp({
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
     setInput("");
+    setIsAtBottom(true);
+    setForceShowSuggestions(false);
+    setDragDepth(0);
+    setAttachmentError(null);
+    setVoiceError(null);
   }
 
   async function submitFeedback(resolved: boolean, solutionText?: string) {
@@ -864,43 +930,11 @@ function ChatApp({
     rafRef.current = requestAnimationFrame(tick);
   }
 
-  async function send(textOverride?: string) {
-    const text = (textOverride ?? input).trim();
-    // Snapshot ready attachments at send-time. Anything still uploading
-    // or errored is left in the tray — the operator can either wait or
-    // remove it; we don't drop spinners silently into the sent message.
-    const readyAttachments = pendingAttachments.filter((p) => p.status === "ready");
-    const hasAttachments = readyAttachments.length > 0;
-    if ((!text && !hasAttachments) || streaming) return;
-    // Any send means the operator isn't done — drop the idle prompt
-    // (and any in-flight feedback state) so it doesn't sit there stale.
-    clearIdleTimer();
-    if (feedback.phase !== "hidden") setFeedback({ phase: "hidden" });
-
-    const userAttachments: ChatAttachment[] = readyAttachments.map((p) => ({
-      id: p.id!,
-      previewUrl: p.previewUrl,
-      mimeType: p.file.type,
-    }));
-
-    const next: Message[] = [
-      ...messages,
-      {
-        role: "user",
-        content: text,
-        attachments: hasAttachments ? userAttachments : undefined,
-      },
-      { role: "assistant", content: "" },
-    ];
-    setMessages(next);
-    setInput("");
-    // Clear only the attachments we just sent. Leave any in-flight
-    // uploads or errors so the operator notices them. Keep the object
-    // URLs alive — the message thumbnails are still pointing at them.
-    setPendingAttachments((prev) =>
-      prev.filter((p) => !readyAttachments.some((r) => r.localId === p.localId)),
-    );
-    setAttachmentError(null);
+  // Posts `baseMessages` (which must end with a user turn followed by
+  // an empty assistant placeholder) and streams the reply into that
+  // placeholder. Shared by send() and retry() — the streaming shape is
+  // identical, only how baseMessages was assembled differs.
+  async function runChatStream(baseMessages: Message[]) {
     setStreaming(true);
     pendingRef.current = "";
     streamDoneRef.current = false;
@@ -918,7 +952,7 @@ function ChatApp({
           accountId: account?.id ?? null,
           machineId: machine?.id ?? null,
           conversationId,
-          messages: next.slice(0, -1).map((m) => ({
+          messages: baseMessages.slice(0, -1).map((m) => ({
             role: m.role,
             content: m.content,
             attachmentIds: m.attachments?.map((a) => a.id),
@@ -952,53 +986,84 @@ function ChatApp({
 
           if (event === "delta") {
             pendingRef.current += data.text;
-            // Text streaming resumed → the model is now writing its
-            // reply, so any "Searching the manuals…" indicator from
-            // the previous tool_use should disappear.
+            // Text streaming resumed → the model is back to writing
+            // its reply. Mark any still-pending steps complete so the
+            // shimmer/timer freezes on the final elapsed value. Covers
+            // custom tools (search_kb) whose results never produce a
+            // tool_result event of their own.
             setMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
-              if (last?.role === "assistant" && last.activeTool) {
-                copy[copy.length - 1] = { ...last, activeTool: undefined };
+              if (
+                last?.role === "assistant" &&
+                last.toolSteps?.some((s) => !s.completedAt)
+              ) {
+                const now = Date.now();
+                copy[copy.length - 1] = {
+                  ...last,
+                  toolSteps: last.toolSteps.map((s) =>
+                    s.completedAt ? s : { ...s, completedAt: now },
+                  ),
+                };
               }
               return copy;
             });
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
           } else if (event === "tool_use") {
-            // Either a custom tool (search_kb) or an MCP-side tool
-            // Anthropic is invoking on our behalf. Stash the most
-            // recent one on the streaming assistant message so the
-            // row renders the indicator chip until text resumes (or
-            // until a tool_result clears it for MCP).
+            // Anthropic just opened a content block for a tool call —
+            // either one of our custom tools (search_kb, list_documents)
+            // or an MCP tool Anthropic invokes on our behalf. For MCP
+            // the tool hasn't executed yet, which is why showing the
+            // chip now (rather than waiting for the completed block)
+            // is what makes the long waits feel alive.
+            // Fallback id is only used if the server somehow omits one —
+            // the lint rule flags Date.now/random as impure-in-render,
+            // but this runs inside the SSE read loop, not React render.
+            const id =
+              typeof data.id === "string" && data.id.length > 0
+                ? data.id
+                // eslint-disable-next-line react-hooks/purity
+                : `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             setMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
               if (last?.role === "assistant") {
-                copy[copy.length - 1] = {
-                  ...last,
-                  activeTool: {
-                    name: typeof data.name === "string" ? data.name : "(tool)",
-                    source: data.source === "mcp" ? "mcp" : undefined,
-                    serverName:
-                      typeof data.serverName === "string"
-                        ? data.serverName
-                        : undefined,
-                  },
-                };
+                const steps = last.toolSteps ? [...last.toolSteps] : [];
+                steps.push({
+                  id,
+                  name: typeof data.name === "string" ? data.name : "(tool)",
+                  source: data.source === "mcp" ? "mcp" : undefined,
+                  serverName:
+                    typeof data.serverName === "string"
+                      ? data.serverName
+                      : undefined,
+                  startedAt: Date.now(),
+                });
+                copy[copy.length - 1] = { ...last, toolSteps: steps };
               }
               return copy;
             });
           } else if (event === "tool_result") {
-            // Only MCP emits these (custom tools' results land in
-            // synthetic user turns the next iteration). Clear the
-            // chip so the operator doesn't see a stale "Fetching …"
-            // label while the model is back to thinking/writing.
+            // Only MCP emits these. Mark the matching step complete by
+            // id so its timer stops and a ✓ replaces the spinner. If
+            // Anthropic reported the tool errored, surface that.
+            const toolUseId =
+              typeof data.toolUseId === "string" ? data.toolUseId : null;
+            const isError = data.isError === true;
             setMessages((prev) => {
               const copy = [...prev];
               const last = copy[copy.length - 1];
-              if (last?.role === "assistant" && last.activeTool) {
-                copy[copy.length - 1] = { ...last, activeTool: undefined };
+              if (last?.role === "assistant" && last.toolSteps && toolUseId) {
+                const now = Date.now();
+                copy[copy.length - 1] = {
+                  ...last,
+                  toolSteps: last.toolSteps.map((s) =>
+                    s.id === toolUseId && !s.completedAt
+                      ? { ...s, completedAt: now, isError }
+                      : s,
+                  ),
+                };
               }
               return copy;
             });
@@ -1025,11 +1090,29 @@ function ChatApp({
             }
           } else if (event === "error") {
             pendingRef.current = "";
+            const rawKind = typeof data.kind === "string" ? data.kind : "error";
+            const kind: OutageInfo["kind"] =
+              rawKind === "outage" ||
+              rawKind === "overloaded" ||
+              rawKind === "rate_limit"
+                ? rawKind
+                : "error";
+            const title =
+              typeof data.title === "string" && data.title.length > 0
+                ? data.title
+                : tChat("errorConnectionTitle");
+            const statusUrl =
+              typeof data.statusUrl === "string" ? data.statusUrl : undefined;
+            const message =
+              typeof data.message === "string" ? data.message : "";
             setMessages((prev) => {
               const copy = [...prev];
+              const prevMsg = copy[copy.length - 1];
               copy[copy.length - 1] = {
                 role: "assistant",
-                content: tChat("errorPrefix", { message: data.message }),
+                content: message,
+                createdAt: prevMsg?.createdAt ?? Date.now(),
+                error: { kind, title, statusUrl },
               };
               return copy;
             });
@@ -1038,17 +1121,23 @@ function ChatApp({
       }
     } catch (err: unknown) {
       // Caller-initiated aborts (component unmount, machine switch) aren't
-      // errors — just stop quietly so the UI doesn't flash "Fejl: …".
+      // errors — just stop quietly so the UI doesn't flash an outage card.
       if (controller.signal.aborted) {
         pendingRef.current = "";
       } else {
+        // Network-level failure (fetch threw, non-2xx, missing body). We
+        // don't know whether Anthropic itself is the culprit here, so we
+        // don't link to their status page — just a generic outage card.
         const msg = err instanceof Error ? err.message : String(err);
         pendingRef.current = "";
         setMessages((prev) => {
           const copy = [...prev];
+          const prevMsg = copy[copy.length - 1];
           copy[copy.length - 1] = {
             role: "assistant",
-            content: tChat("errorPrefix", { message: msg }),
+            content: msg,
+            createdAt: prevMsg?.createdAt ?? Date.now(),
+            error: { kind: "error", title: tChat("errorConnectionTitle") },
           };
           return copy;
         });
@@ -1059,8 +1148,109 @@ function ChatApp({
     }
   }
 
+  async function send(textOverride?: string) {
+    const text = (textOverride ?? input).trim();
+    // Snapshot ready attachments at send-time. Anything still uploading
+    // or errored is left in the tray — the operator can either wait or
+    // remove it; we don't drop spinners silently into the sent message.
+    const readyAttachments = pendingAttachments.filter((p) => p.status === "ready");
+    const hasAttachments = readyAttachments.length > 0;
+    if ((!text && !hasAttachments) || streaming) return;
+    // Any send means the operator isn't done — drop the idle prompt
+    // (and any in-flight feedback state) so it doesn't sit there stale.
+    clearIdleTimer();
+    if (feedback.phase !== "hidden") setFeedback({ phase: "hidden" });
+
+    const userAttachments: ChatAttachment[] = readyAttachments.map((p) => ({
+      id: p.id!,
+      previewUrl: p.previewUrl,
+      mimeType: p.file.type,
+    }));
+
+    // Wall-clock stamp for the per-message timestamp display. Both turns
+    // share `now` so a paired user/assistant row reads as one moment.
+    // eslint-disable-next-line react-hooks/purity
+    const now = Date.now();
+    const next: Message[] = [
+      ...messages,
+      {
+        role: "user",
+        content: text,
+        createdAt: now,
+        attachments: hasAttachments ? userAttachments : undefined,
+      },
+      { role: "assistant", content: "", createdAt: now },
+    ];
+    setMessages(next);
+    setInput("");
+    // Sending = the operator is committed to the current turn; snap to
+    // bottom so they see the streaming reply even if they had scrolled
+    // up while composing.
+    setIsAtBottom(true);
+    setForceShowSuggestions(false);
+    // Clear only the attachments we just sent. Leave any in-flight
+    // uploads or errors so the operator notices them. Keep the object
+    // URLs alive — the message thumbnails are still pointing at them.
+    setPendingAttachments((prev) =>
+      prev.filter((p) => !readyAttachments.some((r) => r.localId === p.localId)),
+    );
+    setAttachmentError(null);
+
+    await runChatStream(next);
+  }
+
+  // Retries the last turn after an outage card was shown. Replaces the
+  // failed assistant bubble with a fresh empty one and re-streams from
+  // the same conversation prefix — no new user message is appended.
+  async function retry() {
+    if (streaming) return;
+    if (messages.length < 2) return;
+    const failed = messages[messages.length - 1];
+    if (failed?.role !== "assistant" || !failed.error) return;
+    // eslint-disable-next-line react-hooks/purity
+    const now = Date.now();
+    const next: Message[] = [
+      ...messages.slice(0, -1),
+      { role: "assistant", content: "", createdAt: now },
+    ];
+    setMessages(next);
+    await runChatStream(next);
+  }
+
+  // Regenerate the last assistant reply (after a successful turn). Drops
+  // the existing bubble and re-streams from the same conversation prefix.
+  async function regenerate() {
+    if (streaming) return;
+    if (messages.length < 2) return;
+    const last = messages[messages.length - 1];
+    if (last?.role !== "assistant") return;
+    // eslint-disable-next-line react-hooks/purity
+    const now = Date.now();
+    const next: Message[] = [
+      ...messages.slice(0, -1),
+      { role: "assistant", content: "", createdAt: now },
+    ];
+    setMessages(next);
+    await runChatStream(next);
+  }
+
+  // Manual cancel: aborts the in-flight stream. Whatever has already
+  // been rendered into the assistant bubble is kept as-is — the abort
+  // path clears `pendingRef` so no further chunks land, and the drain
+  // loop notices streamDoneRef and flips `streaming` back off.
+  function stopGenerating() {
+    abortRef.current?.abort();
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Cmd/Ctrl+Enter always sends (even with Shift held — useful when
+    // composing multiline messages). Plain Enter sends only without
+    // Shift; Shift+Enter inserts a newline as usual.
+    const isEnter = e.key === "Enter";
+    const isModifierEnter = isEnter && (e.metaKey || e.ctrlKey);
+    const isPlainEnter =
+      isEnter && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (isModifierEnter || isPlainEnter) {
       e.preventDefault();
       send();
     }
@@ -1100,24 +1290,84 @@ function ChatApp({
             content scrolls under the panel. */}
         <div className="mx-auto max-w-3xl px-4 pt-6 pb-56 sm:px-6 sm:pt-12 sm:pb-72">
           {isEmpty ? (
-            <p className="msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)] sm:text-[22px] sm:leading-[1.55]">
-              {tChat("emptyPrompt")}
-            </p>
+            <div className="flex flex-col gap-3 sm:gap-4">
+              <p className="msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)] sm:text-[22px] sm:leading-[1.55]">
+                {tChat("emptyPrompt")}
+              </p>
+              <p
+                role="note"
+                className="msg-in flex max-w-2xl items-start gap-2.5 text-[16px] leading-[1.5] text-[var(--color-foreground)]/80 sm:text-[17px]"
+              >
+                <Info
+                  className="mt-1 h-[18px] w-[18px] shrink-0 text-[var(--color-foreground)]/70"
+                  aria-hidden
+                />
+                <span>
+                  <span className="font-semibold text-[var(--color-foreground)]">
+                    {tChat("disclaimerTitle")}
+                  </span>{" "}
+                  {tChat("disclaimerBody")}{" "}
+                  <a
+                    href="/legal/terms"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-[var(--color-brand)] underline underline-offset-2"
+                  >
+                    {tChat("disclaimerLink")}
+                  </a>
+                </span>
+              </p>
+            </div>
           ) : (
             <div className="flex flex-col gap-6 sm:gap-8">
-              {messages.map((m, i) => (
-                <MessageRow
-                  key={i}
-                  message={m}
-                  isStreaming={streaming && i === messages.length - 1}
-                  onCallService={() =>
-                    setEscalate({ phase: "confirm", note: "" })
-                  }
-                />
-              ))}
+              {messages.map((m, i) => {
+                const isLast = i === messages.length - 1;
+                return (
+                  <MessageRow
+                    key={i}
+                    message={m}
+                    locale={locale}
+                    isStreaming={streaming && isLast}
+                    onCallService={() =>
+                      setEscalate({ phase: "confirm", note: "" })
+                    }
+                    onRetry={!streaming && isLast && m.error ? retry : undefined}
+                    onRegenerate={
+                      !streaming &&
+                      isLast &&
+                      !m.error &&
+                      m.role === "assistant" &&
+                      m.content.length > 0
+                        ? regenerate
+                        : undefined
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </div>
+        {/* "Jump to latest" pill — only visible when the operator is
+            scrolled up. Sits over the bottom-anchored content area, just
+            above the composer panel. */}
+        {!isAtBottom && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            aria-label={tChat("jumpToLatest")}
+            className={cn(
+              "fixed bottom-[calc(env(safe-area-inset-bottom)+8.5rem)] left-1/2 z-20",
+              "-translate-x-1/2 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5",
+              "border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[13px]",
+              "text-[var(--color-foreground)] shadow-[var(--shadow-md)] transition-colors",
+              "hover:bg-[var(--color-muted)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+            )}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            {tChat("jumpToLatest")}
+          </button>
+        )}
       </div>
 
       <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
@@ -1138,7 +1388,7 @@ function ChatApp({
             scroll content bleed through. */}
         <div className="pointer-events-auto w-full bg-[var(--color-background)]">
         <div className="mx-auto max-w-3xl px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 sm:px-4 sm:pb-8">
-          {isEmpty && (
+          {(isEmpty || forceShowSuggestions) && (
             <div className="msg-in mb-6 sm:mb-10">
               <div className="flex flex-wrap gap-2">
                 {(visibleSuggestions.length > 0
@@ -1150,7 +1400,10 @@ function ChatApp({
                       key={`${i}-${q}`}
                       variant="secondary"
                       size="sm"
-                      onClick={() => send(q)}
+                      onClick={() => {
+                        setForceShowSuggestions(false);
+                        void send(q);
+                      }}
                       disabled={streaming}
                       className="chip-in max-w-full rounded-full whitespace-normal text-left sm:text-[14px]"
                       style={{ ["--chip-index" as string]: i }}
@@ -1164,6 +1417,20 @@ function ChatApp({
           )}
           {showActionButtons && (
             <div className="msg-in mb-4 flex flex-wrap justify-end gap-2 sm:mb-6">
+              {!isEmpty && visibleSuggestions.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setForceShowSuggestions((v) => !v)}
+                  aria-pressed={forceShowSuggestions}
+                  className="sm:text-[14px]"
+                >
+                  <Lightbulb className="mr-1.5 h-4 w-4" />
+                  {forceShowSuggestions
+                    ? tChat("hideSuggestions")
+                    : tChat("showSuggestions")}
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -1172,6 +1439,17 @@ function ChatApp({
               >
                 <Wrench className="mr-1.5 h-4 w-4" />
                 {tChat("callService")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={startNewConversation}
+                disabled={streaming}
+                title={tChat("newChatAria")}
+                className="sm:text-[14px]"
+              >
+                <SquarePen className="mr-1.5 h-4 w-4" />
+                {tChat("newChat")}
               </Button>
               <Button
                 variant="secondary"
@@ -1223,15 +1501,7 @@ function ChatApp({
               />
             </div>
           )}
-          {voiceError && (
-            <div
-              className="mb-2 text-[14px]"
-              style={{ color: "var(--ds-red)" }}
-              role="status"
-            >
-              {voiceError}
-            </div>
-          )}
+          {voiceError && <InlineError message={voiceError} />}
           {pendingAttachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {pendingAttachments.map((p) => (
@@ -1243,15 +1513,7 @@ function ChatApp({
               ))}
             </div>
           )}
-          {attachmentError && (
-            <div
-              className="mb-2 text-[13px]"
-              style={{ color: "var(--ds-red)" }}
-              role="status"
-            >
-              {attachmentError}
-            </div>
-          )}
+          {attachmentError && <InlineError message={attachmentError} />}
           <input
             ref={fileInputRef}
             type="file"
@@ -1269,11 +1531,47 @@ function ChatApp({
               "flex items-stretch gap-1.5 sm:gap-2",
               inputLocked && "opacity-60",
             )}
+            onDragEnter={(e) => {
+              if (!canAttach) return;
+              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+              e.preventDefault();
+              setDragDepth((d) => d + 1);
+            }}
+            onDragOver={(e) => {
+              if (!canAttach) return;
+              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+            }}
+            onDragLeave={(e) => {
+              if (!canAttach) return;
+              if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+              e.preventDefault();
+              setDragDepth((d) => Math.max(0, d - 1));
+            }}
+            onDrop={(e) => {
+              if (!canAttach) return;
+              const files = Array.from(e.dataTransfer?.files ?? []);
+              if (files.length === 0) return;
+              e.preventDefault();
+              setDragDepth(0);
+              addAttachments(files);
+            }}
           >
             <FieldFrame
-              focused={composerFocused}
-              className="flex min-w-0 flex-1 items-end gap-0.5 p-[6px] sm:gap-1 sm:p-[8px]"
+              focused={composerFocused || dragDepth > 0}
+              className={cn(
+                "relative flex min-w-0 flex-1 items-end gap-0.5 p-[6px] sm:gap-1 sm:p-[8px]",
+                dragDepth > 0 &&
+                  "ring-2 ring-[var(--color-brand)]/40 ring-offset-1",
+              )}
             >
+              {dragDepth > 0 && canAttach && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[4px] bg-[var(--color-brand)]/8 text-[14px] font-medium text-[var(--color-brand)]">
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  {tChat("attachments.dropHere")}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -1313,7 +1611,7 @@ function ChatApp({
                 rows={1}
                 disabled={inputLocked || voiceState !== "idle"}
                 className={cn(
-                  "min-w-0 flex-1 resize-none overflow-hidden bg-transparent outline-none",
+                  "min-w-0 flex-1 resize-none overflow-y-auto bg-transparent outline-none",
                   "px-1.5 py-[7px] sm:px-2 sm:py-[5px]",
                   "font-['Hanken_Grotesk',sans-serif] font-normal",
                   "text-[16px] leading-[22px] sm:text-[19px] sm:leading-[26px]",
@@ -1357,35 +1655,47 @@ function ChatApp({
                 )}
               </button>
             </FieldFrame>
-            <Button
-              size="lg"
-              onClick={() => send()}
-              disabled={!canSend}
-              aria-label={tChat("send")}
-              className="h-11 shrink-0 px-3 sm:h-auto sm:px-8"
-            >
-              {streaming ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <>
-                  <span
-                    className={cn(
-                      "hidden sm:inline-block",
-                      canSend && "send-nudge",
-                    )}
-                  >
-                    {tChat("send")}
-                  </span>
-                  <ArrowUp
-                    className={cn(
-                      "h-5 w-5 sm:hidden",
-                      canSend && "send-nudge",
-                    )}
-                    aria-hidden
-                  />
-                </>
-              )}
-            </Button>
+            {streaming ? (
+              <Button
+                size="lg"
+                variant="secondary"
+                onClick={stopGenerating}
+                aria-label={tChat("stopAria")}
+                title={tChat("stopAria")}
+                className="h-11 shrink-0 px-3 sm:h-auto sm:px-8"
+              >
+                <Square
+                  className="h-4 w-4 sm:mr-1.5"
+                  fill="currentColor"
+                  aria-hidden
+                />
+                <span className="hidden sm:inline-block">{tChat("stop")}</span>
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                onClick={() => send()}
+                disabled={!canSend}
+                aria-label={tChat("send")}
+                className="h-11 shrink-0 px-3 sm:h-auto sm:px-8"
+              >
+                <span
+                  className={cn(
+                    "hidden sm:inline-block",
+                    canSend && "send-nudge",
+                  )}
+                >
+                  {tChat("send")}
+                </span>
+                <ArrowUp
+                  className={cn(
+                    "h-5 w-5 sm:hidden",
+                    canSend && "send-nudge",
+                  )}
+                  aria-hidden
+                />
+              </Button>
+            )}
             <button
               type="button"
               onClick={() => setVoiceConvOpen(true)}
@@ -1428,19 +1738,26 @@ function ChatApp({
 
 function MessageRow({
   message,
+  locale,
   isStreaming,
   onCallService,
+  onRetry,
+  onRegenerate,
 }: {
   message: Message;
+  locale: string;
   isStreaming?: boolean;
   onCallService?: () => void;
+  onRetry?: () => void;
+  onRegenerate?: () => void;
 }) {
+  const tChat = useTranslations("chat");
   if (message.role === "user") {
     const hasAttachments =
       !!message.attachments && message.attachments.length > 0;
     const hasText = message.content.length > 0;
     return (
-      <div className="msg-in flex flex-col items-end gap-2">
+      <div className="msg-in flex flex-col items-end gap-1.5">
         {hasAttachments && (
           <div className="flex max-w-[90%] flex-wrap justify-end gap-2 sm:max-w-[78%]">
             {message.attachments!.map((a) => (
@@ -1472,16 +1789,32 @@ function MessageRow({
             {message.content}
           </div>
         )}
+        <MessageTimestamp createdAt={message.createdAt} locale={locale} />
       </div>
+    );
+  }
+
+  if (message.error) {
+    // Outage / network failure card. We render this in place of the
+    // normal markdown bubble so the operator gets a clear non-prose
+    // affordance ("Try again", optional status link) instead of a
+    // chat-styled error sentence they might miss.
+    return (
+      <OutageCard
+        info={message.error}
+        message={message.content}
+        onRetry={onRetry}
+      />
     );
   }
 
   if (!message.content) {
     // No text yet. If the model has already announced a tool call,
-    // surface that instead of the generic "thinking…" so the operator
-    // sees we're doing something specific.
-    if (message.activeTool) {
-      return <ToolUseIndicator tool={message.activeTool} />;
+    // show the running step list so the operator sees we're doing
+    // something specific (and a timer ticking) rather than a generic
+    // "Working…".
+    if (message.toolSteps && message.toolSteps.length > 0) {
+      return <ToolStepsList steps={message.toolSteps} />;
     }
     return <WorkingRow />;
   }
@@ -1494,12 +1827,29 @@ function MessageRow({
           <span className="stream-caret -ml-0.5 align-baseline" aria-hidden />
         )}
       </div>
-      {isStreaming && message.activeTool ? (
-        <ToolUseIndicator tool={message.activeTool} />
+      {isStreaming && message.toolSteps && message.toolSteps.length > 0 ? (
+        <ToolStepsList steps={message.toolSteps} />
       ) : null}
       {!isStreaming && (
-        <div className="-mt-1 flex items-center">
+        <div className="-mt-1 flex items-center gap-1">
           <SpeakButton text={message.content} />
+          <CopyButton text={message.content} />
+          {onRegenerate && (
+            <button
+              type="button"
+              onClick={onRegenerate}
+              title={tChat("regenerate")}
+              aria-label={tChat("regenerate")}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          )}
+          <MessageTimestamp
+            createdAt={message.createdAt}
+            locale={locale}
+            className="ml-1"
+          />
         </div>
       )}
       {message.images && message.images.length > 0 && (
@@ -1508,6 +1858,102 @@ function MessageRow({
       {message.sources && message.sources.length > 0 && (
         <SourceChips sources={message.sources} />
       )}
+    </div>
+  );
+}
+
+// Renders a localised HH:MM next to message action rows. The full
+// date/time is exposed via the title attribute so day-spanning sessions
+// can still be disambiguated on hover.
+function MessageTimestamp({
+  createdAt,
+  locale,
+  className,
+}: {
+  createdAt: number;
+  locale: string;
+  className?: string;
+}) {
+  if (!createdAt) return null;
+  const date = new Date(createdAt);
+  const shortLabel = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+  const fullLabel = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+  return (
+    <time
+      dateTime={date.toISOString()}
+      title={fullLabel}
+      className={cn(
+        "select-none text-[11px] text-[var(--color-muted-foreground)]",
+        className,
+      )}
+    >
+      {shortLabel}
+    </time>
+  );
+}
+
+// Copy-to-clipboard for assistant message content. Matches SpeakButton
+// sizing/affordance so they sit comfortably next to each other in the
+// per-message action row. Falls back silently on insecure contexts —
+// the markdown bubble itself is selectable.
+function CopyButton({ text }: { text: string }) {
+  const tChat = useTranslations("chat");
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard write can fail on insecure contexts — silent.
+    }
+  }
+  const label = copied ? tChat("copied") : tChat("copy");
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+        "text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
+        copied && "text-emerald-600 hover:text-emerald-600",
+      )}
+    >
+      {copied ? (
+        <Check className="h-4 w-4" />
+      ) : (
+        <Copy className="h-4 w-4" />
+      )}
+    </button>
+  );
+}
+
+// Inline error row used by both attachment and voice failures so the
+// two surfaces look identical (icon + sentence + same colour/size).
+function InlineError({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      className="mb-2 flex items-start gap-1.5 text-[13px] sm:text-[14px]"
+      style={{ color: "var(--ds-red)" }}
+    >
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>{message}</span>
     </div>
   );
 }
@@ -1573,28 +2019,73 @@ function WorkingRow() {
   );
 }
 
-// Tool-use indicator chip. Shown while a tool is currently being
-// invoked — either our search_kb or an Anthropic-handled MCP tool.
-// Friendly label mapping is best-effort; unknown tool names fall back
-// to the raw identifier. The shimmer matches WorkingRow so the two
-// indicators feel like one continuous "is doing something" state.
-function ToolUseIndicator({ tool }: { tool: ActiveTool }) {
-  const t = useTranslations("chat");
-  // Translation keys for the labels we know about. We add the MCP
-  // tool name as a hint at the end so the operator can see which
-  // specific portal endpoint fired without us having to enumerate
-  // every Optipeople tool here.
-  let label: string;
-  if (tool.name === "search_kb") {
-    label = t("toolSearching");
-  } else if (tool.source === "mcp") {
-    label = `${t("toolFetchingMachineData")} (${tool.name})`;
-  } else {
-    label = `${t("toolRunning")} ${tool.name}`;
-  }
+// Re-render hook for the live elapsed-time display on the currently
+// running tool step. We tick once a second while the step is open;
+// once `completedAt` is set the timer freezes on its final value and
+// the interval is cleared. We use Date.now() (not a ref) so React
+// renders the new value without extra plumbing.
+function useElapsedSeconds(startedAt: number, completedAt?: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (completedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [completedAt]);
+  const end = completedAt ?? now;
+  return Math.max(0, Math.floor((end - startedAt) / 1000));
+}
+
+// Render the full sequence of tool calls in the current turn, oldest
+// at the top. Each row shows a friendly label and an elapsed-time
+// counter; finished rows freeze with a ✓ (or ⚠ if the tool errored).
+// Keeping completed steps visible is the difference between "feels
+// stuck on get_machines_basic_info" and "two tools done, one in
+// flight" — same wall-clock wait, very different perceived progress.
+function ToolStepsList({ steps }: { steps: ToolStep[] }) {
   return (
-    <div className="msg-in flex items-center gap-2.5 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
-      <span className="text-shimmer">{label}</span>
+    <div className="msg-in flex flex-col gap-1 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
+      {steps.map((step) => (
+        <ToolStepRow key={step.id} step={step} />
+      ))}
+    </div>
+  );
+}
+
+function ToolStepRow({ step }: { step: ToolStep }) {
+  const t = useTranslations("chat");
+  const isActive = !step.completedAt;
+  const elapsed = useElapsedSeconds(step.startedAt, step.completedAt);
+
+  // Friendly labels: our two custom tools have top-level keys; every
+  // MCP tool lives under `chat.toolLabels.<name>`. Unknown MCP tools
+  // fall back to a generic "Fetching machine data" with the raw name
+  // appended so operators still see which endpoint fired.
+  let label: string;
+  if (step.name === "search_kb") {
+    label = t("toolSearching");
+  } else if (step.name === "list_documents") {
+    label = t("toolListing");
+  } else if (t.has(`toolLabels.${step.name}`)) {
+    label = t(`toolLabels.${step.name}` as Parameters<typeof t>[0]);
+  } else if (step.source === "mcp") {
+    label = `${t("toolFetchingMachineData")} (${step.name})`;
+  } else {
+    label = `${t("toolRunning")} ${step.name}`;
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
+        {isActive ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : step.isError ? (
+          <AlertCircle className="h-3.5 w-3.5 text-[color:var(--destructive,#dc2626)]" />
+        ) : (
+          <Check className="h-3.5 w-3.5" />
+        )}
+      </span>
+      <span className={isActive ? "text-shimmer" : ""}>{label}</span>
+      <span className="tabular-nums text-[12px] opacity-70">({elapsed}s)</span>
     </div>
   );
 }
@@ -1615,6 +2106,7 @@ function ImageSources({ images }: { images: ImageSourceRef[] }) {
 
 function ImageSourceCard({ image }: { image: ImageSourceRef }) {
   const tCommon = useTranslations("common");
+  const viewer = useFileViewer();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const isPdfFigure = image.mimeType === "application/pdf";
@@ -1644,11 +2136,13 @@ function ImageSourceCard({ image }: { image: ImageSourceRef }) {
 
   function onClick() {
     if (!url) return;
-    const target =
-      isPdfFigure && image.pageFrom != null
-        ? `${url}#page=${image.pageFrom}`
-        : url;
-    window.open(target, "_blank", "noopener,noreferrer");
+    viewer.open({
+      kind: "asset",
+      id: image.assetId,
+      title: image.altText || image.documentTitle,
+      mimeType: image.mimeType,
+      page: isPdfFigure ? image.pageFrom : null,
+    });
   }
 
   const pageLabel =

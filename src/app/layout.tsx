@@ -5,6 +5,7 @@ import { getLocale, getMessages, getTranslations } from "next-intl/server";
 import "./globals.css";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+import { FileViewerProvider } from "@/components/FileViewer";
 
 const hankenGrotesk = Hanken_Grotesk({
   subsets: ["latin"],
@@ -39,7 +40,9 @@ export default async function RootLayout({
       <body className="min-h-full">
         <NextIntlClientProvider locale={locale} messages={messages}>
           <AuthProvider>
-            <ConfirmProvider>{children}</ConfirmProvider>
+            <ConfirmProvider>
+              <FileViewerProvider>{children}</FileViewerProvider>
+            </ConfirmProvider>
           </AuthProvider>
         </NextIntlClientProvider>
       </body>

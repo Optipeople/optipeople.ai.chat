@@ -1,4 +1,4 @@
-# OptiAI Chat — Architecture Diagram
+# Opti Assist Chat — Architecture Diagram
 
 A snapshot of how the app actually works today (post-Phase 4). For the
 roadmap version of this story, see [architecture.md](architecture.md).

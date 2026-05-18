@@ -93,5 +93,9 @@ export async function GET(
     return Response.json({ error: "Could not sign URL" }, { status: 500 });
   }
 
-  return Response.json({ url: signed.signedUrl, title: row.title });
+  return Response.json({
+    url: signed.signedUrl,
+    title: row.title,
+    sourceType: row.source_type,
+  });
 }
