@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { getQrToken } from "@/auth/qrStorage";
+import { Button } from "@/components/ui/button";
 import { TERMS_VERSION } from "@/lib/consent";
 import { cn } from "@/lib/utils";
 
@@ -64,8 +65,8 @@ export function QrConsentBanner() {
     >
       <div
         className={cn(
-          "mx-auto flex max-w-3xl flex-col gap-3 rounded-[var(--radius-xl)] border p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5",
-          "border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
+          "mx-auto flex max-w-3xl flex-col gap-3 rounded-[4px] p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5",
+          "border-2 border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-[var(--ds-shadow-destructive)]",
         )}
       >
         <div className="min-w-0 flex-1">
@@ -98,22 +99,17 @@ export function QrConsentBanner() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={dismiss}
-            className={cn(
-              "h-9 rounded-[var(--radius-sm)] px-4 text-[14px] font-medium",
-              "bg-[var(--color-brand)] text-white",
-              "transition-colors hover:bg-[var(--color-brand)]/90",
-            )}
-          >
+          <Button type="button" onClick={dismiss}>
             {t("acknowledge")}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={dismiss}
             aria-label={tc("close")}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]"
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-[2px]",
+              "text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+            )}
           >
             <X className="h-4 w-4" />
           </button>

@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { getLocale } from "next-intl/server";
+import { LocaleToggle } from "@/components/LocaleToggle";
 import { Markdown } from "@/components/ui/markdown";
 import { OptipeopleLogo } from "@/components/logo";
 import { isLocale } from "@/i18n/config";
 import { isLegalDocId, loadLegalDoc } from "@/lib/legalDocs";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +24,7 @@ export default async function LegalDocPage({
   if (!content) notFound();
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <div className="flex min-h-full flex-col bg-[var(--color-background)]">
       <header
         className="relative z-20 shrink-0"
         style={{ backgroundColor: "var(--color-brand)" }}
@@ -32,12 +34,28 @@ export default async function LegalDocPage({
             className="h-6 w-auto shrink-0 text-white sm:h-7"
             aria-label="Optipeople"
           />
+          <LocaleToggle variant="light" />
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
-        <Markdown>{content.body}</Markdown>
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
+        <article
+          className={cn(
+            "msg-in rounded-[4px] bg-[var(--color-surface)] p-6 sm:p-10",
+            "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
+          )}
+        >
+          <Markdown className="text-[15px] leading-[1.65] sm:text-[16px] sm:leading-[1.7]">
+            {content.body}
+          </Markdown>
+        </article>
       </main>
+
+      <div className="brand-stripe" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { OptipeopleLogo } from "@/components/logo";
 import { UserMenu } from "@/components/UserMenu";
 import { Button } from "@/components/ui/button";
+import { CheckIcon } from "@/components/ui/icons";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
@@ -50,12 +51,12 @@ export function ConsentScreen() {
         </div>
       </header>
 
-      <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
+      <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-10">
         <form
           onSubmit={handleSubmit}
           className={cn(
-            "msg-in w-full max-w-xl rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-5 sm:p-8",
-            "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]",
+            "msg-in w-full max-w-xl rounded-[4px] bg-[var(--color-surface)] p-5 sm:p-8",
+            "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
           )}
         >
           <h1 className="mb-2 text-[20px] font-semibold text-[var(--color-foreground)] sm:text-[22px]">
@@ -67,7 +68,6 @@ export function ConsentScreen() {
 
           <div className="flex flex-col gap-3">
             <ConsentRow
-              id="consent-terms"
               checked={acceptTerms}
               onChange={setAcceptTerms}
               disabled={submitting}
@@ -78,7 +78,6 @@ export function ConsentScreen() {
               tc={tc}
             />
             <ConsentRow
-              id="consent-privacy"
               checked={acceptPrivacy}
               onChange={setAcceptPrivacy}
               disabled={submitting}
@@ -89,7 +88,6 @@ export function ConsentScreen() {
               tc={tc}
             />
             <ConsentRow
-              id="consent-analytics"
               checked={acceptAnalytics}
               onChange={setAcceptAnalytics}
               disabled={submitting}
@@ -119,7 +117,7 @@ export function ConsentScreen() {
         </form>
       </div>
 
-      <div className="brand-stripe" aria-hidden>
+      <div className="brand-stripe shrink-0" aria-hidden>
         <span />
         <span />
         <span />
@@ -129,7 +127,6 @@ export function ConsentScreen() {
 }
 
 function ConsentRow({
-  id,
   checked,
   onChange,
   disabled,
@@ -140,7 +137,6 @@ function ConsentRow({
   description,
   tc,
 }: {
-  id: string;
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled: boolean;
@@ -153,23 +149,37 @@ function ConsentRow({
 }) {
   return (
     <label
-      htmlFor={id}
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 sm:p-4",
-        "transition-colors hover:border-[var(--color-brand)]/40",
+        "flex cursor-pointer items-start gap-3 rounded-[4px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-3 sm:p-4",
+        "transition-colors hover:border-[var(--ds-grey-light-03)]",
         disabled && "cursor-not-allowed opacity-60",
       )}
     >
       <input
-        id={id}
         type="checkbox"
         checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
+        onChange={(e) => onChange(e.currentTarget.checked)}
         disabled={disabled}
-        className="mt-[2px] size-[16px] cursor-pointer accent-[var(--color-brand)]"
+        className="sr-only"
       />
+      {/* Visual checkbox — replicates @/components/ui/checkbox so the
+          whole card can be a single <label>. Nesting the design-system
+          Checkbox (itself a <label>) inside another label is invalid HTML. */}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative mt-[2px] inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[1.5px] transition-colors",
+          checked
+            ? "bg-[var(--ds-grey-medium-07)] text-white"
+            : "border-[0.5px] border-[rgba(0,0,0,0.25)] bg-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.1),inset_0_0_2px_rgba(0,0,0,0.1)]",
+          disabled && checked && "bg-[var(--ds-text-disabled)]",
+          disabled && !checked && "border-[var(--ds-text-disabled)]",
+        )}
+      >
+        {checked && <CheckIcon size={12} strokeWidth={2.5} />}
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[14px] leading-[1.5] text-[var(--color-foreground)] sm:text-[15px]">
+        <p className="text-[14px] leading-[1.5] text-[var(--ds-grey-dark-09)] sm:text-[15px]">
           {required && (
             <span aria-hidden className="mr-1 text-[var(--color-brand)]">
               *
@@ -183,7 +193,7 @@ function ConsentRow({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="mt-1 inline-flex items-center gap-1 text-[13px] font-medium text-[var(--color-brand)] underline underline-offset-2 sm:text-[14px]"
+            className="mt-1 inline-flex items-center gap-1 text-[13px] font-medium text-[var(--color-brand)] underline underline-offset-2 hover:opacity-80 sm:text-[14px]"
           >
             {linkLabel}
             <ExternalLink className="h-3 w-3" />
