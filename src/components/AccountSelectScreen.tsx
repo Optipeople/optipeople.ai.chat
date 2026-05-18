@@ -4,8 +4,7 @@ import { useMemo, useState } from "react";
 import { Loader2, ChevronRight, Search, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { OptipeopleLogo } from "@/components/logo";
-import { UserMenu } from "@/components/UserMenu";
+import { AppHeader } from "@/components/AppHeader";
 import { useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
@@ -30,18 +29,7 @@ export function AccountSelectScreen() {
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">
-      <header
-        className="relative z-20 shrink-0"
-        style={{ backgroundColor: "var(--color-brand)" }}
-      >
-        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-3 px-4 sm:h-16 sm:px-6">
-          <OptipeopleLogo
-            className="h-6 w-auto shrink-0 text-white sm:h-7"
-            aria-label="Optipeople"
-          />
-          <UserMenu />
-        </div>
-      </header>
+      <AppHeader />
 
       <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
         <div
