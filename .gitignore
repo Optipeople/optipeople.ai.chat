@@ -34,7 +34,15 @@ yarn-error.log*
 
 # Misc
 .DS_Store
+Thumbs.db
+desktop.ini
 *.pem
+*.swp
+*.swo
+
+# Editors / IDEs
+.vscode/
+.idea/
 
 # Vercel
 .vercel
