@@ -48,21 +48,30 @@ export async function POST(req: Request) {
 
   const locale = await resolveLocale();
 
+  // GA Realtime API: mint an ephemeral key via /v1/realtime/client_secrets.
+  // The beta /v1/realtime/transcription_sessions endpoint and the
+  // `OpenAI-Beta: realtime=v1` header were retired and now 400.
   const sessionRes = await fetch(
-    "https://api.openai.com/v1/realtime/transcription_sessions",
+    "https://api.openai.com/v1/realtime/client_secrets",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
-        "OpenAI-Beta": "realtime=v1",
       },
       body: JSON.stringify({
-        input_audio_transcription: {
-          model: TRANSCRIBE_MODEL,
-          language: locale,
+        session: {
+          type: "transcription",
+          audio: {
+            input: {
+              transcription: {
+                model: TRANSCRIBE_MODEL,
+                language: locale,
+              },
+              turn_detection: { type: "server_vad" },
+            },
+          },
         },
-        turn_detection: { type: "server_vad" },
       }),
     },
   );
@@ -81,13 +90,14 @@ export async function POST(req: Request) {
   }
 
   const sessionData = (await sessionRes.json()) as {
-    id: string;
-    client_secret: { value: string; expires_at: number };
+    value: string;
+    expires_at: number;
+    session: { id: string };
   };
 
   return Response.json({
-    sessionId: sessionData.id,
-    clientSecret: sessionData.client_secret.value,
-    expiresAt: sessionData.client_secret.expires_at,
+    sessionId: sessionData.session.id,
+    clientSecret: sessionData.value,
+    expiresAt: sessionData.expires_at,
   });
 }

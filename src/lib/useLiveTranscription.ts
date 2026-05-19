@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithAuth } from "@/auth/authApi";
+import { waitForIceGathering } from "@/lib/waitForIceGathering";
 
 export type LiveTranscriptionState =
   | "idle"
@@ -178,17 +179,20 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
 
+      // GA Realtime API: the SDP offer is exchanged at /v1/realtime/calls
+      // and the `OpenAI-Beta` header is gone. The transcription session
+      // config travels on the ephemeral key, so no query params here.
       const sdpRes = await fetch(
-        "https://api.openai.com/v1/realtime?intent=transcription",
+        "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${session.clientSecret}`,
             "Content-Type": "application/sdp",
-            "OpenAI-Beta": "realtime=v1",
           },
-          body: offer.sdp ?? "",
+          body: pc.localDescription?.sdp ?? offer.sdp ?? "",
         },
       );
       if (!sdpRes.ok) {

@@ -176,69 +176,82 @@ export async function POST(req: Request) {
     return Response.json({ error: message }, { status: 500 });
   }
 
-  // Mint an ephemeral Realtime session. The browser uses
-  // client_secret.value as the bearer for the SDP exchange — that key is
+  // Mint an ephemeral Realtime session. The browser uses the returned
+  // ephemeral key as the bearer for the SDP exchange — that key is
   // short-lived (~1 minute) so it's safe to ship to the client.
+  //
+  // GA Realtime API: the session is created via /v1/realtime/client_secrets
+  // with the config nested under `session`. The beta /v1/realtime/sessions
+  // endpoint and the `OpenAI-Beta: realtime=v1` header were retired and
+  // now 400 with `beta_api_shape_disabled`.
   const sessionRes = await fetch(
-    "https://api.openai.com/v1/realtime/sessions",
+    "https://api.openai.com/v1/realtime/client_secrets",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
-        "OpenAI-Beta": "realtime=v1",
       },
       body: JSON.stringify({
-        model: REALTIME_MODEL,
-        voice: REALTIME_VOICE,
-        modalities: ["audio", "text"],
-        instructions,
-        // Whisper-style transcription of the operator's mic audio so we
-        // can render their words live and persist the transcript.
-        input_audio_transcription: {
-          model: "gpt-4o-mini-transcribe",
-          language: locale,
-        },
-        // Semantic VAD lets the model decide when the operator has
-        // actually finished a thought, rather than cutting on a fixed
-        // silence window. `eagerness: "low"` waits longer before
-        // responding — important on a noisy factory floor where
-        // operators pause mid-sentence to think or check the machine.
-        turn_detection: { type: "semantic_vad", eagerness: "low" },
-        tools: [
-          {
-            type: "function",
-            name: "search_kb",
-            description:
-              "Search the CONTENT of this machine's manuals. Returns ranked text snippets from inside the documents, with their source title and page numbers. Use this for technical questions whose answer is somewhere in the manuals (procedures, alarm codes, settings). DO NOT use this to check whether a manual exists — use list_documents for that.",
-            parameters: {
-              type: "object",
-              properties: {
-                query: {
-                  type: "string",
-                  description:
-                    "Short, specific search query. Phrase it the way it would appear in a manual.",
-                },
-                top_k: {
-                  type: "integer",
-                  description: "How many results to return. Default 6, max 12.",
-                },
+        session: {
+          type: "realtime",
+          model: REALTIME_MODEL,
+          instructions,
+          output_modalities: ["audio"],
+          audio: {
+            input: {
+              // Whisper-style transcription of the operator's mic audio so
+              // we can render their words live and persist the transcript.
+              transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: locale,
               },
-              required: ["query"],
+              // Semantic VAD lets the model decide when the operator has
+              // actually finished a thought, rather than cutting on a
+              // fixed silence window. `eagerness: "low"` waits longer
+              // before responding — important on a noisy factory floor
+              // where operators pause mid-sentence to think or check the
+              // machine.
+              turn_detection: { type: "semantic_vad", eagerness: "low" },
             },
+            output: { voice: REALTIME_VOICE },
           },
-          {
-            type: "function",
-            name: "list_documents",
-            description:
-              "List the manuals available for this machine. Returns each document's title, a short summary, and its page count. Use this when the operator asks which manuals exist, whether a specific manual is available, or for an overview of the documentation. Does NOT search inside the documents.",
-            parameters: {
-              type: "object",
-              properties: {},
+          tools: [
+            {
+              type: "function",
+              name: "search_kb",
+              description:
+                "Search the CONTENT of this machine's manuals. Returns ranked text snippets from inside the documents, with their source title and page numbers. Use this for technical questions whose answer is somewhere in the manuals (procedures, alarm codes, settings). DO NOT use this to check whether a manual exists — use list_documents for that.",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: {
+                    type: "string",
+                    description:
+                      "Short, specific search query. Phrase it the way it would appear in a manual.",
+                  },
+                  top_k: {
+                    type: "integer",
+                    description:
+                      "How many results to return. Default 6, max 12.",
+                  },
+                },
+                required: ["query"],
+              },
             },
-          },
-        ],
-        tool_choice: "auto",
+            {
+              type: "function",
+              name: "list_documents",
+              description:
+                "List the manuals available for this machine. Returns each document's title, a short summary, and its page count. Use this when the operator asks which manuals exist, whether a specific manual is available, or for an overview of the documentation. Does NOT search inside the documents.",
+              parameters: {
+                type: "object",
+                properties: {},
+              },
+            },
+          ],
+          tool_choice: "auto",
+        },
       }),
     },
   );
@@ -253,14 +266,15 @@ export async function POST(req: Request) {
   }
 
   const sessionData = (await sessionRes.json()) as {
-    id: string;
-    client_secret: { value: string; expires_at: number };
+    value: string;
+    expires_at: number;
+    session: { id: string };
   };
 
   return Response.json({
-    sessionId: sessionData.id,
-    clientSecret: sessionData.client_secret.value,
-    expiresAt: sessionData.client_secret.expires_at,
+    sessionId: sessionData.session.id,
+    clientSecret: sessionData.value,
+    expiresAt: sessionData.expires_at,
     model: REALTIME_MODEL,
     machineId: resolvedMachineId,
     accountId: resolvedAccountId,

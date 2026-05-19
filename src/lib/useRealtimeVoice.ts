@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithAuth } from "@/auth/authApi";
+import { waitForIceGathering } from "@/lib/waitForIceGathering";
 import type { SourceRef } from "@/components/SourceChips";
 
 // State machine for the conversation lifecycle. The UI maps these to
@@ -213,13 +214,14 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
       const type = evt.type;
       if (!type) return;
 
-      // A new conversation item was created on the server. We use this
+      // A new conversation item was added on the server. We use this
       // to insert the user's bubble in the correct chronological
       // position — input audio transcription completes asynchronously
       // and can arrive AFTER the assistant has already started speaking,
       // so relying on the transcription event for ordering produces a
-      // reversed transcript.
-      if (type === "conversation.item.created") {
+      // reversed transcript. (GA renamed `conversation.item.created` to
+      // `conversation.item.added`.)
+      if (type === "conversation.item.added") {
         const item = evt.item as
           | {
               id?: string;
@@ -273,8 +275,9 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
 
       // Assistant audio transcript streams in chunks. Accumulate per
       // response_id so the UI shows a live "typing" text alongside the
-      // spoken audio.
-      if (type === "response.audio_transcript.delta") {
+      // spoken audio. (GA renamed `response.audio_transcript.delta` to
+      // `response.output_audio_transcript.delta`.)
+      if (type === "response.output_audio_transcript.delta") {
         const responseId = (evt.response_id as string) ?? "current";
         const delta = (evt.delta as string) ?? "";
         const current = assistantBufRef.current.get(responseId) ?? "";
@@ -338,7 +341,7 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
         return;
       }
 
-      if (type === "response.audio_transcript.done") {
+      if (type === "response.output_audio_transcript.done") {
         const responseId = (evt.response_id as string) ?? "current";
         const finalText =
           ((evt.transcript as string) ?? assistantBufRef.current.get(responseId) ?? "").trim();
@@ -463,17 +466,20 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
 
+      // GA Realtime API: SDP is exchanged at /v1/realtime/calls, the
+      // `OpenAI-Beta` header is gone, and the model now travels on the
+      // ephemeral key rather than as a query param.
       const sdpRes = await fetch(
-        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(session.model)}`,
+        "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${session.clientSecret}`,
             "Content-Type": "application/sdp",
-            "OpenAI-Beta": "realtime=v1",
           },
-          body: offer.sdp ?? "",
+          body: pc.localDescription?.sdp ?? offer.sdp ?? "",
         },
       );
       if (!sdpRes.ok) {
