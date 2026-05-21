@@ -75,6 +75,9 @@ type QueueAPI = {
     documentTitle: string;
     fileSize: number | null;
   }) => void;
+  queue: QueueItem[];
+  processingDocs: AdminDocument[];
+  clearFinished: () => void;
 };
 
 const QueueContext = createContext<QueueAPI | null>(null);
@@ -246,28 +249,21 @@ export function UploadQueueProvider({
     update((q) => q.filter((i) => i.status !== "done"));
   }, [update]);
 
-  const api = { enqueueUploads, enqueueReprocess };
+  const api: QueueAPI = {
+    enqueueUploads,
+    enqueueReprocess,
+    queue,
+    processingDocs,
+    clearFinished,
+  };
   return (
-    <QueueContext.Provider value={api}>
-      {children}
-      <UploadQueuePanel
-        queue={queue}
-        processingDocs={processingDocs}
-        onClearFinished={clearFinished}
-      />
-    </QueueContext.Provider>
+    <QueueContext.Provider value={api}>{children}</QueueContext.Provider>
   );
 }
 
-function UploadQueuePanel({
-  queue,
-  processingDocs,
-  onClearFinished,
-}: {
-  queue: QueueItem[];
-  processingDocs: AdminDocument[];
-  onClearFinished: () => void;
-}) {
+export function UploadQueuePanel() {
+  const { queue, processingDocs, clearFinished: onClearFinished } =
+    useUploadQueue();
   const t = useTranslations("admin.uploadQueue");
   // Drop server-processing rows for docs the in-tab queue is already
   // showing (an in-flight reprocess from this tab). Avoids duplicate

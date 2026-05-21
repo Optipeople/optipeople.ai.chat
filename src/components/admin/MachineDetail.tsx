@@ -55,6 +55,7 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import { Select } from "@/components/ui/select";
 import {
+  UploadQueuePanel,
   UploadQueueProvider,
   useUploadQueue,
 } from "@/components/admin/uploadQueue";
@@ -168,6 +169,8 @@ export function MachineDetail({ machineId }: { machineId: string }) {
     >
       <div className="flex flex-col gap-5 pb-24 sm:gap-8 sm:pb-32">
         <UploadCard existingFolders={mergedFolders(data)} />
+
+        <UploadQueuePanel />
 
         <DocumentsTree
           machineId={machineId}
