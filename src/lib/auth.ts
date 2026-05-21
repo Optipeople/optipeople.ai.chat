@@ -1,18 +1,29 @@
 // Server-side auth helpers for Optipeople bearer tokens.
 //
-// requireSuperAdmin is the gate for every /api/admin/* route. It resolves
-// the caller via Optipeople /api/User/GetCurrentUser and 403s if their
-// permissionName isn't "SuperAdministrator". One round trip per admin
-// request is fine for an internal tool.
+// requireSuperAdmin / requireAdmin gate every /api/admin/* route. They
+// resolve the caller via Optipeople /api/User/GetCurrentUser and 403 if
+// their permissionName isn't in the allowed set. One round trip per
+// admin request is fine for an internal tool.
+//
+// requireAdmin allows both SuperAdministrator (cross-account) and
+// AccountAdministrator (their own account only). Account admins must
+// have their access scoped per-resource — use assertAccountAccess,
+// assertMachineAccess, assertDocumentAccess or assertConversationAccess
+// from the route handler.
+
+import { getSupabaseServerClient } from "./supabase";
 
 const TARGET =
   process.env.OPTIPEOPLE_API_TARGET ?? "https://api-staging.optipeople.dk";
 
 const USER_ME_PATH = "/api/User/GetCurrentUser";
-// Stable code-style identifier from Optipeople's role catalog. The
+// Stable code-style identifiers from Optipeople's role catalog. The
 // human-readable label ("Super Administrator") may have spacing/casing
 // drift across environments — permissionName won't.
 const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
+const ACCOUNT_ADMIN_PERMISSION = "AccountAdministrator";
+
+export type AdminRole = "super" | "account";
 
 export type CurrentUserDetails = {
   userId: string;
@@ -22,9 +33,20 @@ export type CurrentUserDetails = {
   name: string | null;
   roleName: string;
   permissionName: string;
+  // Optipeople account the user belongs to. Required for account admins
+  // (we 403 them at requireAdmin if it's missing); super admins can have
+  // null here since their scope is cross-account.
+  accountId: string | null;
 };
 
 export type SuperAdmin = CurrentUserDetails;
+
+// What requireAdmin returns. Discriminated by `role` so route handlers
+// can write `if (admin.role === "account") …` without re-checking
+// permissionName strings.
+export type Admin =
+  | (CurrentUserDetails & { role: "super" })
+  | (CurrentUserDetails & { role: "account"; accountId: string });
 
 export class AuthError extends Error {
   constructor(
@@ -55,6 +77,7 @@ type CurrentUser = {
   name: string | null;
   roleName: string;
   permissionName: string;
+  accountId: string | null;
 };
 
 // Per-request cache so multiple helpers within a single handler don't
@@ -70,7 +93,7 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch (err) {
-    console.error("requireSuperAdmin: upstream unreachable:", err);
+    console.error("requireAdmin: upstream unreachable:", err);
     throw new AuthError(502, "Auth upstream unreachable");
   }
 
@@ -106,6 +129,10 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
   const roleName = typeof obj.roleName === "string" ? obj.roleName : null;
   const permissionName =
     typeof obj.permissionName === "string" ? obj.permissionName : null;
+  const accountId =
+    typeof obj.accountId === "string" && obj.accountId.length > 0
+      ? obj.accountId
+      : null;
 
   if (!id || !email || !roleName || !permissionName) {
     throw new AuthError(
@@ -113,7 +140,7 @@ async function fetchCurrentUser(token: string): Promise<CurrentUser> {
       "Current user response missing id/email/roleName/permissionName",
     );
   }
-  return { id, email, name, roleName, permissionName };
+  return { id, email, name, roleName, permissionName, accountId };
 }
 
 // Resolves the current user from the request's bearer token. Throws
@@ -135,6 +162,7 @@ export async function resolveCurrentUser(
     name: user.name,
     roleName: user.roleName,
     permissionName: user.permissionName,
+    accountId: user.accountId,
   };
 }
 
@@ -145,4 +173,129 @@ export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
     throw new AuthError(403, "Not authorised");
   }
   return user;
+}
+
+// Allows either SuperAdministrator (full access) or AccountAdministrator
+// (account-scoped — see assertAccountAccess and friends). Throws
+// AuthError on failure. Account admins without an accountId on their
+// Optipeople user are rejected — without the scope we can't enforce
+// anything.
+export async function requireAdmin(req: Request): Promise<Admin> {
+  const user = await resolveCurrentUser(req);
+  if (user.permissionName === SUPER_ADMIN_PERMISSION) {
+    return { ...user, role: "super" };
+  }
+  if (user.permissionName === ACCOUNT_ADMIN_PERMISSION) {
+    if (!user.accountId) {
+      throw new AuthError(
+        403,
+        "Account administrator has no accountId on their Optipeople user",
+      );
+    }
+    return { ...user, role: "account", accountId: user.accountId };
+  }
+  throw new AuthError(403, "Not authorised");
+}
+
+// No-op for super admins. For account admins, 403s if `accountId`
+// doesn't match the admin's own account. Use after requireAdmin in
+// routes that take an accountId parameter.
+export function assertAccountAccess(admin: Admin, accountId: string): void {
+  if (admin.role === "super") return;
+  if (admin.accountId !== accountId) {
+    throw new AuthError(403, "Not authorised for this account");
+  }
+}
+
+// Looks up the machine's account_id and checks it against the admin.
+// Throws 404 if the machine_kb row doesn't exist (consistent with what
+// callers would otherwise hit downstream) and 403 if the machine
+// belongs to a different account. Returns the account_id so callers
+// that need it (e.g. ingest) don't have to re-query.
+export async function assertMachineAccess(
+  admin: Admin,
+  machineId: string,
+): Promise<string> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("machine_kb")
+    .select("account_id")
+    .eq("machine_id", machineId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("assertMachineAccess lookup failed:", error);
+    throw new AuthError(500, "Database error");
+  }
+  if (!data) {
+    throw new AuthError(404, "Machine not found");
+  }
+  const accountId = (data as { account_id: string }).account_id;
+  assertAccountAccess(admin, accountId);
+  return accountId;
+}
+
+// Looks up the document's machine, then the machine's account, and
+// checks scope. Throws 404 if the document doesn't exist. Returns
+// { machineId, accountId } for callers that need them.
+export async function assertDocumentAccess(
+  admin: Admin,
+  documentId: string,
+): Promise<{ machineId: string; accountId: string }> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_documents")
+    .select("machine_id, machine_kb!inner(account_id)")
+    .eq("id", documentId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("assertDocumentAccess lookup failed:", error);
+    throw new AuthError(500, "Database error");
+  }
+  if (!data) {
+    throw new AuthError(404, "Document not found");
+  }
+  // PostgREST returns the joined row as an object (because of !inner +
+  // 1:1) but typings sometimes infer it as an array. Handle both.
+  const row = data as {
+    machine_id: string;
+    machine_kb:
+      | { account_id: string }
+      | { account_id: string }[]
+      | null;
+  };
+  const accountId = Array.isArray(row.machine_kb)
+    ? row.machine_kb[0]?.account_id
+    : row.machine_kb?.account_id;
+  if (!accountId) {
+    throw new AuthError(404, "Document not found");
+  }
+  assertAccountAccess(admin, accountId);
+  return { machineId: row.machine_id, accountId };
+}
+
+// Same shape as assertDocumentAccess for the conversations table. Used
+// by /api/admin/conversations/[id].
+export async function assertConversationAccess(
+  admin: Admin,
+  conversationId: string,
+): Promise<{ machineId: string; accountId: string }> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("machine_id, account_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("assertConversationAccess lookup failed:", error);
+    throw new AuthError(500, "Database error");
+  }
+  if (!data) {
+    throw new AuthError(404, "Conversation not found");
+  }
+  const row = data as { machine_id: string; account_id: string };
+  assertAccountAccess(admin, row.account_id);
+  return { machineId: row.machine_id, accountId: row.account_id };
 }

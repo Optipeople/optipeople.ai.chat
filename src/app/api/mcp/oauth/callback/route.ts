@@ -30,8 +30,23 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function adminRedirect(req: Request, status: string, message?: string): Response {
-  const url = new URL("/admin/mcp", req.url);
+function adminRedirect(
+  req: Request,
+  status: string,
+  accountId: string | null,
+  message?: string,
+): Response {
+  // Bounce the admin back to the account hub with the MCP section
+  // open when we know which account this flow was for. We only fall
+  // through to the picker when state was missing or unresolved — in
+  // that case there's no account context to land on.
+  const url = accountId
+    ? new URL(
+        `/admin/accounts/${encodeURIComponent(accountId)}`,
+        req.url,
+      )
+    : new URL("/admin/accounts", req.url);
+  if (accountId) url.searchParams.set("section", "mcp");
   url.searchParams.set("status", status);
   if (message) url.searchParams.set("message", message.slice(0, 200));
   return Response.redirect(url.toString(), 303);
@@ -53,17 +68,19 @@ export async function GET(req: Request) {
       ? `${errorCode}: ${errorDescription}`
       : errorCode;
     // Best-effort cleanup of the pending row, if state is present.
+    let accountId: string | null = null;
     if (state) {
       const row = await findPendingAuthByState(state).catch(() => null);
       if (row) {
+        accountId = row.account_id;
         await recordError({ accountId: row.account_id, message }).catch(() => {});
       }
     }
-    return adminRedirect(req, "error", message);
+    return adminRedirect(req, "error", accountId, message);
   }
 
   if (!code || !state) {
-    return adminRedirect(req, "error", "Missing code or state in callback");
+    return adminRedirect(req, "error", null, "Missing code or state in callback");
   }
 
   const row = await findPendingAuthByState(state).catch(() => null);
@@ -71,6 +88,7 @@ export async function GET(req: Request) {
     return adminRedirect(
       req,
       "error",
+      null,
       "No matching pending authorization (state expired or unknown)",
     );
   }
@@ -82,7 +100,7 @@ export async function GET(req: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "discovery failed";
     await recordError({ accountId: row.account_id, message });
-    return adminRedirect(req, "error", message);
+    return adminRedirect(req, "error", row.account_id, message);
   }
 
   try {
@@ -100,7 +118,7 @@ export async function GET(req: Request) {
       refreshToken: tokens.refresh_token ?? null,
       expiresInSeconds: tokens.expires_in ?? 3600,
     });
-    return adminRedirect(req, "ok");
+    return adminRedirect(req, "ok", row.account_id);
   } catch (err) {
     const message =
       err instanceof OAuthTokenError
@@ -109,6 +127,6 @@ export async function GET(req: Request) {
           ? err.message
           : "Token exchange failed";
     await recordError({ accountId: row.account_id, message });
-    return adminRedirect(req, "error", message);
+    return adminRedirect(req, "error", row.account_id, message);
   }
 }

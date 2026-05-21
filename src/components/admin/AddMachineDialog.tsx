@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
+import { Check, ChevronsUpDown, Search, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -223,19 +224,19 @@ export function AddMachineDialog({
         <div className="flex justify-end gap-2">
           <Button
             variant="secondary"
-            size="sm"
+            size="compact"
             onClick={() => !submitting && onClose()}
             disabled={submitting}
           >
             {t("cancel")}
           </Button>
           <Button
-            size="sm"
+            size="compact"
             onClick={() => void submit()}
             disabled={!machine || submitting}
           >
             {submitting ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              <Spinner className="mr-1.5 h-4 w-4" />
             ) : (
               <Check className="mr-1.5 h-4 w-4" />
             )}

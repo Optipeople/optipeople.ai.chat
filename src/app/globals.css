@@ -61,6 +61,8 @@
   --ds-green-50: rgba(55, 194, 69, 0.5);
   --ds-green-80: rgba(55, 194, 69, 0.8);
 
+  --ds-midnight-green: #134343;  /* progress fill, brand-dark accent */
+
   /* Tag palette */
   --ds-tag-green-light: #d6f1d9;
   --ds-tag-green-dark: #b2d0b5;

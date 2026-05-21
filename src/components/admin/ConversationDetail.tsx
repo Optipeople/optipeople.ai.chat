@@ -1,13 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   FileText,
-  Loader2,
   Search,
   ThumbsDown,
   ThumbsUp,
@@ -16,12 +13,15 @@ import {
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/markdown";
+import { Spinner } from "@/components/ui/spinner";
 import {
   getAdminConversation,
+  getAdminMachine,
   type AdminChunkRef,
   type AdminConversationDetail,
   type AdminConversationMessage,
 } from "@/admin/adminApi";
+import { Breadcrumbs, type Crumb } from "@/components/admin/Breadcrumbs";
 
 const DA_DT = new Intl.DateTimeFormat("da-DK", {
   dateStyle: "short",
@@ -41,7 +41,10 @@ export function ConversationDetail({
 }) {
   const t = useTranslations("admin.conversationDetail");
   const tc = useTranslations("common");
+  const tn = useTranslations("admin.nav.crumbs");
+  const tSections = useTranslations("admin.nav.sections");
   const [data, setData] = useState<AdminConversationDetail | null>(null);
+  const [machineName, setMachineName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,17 +66,57 @@ export function ConversationDetail({
     };
   }, [conversationId]);
 
+  // Lookup just the machine display name for the breadcrumb. Best-effort:
+  // if it 404s/fails, the breadcrumb still has the link working with a
+  // fallback label, so we silently ignore errors.
+  useEffect(() => {
+    let cancelled = false;
+    getAdminMachine(machineId)
+      .then((d) => {
+        if (cancelled) return;
+        setMachineName(d.displayName ?? null);
+      })
+      .catch(() => {
+        // ignore — breadcrumb falls back to the loading state
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [machineId]);
+
+  const breadcrumbs: Crumb[] = [
+    { label: tSections("machines"), href: "/admin/machines" },
+    {
+      label: machineName ?? tn("loading"),
+      loading: machineName === null,
+      href: `/admin/machines/${encodeURIComponent(machineId)}`,
+    },
+    {
+      label: tn("conversations"),
+      href: `/admin/machines/${encodeURIComponent(machineId)}?section=conversations`,
+    },
+    {
+      label: conversationId.slice(0, 8),
+    },
+  ];
+
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+      <div className="flex flex-col gap-5 sm:gap-6">
+        <Breadcrumbs items={breadcrumbs} />
+        <div className="flex h-64 items-center justify-center">
+          <Spinner className="h-5 w-5" />
+        </div>
       </div>
     );
   }
   if (error || !data) {
     return (
-      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
-        {error ?? t("fetchFailed")}
+      <div className="flex flex-col gap-5 sm:gap-6">
+        <Breadcrumbs items={breadcrumbs} />
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-red-600">
+          {error ?? t("fetchFailed")}
+        </div>
       </div>
     );
   }
@@ -84,13 +127,7 @@ export function ConversationDetail({
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
-      <Link
-        href={`/admin/machines/${machineId}/conversations`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        {t("backAll")}
-      </Link>
+      <Breadcrumbs items={breadcrumbs} />
 
       <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
         <h1 className="text-[18px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[20px]">

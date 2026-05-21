@@ -5,7 +5,11 @@
 // Useful when the auto-fallback heuristic missed an image-heavy PDF and
 // the operator wants to force a Claude OCR pass without delete/re-upload.
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertDocumentAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { IngestTimeoutError, reprocessPdf } from "@/lib/ingestion";
 
 export const runtime = "nodejs";
@@ -18,14 +22,14 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await ctx.params;
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertDocumentAccess(admin, id);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;
   }
-
-  const { id } = await ctx.params;
   let body: { force?: unknown } = {};
   try {
     if (req.headers.get("content-length") !== "0") {

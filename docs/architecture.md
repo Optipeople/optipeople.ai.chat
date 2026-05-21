@@ -275,7 +275,7 @@ table or claim mapping for Opti Assist-specific permissions:
 | Role | Can do |
 |---|---|
 | `operator` | Chat on machines they have Optipeople access to. See their own conversations. Submit feedback / escalate. |
-| `account_admin` | Everything an operator can. Read all conversations and feedback for **their account**. Cannot edit KB. |
+| `account_admin` | Full admin surface scoped to **their account**: manage KB (upload/edit/delete docs and folders), AI rules, MCP credentials, QR codes, escalation target, plus read all conversations and feedback. Identified by Optipeople `permissionName === "AccountAdministrator"` with `accountId` set. |
 | `super_admin` | Everything. Upload/edit/delete KB for any machine. Promote feedback to KB. Cross-account audit. |
 
 `super_admin` should be small and Optipeople-internal at first. The

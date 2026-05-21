@@ -1,6 +1,4 @@
-import { ConversationsList } from "@/components/admin/ConversationsList";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default async function AdminMachineConversationsPage({
   params,
@@ -8,5 +6,5 @@ export default async function AdminMachineConversationsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <ConversationsList machineId={id} />;
+  redirect(`/admin/machines/${encodeURIComponent(id)}?section=conversations`);
 }

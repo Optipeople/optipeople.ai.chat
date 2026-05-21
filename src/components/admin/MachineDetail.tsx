@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   Check,
   ChevronRight,
   Copy,
@@ -17,7 +16,6 @@ import {
   History,
   Image as ImageIcon,
   Info,
-  Loader2,
   MessageSquare,
   MessageSquareQuote,
   Pencil,
@@ -32,6 +30,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 import {
   createAdminFolder,
   deleteAdminDocument,
@@ -54,6 +53,7 @@ import { getMachinesForAccount } from "@/auth/machinesApi";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
+import { Select } from "@/components/ui/select";
 import {
   UploadQueueProvider,
   useUploadQueue,
@@ -146,7 +146,7 @@ export function MachineDetail({ machineId }: { machineId: string }) {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-5 w-5" />
       </div>
     );
   }
@@ -167,20 +167,6 @@ export function MachineDetail({ machineId }: { machineId: string }) {
       )}
     >
       <div className="flex flex-col gap-5 pb-24 sm:gap-8 sm:pb-32">
-        <Link
-          href="/admin/machines"
-          className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {t("backAll")}
-        </Link>
-
-        <MachineSummary machine={data} onChanged={reload} />
-
-        <MachineQrCard machine={data} onChanged={reload} />
-
-        <MachineEscalationCard accountId={data.accountId} />
-
         <UploadCard existingFolders={mergedFolders(data)} />
 
         <DocumentsTree
@@ -191,6 +177,64 @@ export function MachineDetail({ machineId }: { machineId: string }) {
         />
       </div>
     </UploadQueueProvider>
+  );
+}
+
+// Settings tab for /admin/machines/[id]/settings. Fetches the machine
+// once (no polling — none of these cards reflect doc-processing state)
+// and renders the name/QR/escalation cards that used to live on the
+// main machine page.
+export function MachineSettings({ machineId }: { machineId: string }) {
+  const t = useTranslations("admin.machineDetail");
+  const tc = useTranslations("common");
+  const [data, setData] = useState<AdminMachineDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const detail = await getAdminMachine(machineId);
+    setData(detail);
+  }, [machineId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAdminMachine(machineId)
+      .then((detail) => {
+        if (cancelled) return;
+        setData(detail);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : tc("unknownError"));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [machineId, tc]);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Spinner className="h-5 w-5" />
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-6 text-[14px] text-[var(--ds-red)]">
+        {error ?? t("fetchFailed")}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5 sm:gap-8">
+      <MachineSummary machine={data} onChanged={reload} />
+      <MachineQrCard machine={data} onChanged={reload} />
+      <MachineEscalationCard accountId={data.accountId} />
+    </div>
   );
 }
 
@@ -314,7 +358,7 @@ function MachineSummary({
                 className="rounded-[4px] p-2 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)] disabled:opacity-40"
                 aria-label={t("saveAria")}
               >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                {saving ? <Spinner className="h-4 w-4" /> : <Check className="h-4 w-4" />}
               </button>
               <button
                 onClick={() => {
@@ -343,7 +387,7 @@ function MachineSummary({
         </div>
         <div className="flex flex-wrap gap-2 sm:shrink-0 sm:flex-nowrap">
           <Link
-            href={`/admin/machines/${machine.machineId}/conversations`}
+            href={`/admin/machines/${machine.machineId}?section=conversations`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
             title={t("conversationsTitle")}
           >
@@ -351,7 +395,7 @@ function MachineSummary({
             {t("conversationsBtn")}
           </Link>
           <Link
-            href={`/admin/machines/${machine.machineId}/escalations`}
+            href={`/admin/machines/${machine.machineId}?section=escalations`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
             title={t("escalationsTitle")}
           >
@@ -376,7 +420,7 @@ function MachineSummary({
             title={t("deleteMachineTitle")}
           >
             {deleting ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              <Spinner className="mr-1.5 h-4 w-4" />
             ) : (
               <Trash2 className="mr-1.5 h-4 w-4" />
             )}
@@ -583,7 +627,7 @@ function MachineQrCard({
             disabled={busy !== null}
           >
             {busy === "generate" ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              <Spinner className="mr-1.5 h-4 w-4" />
             ) : (
               <RefreshCw className="mr-1.5 h-4 w-4" />
             )}
@@ -597,7 +641,7 @@ function MachineQrCard({
               disabled={busy !== null}
             >
               {busy === "revoke" ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                <Spinner className="mr-1.5 h-4 w-4" />
               ) : (
                 <X className="mr-1.5 h-4 w-4" />
               )}
@@ -703,7 +747,10 @@ function UploadCard({
   }
 
   return (
-    <section className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6">
+    <section
+      id="upload"
+      className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6 scroll-mt-24"
+    >
       <h2 className="text-[16px] font-semibold text-[var(--color-foreground)]">
         {t("uploadHeading")}
       </h2>
@@ -712,26 +759,20 @@ function UploadCard({
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-        <label className="block text-[13px] font-medium text-[var(--color-foreground)]">
-          {t("folderLabel")}
-          <select
-            value={pickerFolder}
-            onChange={(e) => setPickerFolder(e.target.value)}
-            className={cn(
-              "mt-1 h-10 w-full rounded-[4px] border border-[var(--color-hairline)]",
-              "bg-[var(--color-background)] px-3 text-[14px] font-normal",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-            )}
-          >
-            <option value={ROOT_FOLDER_SENTINEL}>{t("folderRoot")}</option>
-            {existingFolders.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-            <option value={NEW_FOLDER_SENTINEL}>{t("folderNew")}</option>
-          </select>
-        </label>
+        <Select
+          label={t("folderLabel")}
+          size="medium"
+          value={pickerFolder}
+          onValueChange={setPickerFolder}
+        >
+          <option value={ROOT_FOLDER_SENTINEL}>{t("folderRoot")}</option>
+          {existingFolders.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+          <option value={NEW_FOLDER_SENTINEL}>{t("folderNew")}</option>
+        </Select>
         {pickerFolder === NEW_FOLDER_SENTINEL && (
           <input
             value={newFolderInput}
@@ -1078,7 +1119,7 @@ function DocumentsTree({
                 className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
               >
                 {bulkVisibility ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner className="h-3.5 w-3.5" />
                 ) : bulkVisibilityAction === "show" ? (
                   <Eye className="h-3.5 w-3.5" />
                 ) : (
@@ -1095,7 +1136,7 @@ function DocumentsTree({
                 className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--ds-red)]/30 bg-[var(--ds-red-bg)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--ds-red)] hover:bg-[var(--ds-red)]/10 disabled:opacity-50"
               >
                 {bulkDeleting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner className="h-3.5 w-3.5" />
                 ) : (
                   <Trash2 className="h-3.5 w-3.5" />
                 )}
@@ -1315,7 +1356,7 @@ function NewFolderRow({
         aria-label={t("createFolderAria")}
       >
         {saving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner className="h-3.5 w-3.5" />
         ) : (
           <Check className="h-3.5 w-3.5" />
         )}
@@ -1437,7 +1478,7 @@ function FolderNode({
             className="ml-auto rounded p-1 text-[var(--color-muted-foreground)] opacity-0 transition-opacity hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] group-hover:opacity-100 disabled:opacity-40"
           >
             {deletingFolder ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner className="h-3.5 w-3.5" />
             ) : (
               <Trash2 className="h-3.5 w-3.5" />
             )}
@@ -1711,7 +1752,7 @@ function DocumentRow({
               aria-label={t("saveAria")}
             >
               {saving ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Spinner className="h-3.5 w-3.5" />
               ) : (
                 <Check className="h-3.5 w-3.5" />
               )}
@@ -1773,7 +1814,7 @@ function DocumentRow({
               className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {opening ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Spinner className="h-4 w-4" />
               ) : (
                 <Eye className="h-4 w-4" />
               )}
@@ -1786,7 +1827,7 @@ function DocumentRow({
               className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {downloading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Spinner className="h-4 w-4" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
@@ -1815,7 +1856,7 @@ function DocumentRow({
           className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] disabled:opacity-40"
         >
           {deleting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Spinner className="h-4 w-4" />
           ) : (
             <Trash2 className="h-4 w-4" />
           )}
@@ -1888,7 +1929,7 @@ function OperatorVisibleToggle({
         )}
       >
         {saving && (
-          <Loader2 className="h-2.5 w-2.5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Spinner className="h-2.5 w-2.5" />
         )}
       </span>
     </button>

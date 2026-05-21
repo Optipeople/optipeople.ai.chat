@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, ChevronRight, Search, X } from "lucide-react";
+import { ChevronRight, Search, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/AppHeader";
@@ -47,7 +48,7 @@ export function AccountSelectScreen() {
 
           {isLoadingAccounts && accounts.length === 0 && (
             <div className="flex items-center gap-2 py-6 text-[15px] text-[var(--color-muted-foreground)]">
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Spinner className="h-5 w-5" />
               {t("loading")}
             </div>
           )}
@@ -61,7 +62,7 @@ export function AccountSelectScreen() {
                 disabled={isLoadingAccounts}
               >
                 {isLoadingAccounts ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Spinner className="h-4 w-4" />
                 ) : (
                   tc("retry")
                 )}

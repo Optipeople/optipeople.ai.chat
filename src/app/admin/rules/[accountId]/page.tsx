@@ -1,12 +1,10 @@
-import { AiRulesEditor } from "@/components/admin/AiRulesEditor";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-export default async function AdminAiRulesEditorPage({
+export default async function AdminAiRulesEditorRedirectPage({
   params,
 }: {
   params: Promise<{ accountId: string }>;
 }) {
   const { accountId } = await params;
-  return <AiRulesEditor accountId={accountId} />;
+  redirect(`/admin/accounts/${encodeURIComponent(accountId)}?section=rules`);
 }

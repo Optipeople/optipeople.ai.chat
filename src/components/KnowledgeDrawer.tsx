@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
   BookOpen,
@@ -8,13 +9,17 @@ import {
   FileText,
   Folder,
   Image as ImageIcon,
-  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
+  Upload,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
+import { isAdmin, useAuth } from "@/auth/AuthContext";
 import { useFileViewer } from "@/components/FileViewer";
+import { buttonClasses } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
   OperatorDocument,
@@ -30,6 +35,12 @@ const MOBILE_MQ = "(max-width: 639px)";
 
 export function KnowledgeDrawer({ machineId }: { machineId: string }) {
   const t = useTranslations("knowledgeDrawer");
+  const { user } = useAuth();
+  // Admins (super or account-scoped) get a link to the admin upload
+  // section. Operators see the same drawer minus the affordance —
+  // /api/admin/ingest is server-gated, so this is a UI hint only.
+  const canUpload = isAdmin(user);
+  const adminUploadHref = `/admin/machines/${encodeURIComponent(machineId)}#upload`;
   // Track viewport size so we can render an overlay drawer on small
   // screens and an inline sidebar on >= sm. Lazy initializers read
   // matchMedia on first client render so mobile users don't see the
@@ -80,11 +91,21 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
     if (open) void load();
   }, [open, load]);
 
+  const uploadButton = canUpload ? (
+    <Link
+      href={adminUploadHref}
+      className={buttonClasses({ variant: "secondary", className: "w-full gap-2" })}
+    >
+      <Upload className="h-4 w-4" />
+      <span>{t("adminUpload")}</span>
+    </Link>
+  ) : null;
+
   const docList = (
     <>
       {loading && (
         <div className="flex h-full items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-white/70" />
+          <Spinner className="h-5 w-5" />
         </div>
       )}
       {!loading && error && (
@@ -100,8 +121,26 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
         </div>
       )}
       {!loading && !error && docs && docs.length === 0 && (
-        <div className="px-4 py-8 text-center text-[15px] text-white/70 sm:px-6">
-          {t("empty")}
+        <div className="px-4 py-8 text-center sm:px-6">
+          {canUpload ? (
+            <>
+              <p className="text-[15px] font-medium text-white">
+                {t("adminEmptyTitle")}
+              </p>
+              <p className="mt-2 text-[14px] leading-[1.5] text-white/70">
+                {t("adminEmptyBody")}
+              </p>
+              <Link
+                href={adminUploadHref}
+                className={buttonClasses({ variant: "secondary", className: "mt-5 gap-2" })}
+              >
+                <Upload className="h-4 w-4" />
+                <span>{t("adminUpload")}</span>
+              </Link>
+            </>
+          ) : (
+            <p className="text-[15px] text-white/70">{t("empty")}</p>
+          )}
         </div>
       )}
       {!loading && !error && docs && docs.length > 0 && (
@@ -136,20 +175,21 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           )}
           aria-hidden={open}
         >
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label={t("openAria")}
-            title={t("openTitle")}
-            tabIndex={open ? -1 : 0}
-            className={cn(
-              "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
-              "hover:bg-white/10 hover:text-white",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-            )}
-          >
-            <PanelLeftOpen className="h-5 w-5" />
-          </button>
+          <Tooltip content={t("openTitle")} side="right" variant="light">
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-label={t("openAria")}
+              tabIndex={open ? -1 : 0}
+              className={cn(
+                "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+                "hover:bg-white/10 hover:text-white",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+              )}
+            >
+              <PanelLeftOpen className="h-5 w-5" />
+            </button>
+          </Tooltip>
         </div>
 
         {/* Open panel layout — fixed at full open width, clipped by the
@@ -183,6 +223,9 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
             {t("description")}
           </p>
+          {canUpload && docs && docs.length > 0 && (
+            <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
+          )}
           <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
         </div>
       </aside>
@@ -200,24 +243,29 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
         "bg-[var(--color-brand)]",
       )}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? t("closeAria") : t("openAria")}
-        aria-expanded={open}
-        title={open ? t("closeAria") : t("openTitle")}
-        className={cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
-          "hover:bg-white/10 hover:text-white",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-        )}
+      <Tooltip
+        content={open ? t("closeAria") : t("openTitle")}
+        side="right"
+        variant="light"
       >
-        {open ? (
-          <PanelLeftClose className="h-5 w-5" />
-        ) : (
-          <PanelLeftOpen className="h-5 w-5" />
-        )}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? t("closeAria") : t("openAria")}
+          aria-expanded={open}
+          className={cn(
+            "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+            "hover:bg-white/10 hover:text-white",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+          )}
+        >
+          {open ? (
+            <PanelLeftClose className="h-5 w-5" />
+          ) : (
+            <PanelLeftOpen className="h-5 w-5" />
+          )}
+        </button>
+      </Tooltip>
       <div
         className={cn(
           "fixed inset-0 z-40",
@@ -264,6 +312,9 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
             {t("description")}
           </p>
+          {canUpload && docs && docs.length > 0 && (
+            <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
+          )}
           <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
         </div>
       </div>

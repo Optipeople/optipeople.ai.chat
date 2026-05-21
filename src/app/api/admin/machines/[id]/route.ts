@@ -5,7 +5,11 @@
 //                                   via FK; conversation/feedback/escalation
 //                                   audit history stays (no FK to machine_kb).
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { cleanupStuckDocuments } from "@/lib/ingestion";
 import { getMcpConfigSummary, type McpStatus } from "@/lib/mcpConfig";
 import { getSupabaseServerClient } from "@/lib/supabase";
@@ -61,9 +65,10 @@ export type AdminMachineDetail = {
   mcp: AdminMachineMcp | null;
 };
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(req: Request, machineId: string): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertMachineAccess(admin, machineId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -75,10 +80,9 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   const supabase = getSupabaseServerClient();
 
   // Watchdog: flip any in-pipeline doc that hasn't progressed in
@@ -201,10 +205,10 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
+  const { id } = await ctx.params;
+  const denied = await gate(req, id);
   if (denied) return denied;
 
-  const { id } = await ctx.params;
   let body: { displayName?: unknown };
   try {
     body = (await req.json()) as { displayName?: unknown };
@@ -238,10 +242,10 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
+  const { id } = await ctx.params;
+  const denied = await gate(req, id);
   if (denied) return denied;
 
-  const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
   // Best-effort storage cleanup: list everything under <machineId>/ in

@@ -92,10 +92,10 @@ function slug(name: string): string {
     .slice(0, 50);
 }
 
-export async function downloadQrStickerPng(args: {
+async function renderQrStickerCanvas(args: {
   machineName: string;
   qrUrl: string;
-}): Promise<void> {
+}): Promise<HTMLCanvasElement> {
   const W = 1200;
   const H = 1500;
   const canvas = document.createElement("canvas");
@@ -169,11 +169,32 @@ export async function downloadQrStickerPng(args: {
     1280,
   );
 
-  // Trigger download.
+  return canvas;
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   const blob: Blob | null = await new Promise((resolve) => {
     canvas.toBlob((b) => resolve(b), "image/png");
   });
   if (!blob) throw new Error("Kunne ikke generere PNG");
+  return blob;
+}
+
+export async function renderQrStickerPngUrl(args: {
+  machineName: string;
+  qrUrl: string;
+}): Promise<string> {
+  const canvas = await renderQrStickerCanvas(args);
+  const blob = await canvasToBlob(canvas);
+  return URL.createObjectURL(blob);
+}
+
+export async function downloadQrStickerPng(args: {
+  machineName: string;
+  qrUrl: string;
+}): Promise<void> {
+  const canvas = await renderQrStickerCanvas(args);
+  const blob = await canvasToBlob(canvas);
 
   const fileName = `qr-${slug(args.machineName) || "maskine"}.png`;
   const url = URL.createObjectURL(blob);

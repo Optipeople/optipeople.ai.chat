@@ -3,7 +3,11 @@
 // metadata expanded for tool messages (so the audit can show which
 // manual snippets the AI saw).
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertConversationAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -70,14 +74,14 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await ctx.params;
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertConversationAccess(admin, id);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;
   }
-
-  const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
   const [

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Folder, Loader2, Sparkles, X } from "lucide-react";
+import { Folder, Sparkles, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -181,7 +182,7 @@ export function AutoOrganizeDialog({
         <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           {phase === "loading" && (
             <div className="flex flex-col items-center justify-center gap-3 py-10 text-[14px] text-[var(--color-muted-foreground)]">
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Spinner className="h-5 w-5" />
               {t("analyzing")}
             </div>
           )}
@@ -319,7 +320,7 @@ export function AutoOrganizeDialog({
               disabled={busy || phase !== "ready" || selectedCount === 0}
             >
               {busy ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                <Spinner className="mr-1.5 h-4 w-4" />
               ) : (
                 <Sparkles className="mr-1.5 h-4 w-4" />
               )}

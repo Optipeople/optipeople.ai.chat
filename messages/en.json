@@ -29,8 +29,8 @@
     "role": "Role",
     "account": "Account",
     "machine": "Machine",
-    "admin": "Admin",
-    "aiRules": "AI rules",
+    "admin": "Machine settings",
+    "accountSettings": "Account settings",
     "switchAccount": "Switch account",
     "switchMachine": "Switch machine",
     "language": "Language",
@@ -166,6 +166,7 @@
     "regenerate": "Regenerate",
     "newChat": "New chat",
     "newChatAria": "Start a new chat",
+    "changeMachineAria": "Switch machine",
     "jumpToLatest": "Jump to latest",
     "showSuggestions": "Show starter questions",
     "hideSuggestions": "Hide starter questions",
@@ -211,6 +212,9 @@
     "heading": "Documents",
     "description": "Manuals and documents for this machine. Click any item to open it.",
     "empty": "No documents available yet. Ask your administrator to make manuals visible here.",
+    "adminEmptyTitle": "No documents yet",
+    "adminEmptyBody": "Add manuals or images for this machine in the admin. They'll appear here and the assistant will use them to answer operator questions.",
+    "adminUpload": "Add documents in admin",
     "retry": "Try again",
     "missingUrl": "Missing URL in response",
     "openFailed": "Could not open document"
@@ -277,12 +281,30 @@
     }
   },
   "admin": {
+    "nav": {
+      "sections": {
+        "machines": "Machines",
+        "accounts": "Accounts"
+      },
+      "crumbs": {
+        "machines": "Machines",
+        "accounts": "Accounts",
+        "knowledge": "Knowledge",
+        "settings": "Settings",
+        "conversations": "Conversations",
+        "escalations": "Escalations",
+        "qr": "QR code",
+        "rules": "AI rules",
+        "mcp": "MCP",
+        "loading": "…"
+      }
+    },
     "gate": {
       "notLoggedInTitle": "You are not logged in",
       "notLoggedInBody": "Log in to access the admin area.",
       "toLogin": "To login",
       "unauthorizedTitle": "Not authorized",
-      "unauthorizedBody": "The admin area is reserved for the SuperAdministrator role. Your role: {role}.",
+      "unauthorizedBody": "The admin area is reserved for administrators. Your role: {role}.",
       "unknownRole": "unknown",
       "backToChat": "Back to chat"
     },
@@ -295,12 +317,17 @@
       "emptyFirst": "Press \"Add machine\" to add your first machine.",
       "emptySearch": "No machines match your search.",
       "colName": "Name",
-      "colMachineId": "Machine ID",
-      "colAccountId": "Account ID",
+      "colAccount": "Account",
+      "colFactory": "Factory",
       "colDocuments": "Documents",
       "noName": "(no name)",
       "openChatTitle": "Open chat in a new tab",
-      "openChatAria": "Open chat"
+      "openChatAria": "Open chat",
+      "countLabelFiltered": "{shown} of {total} machines",
+      "filterAccount": "Account",
+      "filterFactory": "Factory",
+      "filterAllAccounts": "All accounts",
+      "filterAllFactories": "All factories"
     },
     "machineDetail": {
       "fetchFailed": "Could not fetch machine",
@@ -474,8 +501,8 @@
       "resolutionUnresolved": "Unresolved",
       "resolutionEscalated": "Escalated",
       "resolutionUnknown": "Unknown",
-      "prev": "← Previous",
-      "next": "Next →",
+      "prev": "Previous",
+      "next": "Next",
       "pageLabel": "Page {n}"
     },
     "conversationDetail": {
@@ -528,8 +555,8 @@
       "channelServiceTicket": "Service ticket",
       "channelWebhook": "Webhook",
       "open": "Open",
-      "prev": "← Previous",
-      "next": "Next →",
+      "prev": "Previous",
+      "next": "Next",
       "pageLabel": "Page {n}"
     },
     "addMachine": {

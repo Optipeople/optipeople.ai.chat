@@ -11,6 +11,12 @@ export type SectionExpanderProps = {
   className?: string;
   /** Optional content rendered below the header when expanded. */
   panel?: React.ReactNode;
+  /**
+   * Keep the panel mounted while collapsed (hidden via CSS) so its
+   * internal data fetches happen once and don't re-run each time the
+   * user opens the section. Defaults to false.
+   */
+  keepMounted?: boolean;
 };
 
 /**
@@ -26,6 +32,7 @@ export function SectionExpander({
   children,
   className,
   panel,
+  keepMounted = false,
 }: SectionExpanderProps) {
   return (
     <div className={cn("w-full", className)}>
@@ -49,7 +56,9 @@ export function SectionExpander({
         )}
         <span className="flex-1">{children}</span>
       </button>
-      {expanded && panel}
+      {keepMounted
+        ? panel != null && <div hidden={!expanded}>{panel}</div>
+        : expanded && panel}
     </div>
   );
 }

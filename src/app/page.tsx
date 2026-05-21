@@ -10,15 +10,14 @@ import {
   CheckCircle2,
   Copy,
   FileText,
+  FolderTree,
   Info,
   Lightbulb,
-  Loader2,
   Mic,
   AudioLines,
   Plus,
   RefreshCw,
   Square,
-  SquarePen,
   ThumbsDown,
   ThumbsUp,
   Wrench,
@@ -28,7 +27,9 @@ import type { EscalateResponse } from "@/app/api/chat/escalate/route";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldFrame } from "@/components/ui/field";
+import { Tag } from "@/components/ui/tag";
 import { Markdown } from "@/components/ui/markdown";
+import { Spinner } from "@/components/ui/spinner";
 import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
 import { ConsentScreen } from "@/components/ConsentScreen";
@@ -315,8 +316,10 @@ export default function Home() {
     currentAccount,
     accountsForbidden,
     currentMachine,
+    machines,
     machinesForbidden,
     consentStatus,
+    clearSelectedMachine,
   } = useAuth();
   useDeepLinkSelection();
 
@@ -324,7 +327,7 @@ export default function Home() {
   if (qrPhase.kind === "checking") {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
@@ -343,7 +346,7 @@ export default function Home() {
   if (isInitializing) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
@@ -355,7 +358,7 @@ export default function Home() {
   if (!consentStatus) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
@@ -374,6 +377,9 @@ export default function Home() {
       }
       machine={
         currentMachine ? { id: currentMachine.id, name: currentMachine.name } : null
+      }
+      onChangeMachine={
+        machines.length > 1 ? clearSelectedMachine : undefined
       }
     />
   );
@@ -440,9 +446,11 @@ function pickRandom<T>(items: T[], n: number): T[] {
 function ChatApp({
   account,
   machine,
+  onChangeMachine,
 }: {
   account: { id: string; name: string } | null;
   machine: { id: string; name: string } | null;
+  onChangeMachine?: () => void;
 }) {
   const tChat = useTranslations("chat");
   const locale = useLocale();
@@ -470,7 +478,6 @@ function ChatApp({
   const [visibleSuggestions, setVisibleSuggestions] = useState<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [composerFocused, setComposerFocused] = useState(false);
   // True when the operator is within ~120px of the bottom — auto-scroll
   // only kicks in then, so reading sources mid-stream doesn't fight us.
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -1274,10 +1281,9 @@ function ChatApp({
     !!machine?.id &&
     pendingAttachments.length < MAX_ATTACHMENTS;
   const showActionButtons =
-    !!conversationId &&
-    hasAssistantReply &&
     feedback.phase === "hidden" &&
     (escalate.phase === "hidden" || escalate.phase === "error");
+  const showConversationActions = !!conversationId && hasAssistantReply;
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-background)]">
@@ -1423,52 +1429,6 @@ function ChatApp({
               </div>
             </div>
           )}
-          {showActionButtons && (
-            <div className="msg-in mb-4 flex flex-wrap justify-end gap-2 sm:mb-6">
-              {!isEmpty && visibleSuggestions.length > 0 && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setForceShowSuggestions((v) => !v)}
-                  aria-pressed={forceShowSuggestions}
-                  className="sm:text-[14px]"
-                >
-                  <Lightbulb className="mr-1.5 h-4 w-4" />
-                  {forceShowSuggestions
-                    ? tChat("hideSuggestions")
-                    : tChat("showSuggestions")}
-                </Button>
-              )}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setEscalate({ phase: "confirm", note: "" })}
-                className="sm:text-[14px]"
-              >
-                <Wrench className="mr-1.5 h-4 w-4" />
-                {tChat("callService")}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={startNewConversation}
-                disabled={streaming}
-                title={tChat("newChatAria")}
-                className="sm:text-[14px]"
-              >
-                <SquarePen className="mr-1.5 h-4 w-4" />
-                {tChat("newChat")}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setFeedback({ phase: "prompt" })}
-                className="sm:text-[14px]"
-              >
-                {tChat("endConversation")}
-              </Button>
-            </div>
-          )}
           {escalate.phase !== "hidden" && (
             <div className="msg-in mb-3">
               <EscalateCard
@@ -1522,6 +1482,87 @@ function ChatApp({
             </div>
           )}
           {attachmentError && <InlineError message={attachmentError} />}
+          {(machine?.name || showActionButtons) && (
+            <div className="msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5">
+              {machine?.name &&
+                (onChangeMachine ? (
+                  <button
+                    type="button"
+                    onClick={onChangeMachine}
+                    aria-label={tChat("changeMachineAria")}
+                    title={tChat("changeMachineAria")}
+                    className={cn(
+                      "inline-flex rounded-[3px] transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+                    )}
+                  >
+                    <Tag
+                      size="small"
+                      leadingIcon={<FolderTree className="h-3 w-3" />}
+                      className="cursor-pointer hover:brightness-95"
+                    >
+                      {machine.name}
+                    </Tag>
+                  </button>
+                ) : (
+                  <Tag
+                    size="small"
+                    leadingIcon={<FolderTree className="h-3 w-3" />}
+                  >
+                    {machine.name}
+                  </Tag>
+                ))}
+              {showActionButtons && (
+                <div className="ml-auto flex flex-wrap items-end justify-end gap-2">
+                  {!isEmpty && visibleSuggestions.length > 0 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setForceShowSuggestions((v) => !v)}
+                      aria-pressed={forceShowSuggestions}
+                      className="leading-[16px] sm:text-[14px]"
+                    >
+                      <Lightbulb className="mr-1.5 h-4 w-4" />
+                      {forceShowSuggestions
+                        ? tChat("hideSuggestions")
+                        : tChat("showSuggestions")}
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setEscalate({ phase: "confirm", note: "" })}
+                    className="leading-[16px] sm:text-[14px]"
+                  >
+                    <Wrench className="mr-1.5 h-4 w-4" />
+                    {tChat("callService")}
+                  </Button>
+                  {showConversationActions && (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={startNewConversation}
+                        disabled={streaming}
+                        title={tChat("newChatAria")}
+                        className="leading-[16px] sm:text-[14px]"
+                      >
+                        {tChat("newChat")}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setFeedback({ phase: "prompt" })}
+                        className="leading-[16px] sm:text-[14px]"
+                      >
+                        {tChat("endConversation")}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -1567,9 +1608,10 @@ function ChatApp({
             }}
           >
             <FieldFrame
-              focused={composerFocused || dragDepth > 0}
+              focused={dragDepth > 0}
               className={cn(
                 "relative flex min-w-0 flex-1 items-end gap-0.5 p-[6px] sm:gap-1 sm:p-[8px]",
+                "focus-within:shadow-[inset_0_0_0_2px_var(--ds-green-80),var(--ds-shadow-input)]",
                 dragDepth > 0 &&
                   "ring-2 ring-[var(--color-brand)]/40 ring-offset-1",
               )}
@@ -1600,8 +1642,6 @@ function ChatApp({
                 onChange={(e) => setInput(e.target.value)}
                 onPaste={onPaste}
                 onKeyDown={onKeyDown}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
                 onInput={(e) => {
                   const el = e.currentTarget;
                   el.style.height = "auto";
@@ -1655,7 +1695,7 @@ function ChatApp({
                 )}
               >
                 {voiceState === "transcribing" ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Spinner className="h-5 w-5" />
                 ) : voiceState === "recording" ? (
                   <Square className="h-4 w-4" fill="currentColor" />
                 ) : (
@@ -2004,7 +2044,7 @@ function AttachmentChip({
       />
       {attachment.status === "uploading" && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-          <Loader2 className="h-5 w-5 animate-spin text-white" />
+          <Spinner className="h-5 w-5" />
         </div>
       )}
       <button
@@ -2086,7 +2126,7 @@ function ToolStepRow({ step }: { step: ToolStep }) {
     <div className="flex items-center gap-2">
       <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
         {isActive ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner className="h-3.5 w-3.5" />
         ) : step.isError ? (
           <AlertCircle className="h-3.5 w-3.5 text-[color:var(--destructive,#dc2626)]" />
         ) : (
@@ -2184,7 +2224,7 @@ function ImageSourceCard({ image }: { image: ImageSourceRef }) {
             {url ? (
               <FileText className="h-8 w-8" />
             ) : (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner className="h-4 w-4" />
             )}
           </div>
         )}
@@ -2311,7 +2351,7 @@ function FeedbackCard({
             {t("no")}
           </Button>
           {submitting && (
-            <Loader2 className="ml-1 h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+            <Spinner className="ml-1 h-4 w-4" />
           )}
         </div>
       ) : state.phase === "answered_yes" ? (
@@ -2367,7 +2407,7 @@ function YesSolutionForm({
           {t("skip")}
         </Button>
         <Button size="sm" onClick={onSubmit} disabled={submitting}>
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : t("submit")}
+          {submitting ? <Spinner className="h-4 w-4" /> : t("submit")}
         </Button>
       </div>
     </div>
@@ -2497,7 +2537,7 @@ function EscalateCard({
             disabled={submitting}
           >
             {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner className="h-4 w-4" />
             ) : (
               <span className="inline-flex items-center gap-1.5">
                 <Wrench className="h-4 w-4" />

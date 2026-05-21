@@ -4,7 +4,11 @@
 // Paginated list of conversations for the machine, with a count of
 // messages and the timestamp of the most recent one for sorting / display.
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -29,14 +33,14 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await ctx.params;
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertMachineAccess(admin, id);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;
   }
-
-  const { id } = await ctx.params;
   const url = new URL(req.url);
   const page = Math.max(0, parseInt(url.searchParams.get("page") ?? "0", 10) || 0);
   const perPage = Math.min(

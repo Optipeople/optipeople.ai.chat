@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { OptipeopleLogo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
@@ -168,7 +168,7 @@ export function ResetPasswordScreen() {
             <div className="pt-3">
               <Button type="submit" variant="secondary" disabled={!canSubmit}>
                 {submitting ? (
-                  <Loader2 className="h-[14px] w-[14px] animate-spin" />
+                  <Spinner className="h-[14px] w-[14px]" />
                 ) : (
                   t("submit")
                 )}

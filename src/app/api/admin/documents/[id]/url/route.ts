@@ -2,7 +2,11 @@
 // the original PDF stored in Supabase Storage. Pass ?download=1 to force
 // a Content-Disposition: attachment response (download instead of inline).
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertDocumentAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -15,14 +19,14 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await ctx.params;
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertDocumentAccess(admin, id);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;
   }
-
-  const { id } = await ctx.params;
   const wantDownload =
     new URL(req.url).searchParams.get("download") === "1";
 

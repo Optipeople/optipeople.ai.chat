@@ -8,7 +8,11 @@
 // machines and shouldn't go dark unannounced.
 
 import { randomBytes } from "node:crypto";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -26,9 +30,10 @@ function mintToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(req: Request, machineId: string): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertMachineAccess(admin, machineId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -40,10 +45,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   const supabase = getSupabaseServerClient();
 
   const token = mintToken();
@@ -76,10 +80,9 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   const supabase = getSupabaseServerClient();
 
   const { error } = await supabase

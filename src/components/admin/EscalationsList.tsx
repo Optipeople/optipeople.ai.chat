@@ -1,11 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronRight, ExternalLink, Loader2, Wrench } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Wrench } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/components/ui/data-table";
 import {
   listAdminEscalations,
   type AdminEscalationListItem,
@@ -25,7 +35,16 @@ const CHANNEL_VARIANT: Record<AdminEscalationListItem["channel"], TagVariant> = 
   webhook: "positive",
 };
 
-export function EscalationsList({ machineId }: { machineId: string }) {
+// `embedded` skips the page-level heading + description for use inside
+// a section panel (the section header provides the title).
+export function EscalationsList({
+  machineId,
+  embedded = false,
+}: {
+  machineId: string;
+  embedded?: boolean;
+}) {
+  const router = useRouter();
   const t = useTranslations("admin.escalations");
   const tc = useTranslations("common");
   const CHANNEL_LABEL: Record<AdminEscalationListItem["channel"], string> = {
@@ -61,22 +80,20 @@ export function EscalationsList({ machineId }: { machineId: string }) {
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
-      <Link
-        href={`/admin/machines/${machineId}`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        {t("back")}
-      </Link>
-
-      <div>
-        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-          {t("heading")}
-        </h1>
-        <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+      {embedded ? (
+        <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
           {t("description")}
         </p>
-      </div>
+      ) : (
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
+            {t("heading")}
+          </h1>
+          <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+            {t("description")}
+          </p>
+        </div>
+      )}
 
       {error ? (
         <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
@@ -84,7 +101,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
         </div>
       ) : loading ? (
         <div className="flex h-32 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Spinner className="h-5 w-5" />
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
@@ -136,51 +153,48 @@ export function EscalationsList({ machineId }: { machineId: string }) {
             ))}
           </div>
 
-          <div className="hidden overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] sm:block">
-            <table className="w-full text-[14px]">
-              <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                <tr>
-                  <th className="px-4 py-3 font-medium">{t("colTime")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colChannel")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colRecipient")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colOperator")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colDescription")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colTechnicianLink")}</th>
-                  <th className="w-10 px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="hidden sm:block">
+            <DataTable>
+              <DataTableHead>
+                <DataTableHeader>{t("colTime")}</DataTableHeader>
+                <DataTableHeader>{t("colChannel")}</DataTableHeader>
+                <DataTableHeader>{t("colRecipient")}</DataTableHeader>
+                <DataTableHeader>{t("colOperator")}</DataTableHeader>
+                <DataTableHeader>{t("colDescription")}</DataTableHeader>
+                <DataTableHeader>{t("colTechnicianLink")}</DataTableHeader>
+                <DataTableHeader className="w-10" />
+              </DataTableHead>
+              <DataTableBody>
                 {items.map((e) => (
-                  <tr
+                  <DataTableRow
                     key={e.id}
-                    className="group cursor-pointer border-t border-[var(--color-hairline)] transition-colors hover:bg-[var(--color-muted)]/60"
                     onClick={() => {
-                      window.location.href = `/admin/machines/${machineId}/conversations/${e.conversationId}`;
+                      router.push(
+                        `/admin/machines/${machineId}/conversations/${e.conversationId}`,
+                      );
                     }}
                   >
-                    <td className="px-4 py-3 tabular-nums text-[var(--color-foreground)]">
+                    <DataTableCell className="tabular-nums">
                       {DA_DT.format(new Date(e.createdAt))}
-                    </td>
-                    <td className="px-4 py-3">
+                    </DataTableCell>
+                    <DataTableCell>
                       <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
                         <Wrench className="mr-1 h-3 w-3" />
                         {CHANNEL_LABEL[e.channel]}
                       </Tag>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[12px] text-[var(--color-foreground)]">
+                    </DataTableCell>
+                    <DataTableCell className="font-mono text-[12px]">
                       <span className="block max-w-[260px] truncate" title={e.target}>
                         {e.target}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-foreground)]">
-                      {e.createdBy ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
+                    </DataTableCell>
+                    <DataTableCell>{e.createdBy ?? "—"}</DataTableCell>
+                    <DataTableCell className="text-[13px] text-[var(--ds-grey-medium-05)]">
                       <span className="block max-w-[220px] truncate" title={e.note ?? undefined}>
                         {e.note ?? "—"}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
+                    </DataTableCell>
+                    <DataTableCell>
                       {e.shareToken ? (
                         <a
                           href={`/escalation/${e.shareToken}`}
@@ -193,18 +207,18 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
-                        <span className="text-[12px] text-[var(--color-muted-foreground)]">
+                        <span className="text-[12px] text-[var(--ds-grey-medium-05)]">
                           —
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <ChevronRight className="ml-auto h-4 w-4 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]" />
-                    </td>
-                  </tr>
+                    </DataTableCell>
+                    <DataTableCell align="right">
+                      <ChevronRight className="ml-auto h-4 w-4 text-[var(--ds-grey-medium-05)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--ds-grey-dark-09)]" />
+                    </DataTableCell>
+                  </DataTableRow>
                 ))}
-              </tbody>
-            </table>
+              </DataTableBody>
+            </DataTable>
           </div>
 
           {(page > 0 || hasMore) && (
@@ -215,6 +229,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
+                <ChevronLeft className="mr-1 h-3.5 w-3.5" />
                 {t("prev")}
               </Button>
               <span>{t("pageLabel", { n: page + 1 })}</span>
@@ -225,6 +240,7 @@ export function EscalationsList({ machineId }: { machineId: string }) {
                 onClick={() => setPage((p) => p + 1)}
               >
                 {t("next")}
+                <ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
             </div>
           )}

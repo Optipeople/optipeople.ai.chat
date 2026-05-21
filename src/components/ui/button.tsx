@@ -59,6 +59,9 @@ const buttonVariants = cva(
         default: "px-6 py-[7px] text-[14px]",
         sm: "px-3 py-[5px] text-[12px] leading-[12px]",
         lg: "px-8 py-[12px] text-[18px] leading-[20px]",
+        // Figma "push-button" — 28px tall, 1px border. Matches the
+        // node at design/E9Dzu5wW6UovSB6UI1Z3N6?node-id=30-1338.
+        compact: "h-[28px] border px-[18px] py-[7px] text-[14px]",
       },
     },
     defaultVariants: { variant: "primary", size: "default" },

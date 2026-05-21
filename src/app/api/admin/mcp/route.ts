@@ -10,7 +10,12 @@
 // and an optional label.
 
 import { getTranslations } from "next-intl/server";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertAccountAccess,
+  AuthError,
+  requireAdmin,
+  type Admin,
+} from "@/lib/auth";
 import {
   getRedirectUri,
   listMcpConfigs,
@@ -29,24 +34,31 @@ export const dynamic = "force-dynamic";
 const DEFAULT_CLIENT_NAME = "Opti Assist";
 const PREFERRED_SCOPE = "mcp:tools";
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(
+  req: Request,
+): Promise<{ admin: Admin | null; denied: Response | null }> {
   try {
-    await requireSuperAdmin(req);
-    return null;
+    const admin = await requireAdmin(req);
+    return { admin, denied: null };
   } catch (err) {
-    if (err instanceof AuthError) return err.toResponse();
+    if (err instanceof AuthError) return { admin: null, denied: err.toResponse() };
     throw err;
   }
 }
 
 export async function GET(req: Request) {
-  const denied = await gate(req);
+  const { admin, denied } = await gate(req);
   if (denied) return denied;
 
   try {
     const configs = await listMcpConfigs();
+    // Account admins only see their own account's row.
+    const filtered =
+      admin!.role === "account"
+        ? configs.filter((c) => c.accountId === admin!.accountId)
+        : configs;
     return Response.json({
-      configs,
+      configs: filtered,
       redirectUri: getRedirectUri(req),
     });
   } catch (err) {
@@ -57,7 +69,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const denied = await gate(req);
+  const { admin, denied } = await gate(req);
   if (denied) return denied;
 
   const t = await getTranslations("server");
@@ -87,6 +99,12 @@ export async function POST(req: Request) {
       { error: "accountId and serverUrl are required" },
       { status: 400 },
     );
+  }
+  try {
+    assertAccountAccess(admin!, accountId);
+  } catch (err) {
+    if (err instanceof AuthError) return err.toResponse();
+    throw err;
   }
 
   try {

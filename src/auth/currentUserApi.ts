@@ -10,8 +10,11 @@ export type CurrentUser = {
   // upstream payload didn't carry it.
   roleName: string | null;
   // Stable code-style identifier (e.g. "SuperAdministrator"). This is what
-  // requireSuperAdmin gates on — no spaces, predictable casing.
+  // requireAdmin gates on — no spaces, predictable casing.
   permissionName: string | null;
+  // Optipeople account the user belongs to. Used to scope account
+  // admins to their own account.
+  accountId: string | null;
 };
 
 // Optipeople's GetCurrentUser flattens the User shape and adds extra
@@ -23,6 +26,7 @@ type RawUser = {
   name?: string | null;
   roleName?: string | null;
   permissionName?: string | null;
+  accountId?: string | null;
 };
 
 type ApiError = { title?: string; message?: string };
@@ -45,5 +49,9 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     name: raw.name ?? null,
     roleName: raw.roleName ?? null,
     permissionName: raw.permissionName ?? null,
+    accountId:
+      typeof raw.accountId === "string" && raw.accountId.length > 0
+        ? raw.accountId
+        : null,
   };
 }

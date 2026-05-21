@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { CircleXIcon, SearchIcon } from "./icons";
+import { Tooltip } from "./tooltip";
 
 export type SearchFieldProps = Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
@@ -111,14 +112,16 @@ export const SearchField = React.forwardRef<HTMLInputElement, SearchFieldProps>(
           {...rest}
         />
         {clearable && hasValue && !disabled && (
-          <button
-            type="button"
-            aria-label="Clear search"
-            onClick={handleClear}
-            className="ml-auto inline-flex shrink-0 items-center justify-center text-[var(--ds-grey-medium-05)] hover:text-[var(--ds-grey-dark-09)]"
-          >
-            <CircleXIcon size={16} />
-          </button>
+          <Tooltip content="Clear search" side="bottom" className="ml-auto">
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={handleClear}
+              className="inline-flex shrink-0 items-center justify-center text-[var(--ds-grey-medium-05)] hover:text-[var(--ds-grey-dark-09)]"
+            >
+              <CircleXIcon size={16} />
+            </button>
+          </Tooltip>
         )}
       </div>
     );

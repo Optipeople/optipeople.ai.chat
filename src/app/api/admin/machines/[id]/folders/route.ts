@@ -1,16 +1,21 @@
 // POST   /api/admin/machines/[id]/folders { path }   — create empty folder
 // DELETE /api/admin/machines/[id]/folders { path }   — remove if empty
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { ensureFolderPath } from "@/lib/ingestion";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(req: Request, machineId: string): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertMachineAccess(admin, machineId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -35,10 +40,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   let body: { path?: unknown };
   try {
     body = (await req.json()) as { path?: unknown };
@@ -75,10 +79,9 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   let body: { path?: unknown };
   try {
     body = (await req.json()) as { path?: unknown };

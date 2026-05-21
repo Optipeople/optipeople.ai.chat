@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 type ConfirmOptions = {
   title: string;
@@ -92,49 +93,37 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           />
           <div
             className={cn(
-              "dialog-panel relative w-full max-w-md rounded-[var(--radius-lg)]",
-              "bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
-              "border border-[var(--color-hairline)] p-4 sm:p-6",
+              "dialog-panel relative flex w-full max-w-[398px] flex-col items-start gap-4 rounded-[4px]",
+              "border-[3px] border-solid border-[#fcfcfc] bg-[var(--ds-grey-light-02)]",
+              "p-10 shadow-[0px_4px_4px_0px_rgba(0,0,0,0.1)] sm:p-16",
             )}
           >
             <h2
               id="confirm-dialog-title"
-              className="break-words text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]"
+              className="break-words text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]"
             >
               {pending.opts.title}
             </h2>
             {pending.opts.description && (
-              <div className="mt-2 break-words text-[14px] leading-relaxed text-[var(--color-muted-foreground)]">
+              <div className="w-full break-words pb-3 text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">
                 {pending.opts.description}
               </div>
             )}
-            <div className="mt-5 flex flex-wrap justify-end gap-2 sm:mt-6">
-              <button
+            <div className="flex w-full flex-wrap items-end justify-end gap-3">
+              <Button
                 ref={cancelRef}
-                type="button"
+                variant="secondary"
                 onClick={() => close(false)}
-                className={cn(
-                  "h-10 rounded-[var(--radius)] px-4 text-[14px] font-medium",
-                  "text-[var(--color-foreground)] hover:bg-[var(--color-muted)]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
-                )}
               >
                 {pending.opts.cancelLabel ?? "Annullér"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant={pending.opts.danger ? "destructive" : "primary"}
                 onClick={() => close(true)}
-                className={cn(
-                  "h-10 rounded-[var(--radius)] px-4 text-[14px] font-medium text-white",
-                  "transition-colors focus-visible:outline-none focus-visible:ring-2",
-                  pending.opts.danger
-                    ? "bg-red-600 hover:bg-red-700 focus-visible:ring-red-300"
-                    : "bg-[var(--color-brand)] hover:opacity-90 focus-visible:ring-[var(--color-ring)]",
-                )}
               >
                 {pending.opts.confirmLabel ??
                   (pending.opts.danger ? "Slet" : "OK")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

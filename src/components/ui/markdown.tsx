@@ -12,7 +12,8 @@ import ReactMarkdown, {
   type Components,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, FileText, Loader2, Wrench } from "lucide-react";
+import { ExternalLink, FileText, Wrench } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { useFileViewer } from "@/components/FileViewer";
 import { cn } from "@/lib/utils";
@@ -157,7 +158,7 @@ function InlineAssetImage({
           "rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)]",
         )}
       >
-        <Loader2 className="h-4 w-4 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-4 w-4" />
       </span>
     );
   }

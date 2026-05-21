@@ -1,11 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Tag, type TagVariant } from "@/components/ui/tag";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/components/ui/data-table";
 import {
   listAdminConversations,
   type AdminConversationListItem,
@@ -36,7 +46,16 @@ function resolutionBadge(
   }
 }
 
-export function ConversationsList({ machineId }: { machineId: string }) {
+// `embedded` skips the page-level heading + description for use inside
+// a section panel (the section header provides the title).
+export function ConversationsList({
+  machineId,
+  embedded = false,
+}: {
+  machineId: string;
+  embedded?: boolean;
+}) {
+  const router = useRouter();
   const t = useTranslations("admin.conversations");
   const tc = useTranslations("common");
   const [items, setItems] = useState<AdminConversationListItem[]>([]);
@@ -66,22 +85,20 @@ export function ConversationsList({ machineId }: { machineId: string }) {
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
-      <Link
-        href={`/admin/machines/${machineId}`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        {t("back")}
-      </Link>
-
-      <div>
-        <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-          {t("heading")}
-        </h1>
-        <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+      {embedded ? (
+        <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
           {t("description")}
         </p>
-      </div>
+      ) : (
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
+            {t("heading")}
+          </h1>
+          <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+            {t("description")}
+          </p>
+        </div>
+      )}
 
       {error ? (
         <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
@@ -89,7 +106,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
         </div>
       ) : loading ? (
         <div className="flex h-32 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Spinner className="h-5 w-5" />
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
@@ -134,69 +151,68 @@ export function ConversationsList({ machineId }: { machineId: string }) {
             })}
           </div>
 
-          <div className="hidden overflow-hidden rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] sm:block">
-            <table className="w-full text-[14px]">
-              <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                <tr>
-                  <th className="px-4 py-3 font-medium">{t("colStarted")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colOperator")}</th>
-                  <th className="px-4 py-3 text-right font-medium">{t("colMessages")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colLastActivity")}</th>
-                  <th className="px-4 py-3 font-medium">{t("colStatus")}</th>
-                  <th className="w-10 px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="hidden sm:block">
+            <DataTable>
+              <DataTableHead>
+                <DataTableHeader>{t("colStarted")}</DataTableHeader>
+                <DataTableHeader>{t("colOperator")}</DataTableHeader>
+                <DataTableHeader align="right">{t("colMessages")}</DataTableHeader>
+                <DataTableHeader>{t("colLastActivity")}</DataTableHeader>
+                <DataTableHeader>{t("colStatus")}</DataTableHeader>
+                <DataTableHeader className="w-10" />
+              </DataTableHead>
+              <DataTableBody>
                 {items.map((c) => {
                   const badge = resolutionBadge(c.resolution, t);
                   return (
-                    <tr
+                    <DataTableRow
                       key={c.id}
-                      className="group cursor-pointer border-t border-[var(--color-hairline)] transition-colors hover:bg-[var(--color-muted)]/60"
                       onClick={() => {
-                        window.location.href = `/admin/machines/${machineId}/conversations/${c.id}`;
+                        router.push(
+                          `/admin/machines/${machineId}/conversations/${c.id}`,
+                        );
                       }}
                     >
-                      <td className="px-4 py-3 tabular-nums text-[var(--color-foreground)]">
+                      <DataTableCell className="tabular-nums">
                         {DA_DT.format(new Date(c.startedAt))}
-                      </td>
-                      <td className="px-4 py-3 text-[var(--color-foreground)]">
+                      </DataTableCell>
+                      <DataTableCell className="group-hover:underline">
                         <div className="font-medium">
                           {c.userName ?? c.userEmail ?? "—"}
                         </div>
                         {c.userName && c.userEmail && (
-                          <div className="text-[12px] text-[var(--color-muted-foreground)]">
+                          <div className="text-[12px] text-[var(--ds-grey-medium-05)]">
                             {c.userEmail}
                           </div>
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-foreground)]">
+                      </DataTableCell>
+                      <DataTableCell align="right" className="tabular-nums">
                         {c.messageCount}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-[var(--color-muted-foreground)]">
+                      </DataTableCell>
+                      <DataTableCell className="tabular-nums text-[var(--ds-grey-medium-05)]">
                         {c.lastMessageAt
                           ? DA_DT.format(new Date(c.lastMessageAt))
                           : "—"}
-                      </td>
-                      <td className="px-4 py-3">
+                      </DataTableCell>
+                      <DataTableCell>
                         {badge ? (
                           <Tag variant={badge.variant} size="small">
                             {badge.label}
                           </Tag>
                         ) : (
-                          <span className="text-[12px] text-[var(--color-muted-foreground)]">
+                          <span className="text-[12px] text-[var(--ds-grey-medium-05)]">
                             —
                           </span>
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <ChevronRight className="ml-auto h-4 w-4 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]" />
-                      </td>
-                    </tr>
+                      </DataTableCell>
+                      <DataTableCell align="right">
+                        <ChevronRight className="ml-auto h-4 w-4 text-[var(--ds-grey-medium-05)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--ds-grey-dark-09)]" />
+                      </DataTableCell>
+                    </DataTableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </DataTableBody>
+            </DataTable>
           </div>
 
           {(page > 0 || hasMore) && (
@@ -207,6 +223,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
+                <ChevronLeft className="mr-1 h-3.5 w-3.5" />
                 {t("prev")}
               </Button>
               <span>{t("pageLabel", { n: page + 1 })}</span>
@@ -217,6 +234,7 @@ export function ConversationsList({ machineId }: { machineId: string }) {
                 onClick={() => setPage((p) => p + 1)}
               >
                 {t("next")}
+                <ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
             </div>
           )}

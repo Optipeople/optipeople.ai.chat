@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Field } from "./field";
 import { BoldIcon, LinkIcon, SpellCheckIcon } from "./icons";
+import { Tooltip } from "./tooltip";
 
 export type TextEditorToolbar = "minimal" | "spellChecker" | "code";
 
@@ -19,9 +20,13 @@ export type TextEditorProps = Omit<
 
 function ToolbarButton({
   children,
+  tooltip,
+  className,
   ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  tooltip?: React.ReactNode;
+}) {
+  const button = (
     <button
       type="button"
       {...rest}
@@ -29,11 +34,19 @@ function ToolbarButton({
         "inline-flex h-[25px] items-center justify-center rounded-[2px] px-[6px]",
         "text-[var(--ds-grey-dark-09)] hover:bg-[var(--ds-grey-light-01)]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
-        rest.className,
+        className,
       )}
     >
       {children}
     </button>
+  );
+  if (!tooltip) return button;
+  // Forward layout classes (flex-1, justify-*) onto the Tooltip wrapper so
+  // it grows correctly inside the toolbar's flex container.
+  return (
+    <Tooltip content={tooltip} side="top" className={className}>
+      {button}
+    </Tooltip>
   );
 }
 
@@ -72,14 +85,18 @@ export const TextEditor = React.forwardRef<HTMLTextAreaElement, TextEditorProps>
         >
           {!isCode && (
             <div className="flex items-center gap-[8px] border-b border-[var(--ds-grey-light-03)] p-[6px]">
-              <ToolbarButton aria-label="Bold">
+              <ToolbarButton aria-label="Bold" tooltip="Bold">
                 <BoldIcon size={20} />
               </ToolbarButton>
-              <ToolbarButton aria-label="Insert link" className="flex-1 justify-start">
+              <ToolbarButton
+                aria-label="Insert link"
+                tooltip="Insert link"
+                className="flex-1 justify-start"
+              >
                 <LinkIcon size={16} />
               </ToolbarButton>
               {toolbar === "spellChecker" && (
-                <ToolbarButton aria-label="Spell-check">
+                <ToolbarButton aria-label="Spell-check" tooltip="Spell-check">
                   <SpellCheckIcon size={22} />
                 </ToolbarButton>
               )}

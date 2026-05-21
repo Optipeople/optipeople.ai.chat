@@ -73,6 +73,20 @@ export const CircleInfoIcon = svg(
   "CircleInfoIcon",
 );
 
+export const CircleQuestionIcon = svg(
+  "0 0 12 12",
+  <>
+    <circle cx="6" cy="6" r="5" fill="currentColor" stroke="none" />
+    <path
+      d="M4.55 4.7a1.45 1.45 0 1 1 2.05 1.35c-.45.2-.6.5-.6.95v.2M6 8.55v.55"
+      stroke="white"
+      strokeWidth={1.1}
+      fill="none"
+    />
+  </>,
+  "CircleQuestionIcon",
+);
+
 export const CircleExclamationIcon = svg(
   "0 0 12 12",
   <>

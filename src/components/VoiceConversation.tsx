@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { AudioLines, Loader2, Mic, MicOff } from "lucide-react";
+import { AudioLines, Mic, MicOff } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import {
   useRealtimeVoice,
   type RealtimeTranscriptTurn,
@@ -83,7 +84,7 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
           ) : null}
           {state === "connecting" ? (
             <div className="flex items-center justify-center gap-2 text-[15px] text-[var(--color-muted-foreground)]">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner className="h-4 w-4" />
               {t("connectingHint")}
             </div>
           ) : null}

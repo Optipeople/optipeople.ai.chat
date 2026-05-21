@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import {
   Check,
-  Loader2,
   MessageSquare,
   Pencil,
   Trash2,
@@ -11,10 +10,11 @@ import {
   X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Tag } from "@/components/ui/tag";
 import { TextField } from "@/components/ui/text-field";
+import { Select } from "@/components/ui/select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   clearAdminEscalationTarget,
@@ -210,7 +210,7 @@ export function MachineEscalationCard({
                 disabled={removing}
               >
                 {removing ? (
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  <Spinner className="mr-1.5 h-4 w-4" />
                 ) : (
                   <Trash2 className="mr-1.5 h-4 w-4" />
                 )}
@@ -223,7 +223,7 @@ export function MachineEscalationCard({
 
       {loading ? (
         <div className="mt-4 flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner className="h-3.5 w-3.5" />
           {t("loading")}
         </div>
       ) : editing ? (
@@ -317,25 +317,17 @@ function EditForm({
 
   return (
     <div className="mt-4 flex flex-col gap-3">
-      <label className="block text-[14px] leading-[21px] text-[var(--ds-grey-medium-04)]">
-        {t("channelLabel")}
-        <select
-          value={channel}
-          onChange={(e) => setChannel(e.target.value as Channel)}
-          disabled={saving}
-          className={cn(
-            "mt-1 h-[30px] w-full rounded-[4px] bg-white px-[7px] text-[14px] leading-[21px]",
-            "shadow-[var(--ds-shadow-input)]",
-            "focus:outline-none focus:shadow-[inset_0_0_0_2px_var(--ds-green-80),var(--ds-shadow-input)]",
-            "disabled:bg-[var(--ds-bg-disabled)] disabled:cursor-not-allowed",
-          )}
-        >
-          <option value="sms">{CHANNEL_LABEL.sms}</option>
-          <option value="email">{CHANNEL_LABEL.email}</option>
-          <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
-          <option value="webhook">{CHANNEL_LABEL.webhook}</option>
-        </select>
-      </label>
+      <Select
+        label={t("channelLabel")}
+        value={channel}
+        onValueChange={(v) => setChannel(v as Channel)}
+        disabled={saving}
+      >
+        <option value="sms">{CHANNEL_LABEL.sms}</option>
+        <option value="email">{CHANNEL_LABEL.email}</option>
+        <option value="service_ticket">{CHANNEL_LABEL.service_ticket}</option>
+        <option value="webhook">{CHANNEL_LABEL.webhook}</option>
+      </Select>
       <TextField
         label={targetLabel}
         value={targetInput}
@@ -380,7 +372,7 @@ function EditForm({
           disabled={saving || !targetInput.trim()}
         >
           {saving ? (
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            <Spinner className="mr-1.5 h-4 w-4" />
           ) : channel === "sms" ? (
             <MessageSquare className="mr-1.5 h-4 w-4" />
           ) : (

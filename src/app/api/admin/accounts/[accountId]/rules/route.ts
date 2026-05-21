@@ -12,7 +12,7 @@ import {
   SYSTEM_RULE_BODY,
   type AccountAiRule,
 } from "@/lib/aiRules";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { AuthError, assertAccountAccess, requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,9 +27,13 @@ export type AdminAiRulesResponse = {
   rules: AccountAiRule[];
 };
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(
+  req: Request,
+  accountId: string,
+): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    assertAccountAccess(admin, accountId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -41,10 +45,9 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { accountId } = await ctx.params;
+  const denied = await gate(req, accountId);
+  if (denied) return denied;
   try {
     const rules = await listAccountAiRules(accountId);
     const body: AdminAiRulesResponse = {
@@ -63,10 +66,10 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const denied = await gate(req);
+  const { accountId } = await ctx.params;
+  const denied = await gate(req, accountId);
   if (denied) return denied;
 
-  const { accountId } = await ctx.params;
   const t = await getTranslations("server");
 
   let parsed: { body?: unknown };

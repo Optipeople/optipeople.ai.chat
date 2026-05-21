@@ -14,11 +14,12 @@ import {
   FileText,
   Folder,
   Image as ImageIcon,
-  Loader2,
   ScanEye,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { ProgressBar } from "@/components/ui/progress-bar";
 import { Tag } from "@/components/ui/tag";
 import {
   reprocessAdminDocument,
@@ -375,7 +376,7 @@ function ServerRow({ doc }: { doc: AdminDocument }) {
 
   return (
     <li className="flex items-center gap-3 bg-[var(--color-surface)] px-3 py-2 text-[13px]">
-      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
+      <Spinner className="h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-[var(--color-foreground)]">
@@ -395,12 +396,7 @@ function ServerRow({ doc }: { doc: AdminDocument }) {
         </div>
         {pct != null ? (
           <>
-            <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-[var(--color-muted)]">
-              <div
-                className="h-full bg-[var(--color-brand)] transition-[width] duration-300"
-                style={{ width: `${Math.min(Math.max(pct, 0), 100)}%` }}
-              />
-            </div>
+            <ProgressBar className="mt-1.5" value={pct} />
             <p className="mt-0.5 flex items-center justify-between gap-2 text-[12px] text-[var(--color-muted-foreground)]">
               <span className="truncate">{label}…</span>
               <span className="shrink-0 tabular-nums">{pct}%</span>
@@ -475,15 +471,11 @@ function QueueRow({ item }: { item: QueueItem }) {
           )}
         </div>
         {item.status === "uploading" && item.kind === "upload" && (
-          <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-[var(--color-muted)]">
-            <div
-              className="h-full bg-[var(--color-brand)] transition-[width] duration-200"
-              style={{
-                width: `${Math.min(item.progress, 100)}%`,
-                opacity: item.progress < 100 ? 1 : 0.7,
-              }}
-            />
-          </div>
+          <ProgressBar
+            className="mt-1.5"
+            value={item.progress}
+            style={{ opacity: item.progress < 100 ? 1 : 0.7 }}
+          />
         )}
         {item.status === "uploading" && (
           <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
@@ -543,7 +535,7 @@ function QueueStatusIcon({ status }: { status: QueueStatus }) {
       );
     case "uploading":
       return (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--color-brand)]" />
+        <Spinner className="h-3.5 w-3.5 shrink-0" />
       );
     case "done":
       return <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--ds-green)]" />;

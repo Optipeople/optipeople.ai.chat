@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
+import { isAdmin, useAuth } from "@/auth/AuthContext";
 
-// Renders children only if the current user is a SuperAdministrator.
-// Server-side admin routes still gate with requireSuperAdmin — this
-// component is just UX so non-admins don't see a flicker of empty admin
-// chrome before the API 403s.
+// Renders children only if the current user is an admin (super or
+// account). Server-side admin routes still gate with requireAdmin —
+// this component is just UX so non-admins don't see a flicker of empty
+// admin chrome before the API 403s.
 export function AdminGate({ children }: { children: ReactNode }) {
   const { user, isInitializing } = useAuth();
   const t = useTranslations("admin.gate");
@@ -17,7 +17,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
   if (isInitializing) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--color-muted-foreground)]" />
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
@@ -41,7 +41,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isSuperAdmin(user)) {
+  if (!isAdmin(user)) {
     return (
       <div className="mx-auto max-w-md py-24 text-center">
         <h1 className="text-[20px] font-semibold text-[var(--color-foreground)]">

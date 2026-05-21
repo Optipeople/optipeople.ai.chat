@@ -1,10 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, Loader2, Plus, Trash2 } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Copy, Trash2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
+import { Select } from "@/components/ui/select";
+import { Tooltip } from "@/components/ui/tooltip";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@/components/ui/data-table";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import { getRegisteredSets } from "@/auth/registeredApi";
 import {
@@ -42,11 +53,22 @@ function CopyButton({ value, label }: { value: string; label?: string }) {
   );
 }
 
-export function McpList() {
+// `accountId`, when set, scopes the list to a single account — used by
+// the account-settings hub's MCP section. Without it (super-admin
+// index), every configured account is shown.
+//
+// `embedded` skips the page-level H1 + description for use inside a
+// section panel (the section header provides the title).
+export function McpList({
+  accountId,
+  embedded = false,
+}: { accountId?: string; embedded?: boolean } = {}) {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useSearchParams();
   const callbackStatus = params.get("status");
   const callbackMessage = params.get("message");
+  const scoped = Boolean(accountId);
 
   const [configs, setConfigs] = useState<McpConfigSummary[] | null>(null);
   const [redirectUri, setRedirectUri] = useState<string>("");
@@ -110,31 +132,56 @@ export function McpList() {
     }
     /* eslint-enable react-hooks/set-state-in-effect */
     if (callbackStatus) {
-      router.replace("/admin/mcp");
+      router.replace(pathname);
     }
-  }, [callbackStatus, callbackMessage, router]);
+  }, [callbackStatus, callbackMessage, router, pathname]);
+
+  // When scoped to one account, drop everything else. Mutations still
+  // hit the full /admin/mcp API (the routes are account-id-keyed under
+  // the hood), so list filtering is all that's needed here.
+  const visibleConfigs = configs
+    ? scoped
+      ? configs.filter((c) => c.accountId === accountId)
+      : configs
+    : null;
+
+  // In the scoped view, "already configured" means this one account has
+  // a row. Hide the add button in that case so admins don't get a
+  // disabled picker.
+  const hideAddButton =
+    scoped && (visibleConfigs?.length ?? 0) > 0;
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-            MCP integrations
-          </h1>
-          <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
-            Per-account credentials for the Optipeople MCP server. The chat
-            uses these to fetch machine data on behalf of each account.
+          {embedded ? null : (
+            <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
+              MCP integration
+            </h1>
+          )}
+          <p
+            className={
+              embedded
+                ? "text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]"
+                : "mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]"
+            }
+          >
+            {scoped
+              ? "OAuth credentials this account uses to call the Optipeople MCP server. The chat uses these to fetch machine data on the account's behalf."
+              : "Per-account credentials for the Optipeople MCP server. The chat uses these to fetch machine data on behalf of each account."}
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setAddOpen(true)}
-          className="self-start sm:self-auto"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          Add credentials
-        </Button>
+        {hideAddButton ? null : (
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={() => setAddOpen(true)}
+            className="self-start sm:self-auto"
+          >
+            {scoped ? "Connect" : "Add credentials"}
+          </Button>
+        )}
       </div>
 
       {banner ? (
@@ -158,27 +205,30 @@ export function McpList() {
         </div>
       ) : null}
 
-      <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 sm:p-4">
-        <div className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-          OAuth redirect URI (used during dynamic client registration)
+      {scoped ? null : (
+        <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 sm:p-4">
+          <div className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            OAuth redirect URI (used during dynamic client registration)
+          </div>
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+            <code className="min-w-0 flex-1 break-all text-[13px] text-[var(--color-foreground)]">
+              {redirectUri || "—"}
+            </code>
+            {redirectUri ? <CopyButton value={redirectUri} /> : null}
+          </div>
+          <p className="mt-2 text-[12px] text-[var(--color-muted-foreground)]">
+            Each registration creates a new entry in the Optipeople portal&apos;s
+            Client Secrets list — no manual registration needed.
+          </p>
         </div>
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-          <code className="min-w-0 flex-1 break-all text-[13px] text-[var(--color-foreground)]">
-            {redirectUri || "—"}
-          </code>
-          {redirectUri ? <CopyButton value={redirectUri} /> : null}
-        </div>
-        <p className="mt-2 text-[12px] text-[var(--color-muted-foreground)]">
-          Each registration creates a new entry in the Optipeople portal&apos;s
-          Client Secrets list — no manual registration needed.
-        </p>
-      </div>
+      )}
 
       {addOpen ? (
         <AddMcpDialog
           existingAccountIds={
             new Set((configs ?? []).map((c) => c.accountId))
           }
+          lockedAccountId={accountId ?? null}
           onClose={() => setAddOpen(false)}
           onSaved={async () => {
             setAddOpen(false);
@@ -191,16 +241,27 @@ export function McpList() {
         <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
           {loadError}
         </div>
-      ) : configs === null ? (
+      ) : visibleConfigs === null ? (
         <div className="flex h-32 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Spinner className="h-5 w-5" />
         </div>
-      ) : configs.length === 0 ? (
+      ) : visibleConfigs.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          No accounts have MCP credentials yet. Click <strong>Add credentials</strong> to wire one up.
+          {scoped ? (
+            <>
+              This account isn&apos;t connected to the MCP server yet. Click{" "}
+              <strong>Connect</strong> to register an OAuth client and run
+              consent.
+            </>
+          ) : (
+            <>
+              No accounts have MCP credentials yet. Click{" "}
+              <strong>Add credentials</strong> to wire one up.
+            </>
+          )}
         </div>
       ) : (
-        <McpTable configs={configs} onReload={reload} />
+        <McpTable configs={visibleConfigs} onReload={reload} />
       )}
     </div>
   );
@@ -222,23 +283,23 @@ function McpTable({
         ))}
       </div>
 
-      <div className="hidden overflow-x-auto rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] sm:block">
-        <table className="w-full min-w-[640px] text-[14px]">
-          <thead className="bg-[var(--color-muted)] text-left text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            <tr>
-              <th className="px-4 py-3 font-medium">Account / label</th>
-              <th className="px-4 py-3 font-medium">Server</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Token expires</th>
-              <th className="w-px px-4 py-3 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="hidden overflow-x-auto sm:block">
+        <DataTable className="min-w-[640px]">
+          <DataTableHead>
+            <DataTableHeader>Account / label</DataTableHeader>
+            <DataTableHeader>Server</DataTableHeader>
+            <DataTableHeader>Status</DataTableHeader>
+            <DataTableHeader>Token expires</DataTableHeader>
+            <DataTableHeader align="right" className="w-px">
+              Actions
+            </DataTableHeader>
+          </DataTableHead>
+          <DataTableBody>
             {configs.map((c) => (
               <McpRow key={c.accountId} config={c} onReload={onReload} />
             ))}
-          </tbody>
-        </table>
+          </DataTableBody>
+        </DataTable>
       </div>
     </>
   );
@@ -312,26 +373,32 @@ function McpCard({
       <div className="flex items-center justify-end gap-2">
         <Button size="sm" onClick={startAuth} disabled={connecting || deleting}>
           {connecting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner className="h-3.5 w-3.5" />
           ) : config.status === "authorized" ? (
             "Reauthorize"
           ) : (
             "Connect"
           )}
         </Button>
-        <Button
-          size="sm"
-          variant="destructive"
-          onClick={disconnect}
+        <Tooltip
+          content="Disconnect"
+          side="top"
           disabled={connecting || deleting}
-          aria-label="Disconnect"
         >
-          {deleting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Trash2 className="h-3.5 w-3.5" />
-          )}
-        </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={disconnect}
+            disabled={connecting || deleting}
+            aria-label="Disconnect"
+          >
+            {deleting ? (
+              <Spinner className="h-3.5 w-3.5" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </Tooltip>
       </div>
       {rowError && (
         <div className="text-[12px] text-[var(--ds-red-dark)]">{rowError}</div>
@@ -384,70 +451,79 @@ function McpRow({
     : "—";
 
   return (
-    <tr className="border-t border-[var(--color-hairline)] align-top">
-      <td className="px-4 py-3">
-        <div className="font-medium text-[var(--color-foreground)]">
-          {config.label ?? config.accountId}
-        </div>
-        <div className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+    <DataTableRow className="align-top">
+      <DataTableCell>
+        <div className="font-medium">{config.label ?? config.accountId}</div>
+        <div className="mt-0.5 text-[12px] text-[var(--ds-grey-medium-05)]">
           {config.accountId}
         </div>
-      </td>
-      <td className="px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
+      </DataTableCell>
+      <DataTableCell className="text-[13px] text-[var(--ds-grey-medium-05)]">
         {config.serverUrl}
-      </td>
-      <td className="px-4 py-3">
+      </DataTableCell>
+      <DataTableCell>
         <McpStatusBadge status={config.status} />
         {config.statusMessage ? (
           <div className="mt-1 max-w-[28ch] text-[12px] text-[var(--ds-red-dark)]">
             {config.statusMessage}
           </div>
         ) : null}
-      </td>
-      <td className="px-4 py-3 text-[13px] text-[var(--color-muted-foreground)]">
+      </DataTableCell>
+      <DataTableCell className="text-[13px] text-[var(--ds-grey-medium-05)]">
         {tokenExpiry}
-      </td>
-      <td className="px-4 py-3 text-right">
+      </DataTableCell>
+      <DataTableCell align="right">
         <div className="flex items-center justify-end gap-2">
           <Button size="sm" onClick={startAuth} disabled={connecting || deleting}>
             {connecting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner className="h-3.5 w-3.5" />
             ) : config.status === "authorized" ? (
               "Reauthorize"
             ) : (
               "Connect"
             )}
           </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={disconnect}
+          <Tooltip
+            content="Disconnect"
+            side="top"
             disabled={connecting || deleting}
-            aria-label="Disconnect"
           >
-            {deleting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Trash2 className="h-3.5 w-3.5" />
-            )}
-          </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={disconnect}
+              disabled={connecting || deleting}
+              aria-label="Disconnect"
+            >
+              {deleting ? (
+                <Spinner className="h-3.5 w-3.5" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          </Tooltip>
         </div>
         {rowError ? (
           <div className="mt-1 text-[12px] text-[var(--ds-red-dark)]">
             {rowError}
           </div>
         ) : null}
-      </td>
-    </tr>
+      </DataTableCell>
+    </DataTableRow>
   );
 }
 
 function AddMcpDialog({
   existingAccountIds,
+  lockedAccountId,
   onClose,
   onSaved,
 }: {
   existingAccountIds: Set<string>;
+  // When set, the picker is hidden and registration always uses this
+  // account. Used by the account-settings hub's MCP tab so admins
+  // don't have to re-pick the account they're already inside.
+  lockedAccountId: string | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -456,7 +532,7 @@ function AddMcpDialog({
   // credentials belong to and the MCP server URL.
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
-  const [accountId, setAccountId] = useState("");
+  const [accountId, setAccountId] = useState(lockedAccountId ?? "");
   const [serverUrl, setServerUrl] = useState("https://mcp.optipeople.dk");
   const [label, setLabel] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -552,14 +628,16 @@ function AddMcpDialog({
         </p>
 
         <div className="mt-4 flex flex-col gap-3">
-          <AccountSelect
-            accounts={accounts}
-            error={accountsError}
-            value={accountId}
-            onChange={setAccountId}
-            existingAccountIds={existingAccountIds}
-            disabled={submitting}
-          />
+          {lockedAccountId ? null : (
+            <AccountSelect
+              accounts={accounts}
+              error={accountsError}
+              value={accountId}
+              onChange={setAccountId}
+              existingAccountIds={existingAccountIds}
+              disabled={submitting}
+            />
+          )}
           <TextField
             label="MCP server URL"
             value={serverUrl}
@@ -593,7 +671,7 @@ function AddMcpDialog({
             Cancel
           </Button>
           <Button size="sm" type="submit" disabled={!canSubmit}>
-            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Register"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Register"}
           </Button>
         </div>
       </form>
@@ -616,18 +694,12 @@ function AccountSelect({
   existingAccountIds: Set<string>;
   disabled: boolean;
 }) {
-  // Simple native <select>. Good enough for an admin-only screen and
-  // dodges the keyboard-focus complexity of the custom popover used
-  // by AddMachineDialog.
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[14px] leading-[21px] text-[var(--ds-grey-medium-04)]">
-        Account
-      </span>
-      <select
-        className="h-[30px] rounded-[4px] border border-[var(--color-hairline)] bg-white px-2 text-[14px] text-[var(--ds-grey-dark-09)] shadow-[var(--ds-shadow-input)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-green-80)]"
+    <div className="flex flex-col gap-1">
+      <Select
+        label="Account"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onValueChange={onChange}
         disabled={disabled || accounts === null}
       >
         {accounts === null ? (
@@ -647,10 +719,10 @@ function AccountSelect({
             ))}
           </>
         )}
-      </select>
+      </Select>
       {error ? (
         <span className="text-[12px] text-[var(--ds-red-dark)]">{error}</span>
       ) : null}
-    </label>
+    </div>
   );
 }

@@ -1,6 +1,4 @@
-import { EscalationsList } from "@/components/admin/EscalationsList";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default async function AdminMachineEscalationsPage({
   params,
@@ -8,5 +6,5 @@ export default async function AdminMachineEscalationsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <EscalationsList machineId={id} />;
+  redirect(`/admin/machines/${encodeURIComponent(id)}?section=escalations`);
 }

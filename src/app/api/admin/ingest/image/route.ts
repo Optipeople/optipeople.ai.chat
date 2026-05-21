@@ -3,10 +3,13 @@
 // kb_documents (source_type='image') + kb_assets + kb_chunks row. Mirrors
 // the PDF ingest endpoint at /api/admin/ingest for parity in the queue.
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { ingestImage } from "@/lib/imageIngestion";
 import { isSupportedImageMime } from "@/lib/imageCaption";
-import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +18,7 @@ export const maxDuration = 300;
 export async function POST(req: Request) {
   let admin;
   try {
-    admin = await requireSuperAdmin(req);
+    admin = await requireAdmin(req);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;
@@ -54,20 +57,13 @@ export async function POST(req: Request) {
     );
   }
 
-  const supabase = getSupabaseServerClient();
-  const { data: machine, error: lookupErr } = await supabase
-    .from("machine_kb")
-    .select("account_id")
-    .eq("machine_id", machineId)
-    .maybeSingle();
-  if (lookupErr) {
-    console.error("admin image ingest lookup failed:", lookupErr);
-    return Response.json({ error: "Database error" }, { status: 500 });
+  let accountId: string;
+  try {
+    accountId = await assertMachineAccess(admin, machineId);
+  } catch (err) {
+    if (err instanceof AuthError) return err.toResponse();
+    throw err;
   }
-  if (!machine) {
-    return Response.json({ error: "Machine not found" }, { status: 404 });
-  }
-  const accountId = (machine as { account_id: string }).account_id;
 
   const summary =
     typeof summaryRaw === "string" && summaryRaw.trim()

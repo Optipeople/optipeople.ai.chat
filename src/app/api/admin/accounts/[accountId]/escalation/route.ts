@@ -8,7 +8,7 @@
 // konfigureret" hint.
 
 import { getTranslations } from "next-intl/server";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { AuthError, assertAccountAccess, requireAdmin } from "@/lib/auth";
 import type { EscalationChannel } from "@/lib/escalation";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -40,9 +40,10 @@ const VALID_CHANNELS: EscalationChannel[] = [
 // than send to the wrong number.
 const E164_RE = /^\+[1-9]\d{7,14}$/;
 
-async function gate(req: Request) {
+async function gate(req: Request, accountId: string) {
   try {
-    const user = await requireSuperAdmin(req);
+    const user = await requireAdmin(req);
+    assertAccountAccess(user, accountId);
     return { user, denied: null as Response | null };
   } catch (err) {
     if (err instanceof AuthError) return { user: null, denied: err.toResponse() };
@@ -72,10 +73,9 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const { denied } = await gate(req);
-  if (denied) return denied;
-
   const { accountId } = await ctx.params;
+  const { denied } = await gate(req, accountId);
+  if (denied) return denied;
   const supabase = getSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -100,10 +100,10 @@ export async function PUT(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const { user, denied } = await gate(req);
+  const { accountId } = await ctx.params;
+  const { user, denied } = await gate(req, accountId);
   if (denied) return denied;
 
-  const { accountId } = await ctx.params;
   const t = await getTranslations("server");
 
   let body: { channel?: unknown; target?: unknown; label?: unknown };
@@ -191,10 +191,10 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const { denied } = await gate(req);
+  const { accountId } = await ctx.params;
+  const { denied } = await gate(req, accountId);
   if (denied) return denied;
 
-  const { accountId } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
   const { error } = await supabase

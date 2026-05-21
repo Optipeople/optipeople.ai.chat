@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { XIcon } from "./icons";
+import { Tooltip } from "./tooltip";
 
 export type PanelHeaderTone = "normal" | "hover" | "selected";
 
@@ -50,18 +51,20 @@ export const PanelHeader = React.forwardRef<HTMLDivElement, PanelHeaderProps>(
         </h3>
         {actions}
         {onClose && (
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className={cn(
-              "inline-flex h-[20px] w-[20px] items-center justify-center rounded-[2px]",
-              "text-[var(--ds-grey-medium-06)] hover:bg-[var(--ds-grey-light-01)] hover:text-[var(--ds-grey-dark-09)]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
-            )}
-          >
-            <XIcon size={12} strokeWidth={2} />
-          </button>
+          <Tooltip content="Close" side="bottom">
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className={cn(
+                "inline-flex h-[20px] w-[20px] items-center justify-center rounded-[2px]",
+                "text-[var(--ds-grey-medium-06)] hover:bg-[var(--ds-grey-light-01)] hover:text-[var(--ds-grey-dark-09)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
+              )}
+            >
+              <XIcon size={12} strokeWidth={2} />
+            </button>
+          </Tooltip>
         )}
       </div>
     );

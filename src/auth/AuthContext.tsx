@@ -51,10 +51,27 @@ export type User = {
   // Stable code-style identifier (e.g. "SuperAdministrator"). Use this
   // for gating, not roleName.
   permissionName: string | null;
+  // Optipeople account this user belongs to. Required for account
+  // admins (they're scoped to this account); super admins can have it
+  // null. Populated by /api/User/GetCurrentUser.
+  accountId: string | null;
 };
 
 export function isSuperAdmin(user: User | null): boolean {
   return user?.permissionName === "SuperAdministrator";
+}
+
+// Account administrator scoped to their own Optipeople account. They
+// get the same admin UI surface as a super admin but every server
+// route enforces the account scope (see requireAdmin in src/lib/auth.ts).
+export function isAccountAdmin(user: User | null): boolean {
+  return user?.permissionName === "AccountAdministrator";
+}
+
+// Either flavour of admin. Used by AdminGate and UserMenu to decide
+// whether to show the admin entries.
+export function isAdmin(user: User | null): boolean {
+  return isSuperAdmin(user) || isAccountAdmin(user);
 }
 
 export type AuthContextValue = {
@@ -313,6 +330,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 name: me.name,
                 roleName: me.roleName,
                 permissionName: me.permissionName,
+                accountId: me.accountId,
               }
             : prev,
         );
@@ -330,7 +348,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // initial render starts unauthenticated and this effect promotes
       // it once the cached session is read.
       /* eslint-disable react-hooks/set-state-in-effect */
-      setUser({ email, name: null, roleName: null, permissionName: null });
+      setUser({
+        email,
+        name: null,
+        roleName: null,
+        permissionName: null,
+        accountId: null,
+      });
       const storedAccount = getCurrentAccount();
       if (storedAccount) setCurrentAccount(storedAccount);
       const storedMachine = getCurrentMachine();
@@ -355,6 +379,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           name: null,
           roleName: null,
           permissionName: null,
+          accountId: null,
         });
         // Apply the user's stored language preference before the rest of
         // the app re-renders. Best-effort: if the lookup fails we leave

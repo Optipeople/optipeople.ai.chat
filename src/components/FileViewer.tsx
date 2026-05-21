@@ -9,7 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
-import { ExternalLink, Loader2, X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -252,7 +253,7 @@ function ViewerModal({
         }}
       >
         {state.phase === "loading" && (
-          <Loader2 className="h-8 w-8 animate-spin text-white/70" />
+          <Spinner className="h-8 w-8" />
         )}
         {state.phase === "error" && (
           <div className="max-w-md rounded-md bg-white/5 px-4 py-3 text-center text-[14px] text-white/80">

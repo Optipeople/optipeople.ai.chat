@@ -1,11 +1,18 @@
 // GET  /api/admin/machines — list every known machine_kb row with its
-//                            ready-document count.
+//                            ready-document count. Account admins see
+//                            only machines for their own account.
 // POST /api/admin/machines — create a new machine_kb row from an
 //                            Optipeople machine the admin picked.
-// Gated on Optipeople SuperAdministrator.
+//                            Account admins can only create within
+//                            their own account.
 
 import { getTranslations } from "next-intl/server";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertAccountAccess,
+  AuthError,
+  requireAdmin,
+  type Admin,
+} from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -19,28 +26,37 @@ export type AdminMachine = {
   updatedAt: string;
 };
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(
+  req: Request,
+): Promise<{ admin: Admin | null; denied: Response | null }> {
   try {
-    await requireSuperAdmin(req);
-    return null;
+    const admin = await requireAdmin(req);
+    return { admin, denied: null };
   } catch (err) {
-    if (err instanceof AuthError) return err.toResponse();
+    if (err instanceof AuthError) return { admin: null, denied: err.toResponse() };
     throw err;
   }
 }
 
 export async function GET(req: Request) {
-  const denied = await gate(req);
+  const { admin, denied } = await gate(req);
   if (denied) return denied;
 
   const supabase = getSupabaseServerClient();
 
+  // Account admins see only their account's machines. Super admins
+  // see everything.
+  const machinesQuery = supabase
+    .from("machine_kb")
+    .select("machine_id, account_id, display_name, updated_at")
+    .order("updated_at", { ascending: false });
+  if (admin!.role === "account") {
+    machinesQuery.eq("account_id", admin!.accountId);
+  }
+
   const [{ data: machines, error: mErr }, { data: docs, error: dErr }] =
     await Promise.all([
-      supabase
-        .from("machine_kb")
-        .select("machine_id, account_id, display_name, updated_at")
-        .order("updated_at", { ascending: false }),
+      machinesQuery,
       supabase.from("kb_documents").select("machine_id").eq("status", "ready"),
     ]);
 
@@ -76,7 +92,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const denied = await gate(req);
+  const { admin, denied } = await gate(req);
   if (denied) return denied;
 
   const t = await getTranslations("server");
@@ -102,6 +118,13 @@ export async function POST(req: Request) {
       { error: t("admin.machineFieldsRequired") },
       { status: 400 },
     );
+  }
+  // Account admins may only seed machines within their own account.
+  try {
+    assertAccountAccess(admin!, accountId);
+  } catch (err) {
+    if (err instanceof AuthError) return err.toResponse();
+    throw err;
   }
 
   const supabase = getSupabaseServerClient();

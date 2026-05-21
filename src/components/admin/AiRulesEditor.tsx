@@ -1,18 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  Loader2,
-  Lock,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, Lock, Trash2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ToggleButton } from "@/components/ui/toggle-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   createAiRule,
   deleteAiRule,
@@ -29,7 +23,16 @@ const MAX_RULE_BODY_LENGTH = 2000;
 // `systemRule` (returned by the API and ultimately sourced from
 // src/lib/aiRules.ts) at the top of the list. Below it: editable rules,
 // one card each, with body / enabled / position controls.
-export function AiRulesEditor({ accountId }: { accountId: string }) {
+//
+// `embedded` skips the page-level H1 + description for use inside a
+// section panel (the section header provides the title).
+export function AiRulesEditor({
+  accountId,
+  embedded = false,
+}: {
+  accountId: string;
+  embedded?: boolean;
+}) {
   const confirm = useConfirm();
   const [systemRule, setSystemRule] = useState<string>("");
   const [rules, setRules] = useState<AccountAiRule[] | null>(null);
@@ -141,22 +144,22 @@ export function AiRulesEditor({ accountId }: { accountId: string }) {
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
-      <div className="flex flex-col gap-1">
-        <Link
-          href="/admin/rules"
-          className="inline-flex items-center gap-1 text-[13px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          All accounts
-        </Link>
-        <h1 className="mt-1 text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-          AI rules — {accountName ?? accountId}
-        </h1>
+      {embedded ? (
         <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
           The locked rule below is always enforced. Add additional rules
           to encode account-specific guidance (e.g. safety reminders).
         </p>
-      </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
+            AI rules — {accountName ?? accountId}
+          </h1>
+          <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+            The locked rule below is always enforced. Add additional rules
+            to encode account-specific guidance (e.g. safety reminders).
+          </p>
+        </div>
+      )}
 
       {error ? (
         <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-4 text-[13px] text-[var(--ds-red-dark)]">
@@ -170,7 +173,7 @@ export function AiRulesEditor({ accountId }: { accountId: string }) {
       {/* Editable rules */}
       {rules === null ? (
         <div className="flex h-24 items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-[var(--color-muted-foreground)]" />
+          <Spinner className="h-5 w-5" />
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -216,17 +219,15 @@ export function AiRulesEditor({ accountId }: { accountId: string }) {
             {draft.length} / {MAX_RULE_BODY_LENGTH}
           </span>
           <Button
-            size="sm"
+            variant="secondary"
+            size="compact"
             onClick={handleAdd}
             disabled={adding || draft.trim().length === 0}
           >
             {adding ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner className="h-3.5 w-3.5" />
             ) : (
-              <>
-                <Plus className="mr-1 h-3.5 w-3.5" />
-                Add rule
-              </>
+              "Add rule"
             )}
           </Button>
         </div>
@@ -343,32 +344,44 @@ function EditableRuleCard({
     >
       <div className="flex items-start gap-2">
         <div className="mt-0.5 flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={onMoveUp}
+          <Tooltip
+            content="Move up"
+            side="right"
             disabled={index === 0 || busy}
-            aria-label="Move up"
-            className={cn(
-              "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
-              "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
-              "disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent",
-            )}
           >
-            <ArrowUp className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onMoveDown}
+            <button
+              type="button"
+              onClick={onMoveUp}
+              disabled={index === 0 || busy}
+              aria-label="Move up"
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
+                "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
+                "disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent",
+              )}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip
+            content="Move down"
+            side="right"
             disabled={index === total - 1 || busy}
-            aria-label="Move down"
-            className={cn(
-              "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
-              "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
-              "disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent",
-            )}
           >
-            <ArrowDown className="h-3.5 w-3.5" />
-          </button>
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={index === total - 1 || busy}
+              aria-label="Move down"
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
+                "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
+                "disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent",
+              )}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
 
         <div className="min-w-0 flex-1">
@@ -386,16 +399,13 @@ function EditableRuleCard({
             )}
           />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-muted-foreground)]">
-              <input
-                type="checkbox"
-                checked={rule.enabled}
-                onChange={handleToggle}
-                disabled={busy}
-                className="h-4 w-4"
-              />
-              {rule.enabled ? "Enabled" : "Disabled"}
-            </label>
+            <ToggleButton
+              checked={rule.enabled}
+              onCheckedChange={handleToggle}
+              disabled={busy}
+              aria-label={rule.enabled ? "Disable rule" : "Enable rule"}
+            />
+
             <div className="flex items-center gap-2">
               {dirty ? (
                 <Button
@@ -409,20 +419,22 @@ function EditableRuleCard({
               ) : null}
               <Button size="sm" onClick={handleSave} disabled={!canSave}>
                 {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner className="h-3.5 w-3.5" />
                 ) : (
                   "Save"
                 )}
               </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={handleDeleteClick}
-                disabled={busy}
-                aria-label="Delete rule"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip content="Delete rule" side="top" disabled={busy}>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleDeleteClick}
+                  disabled={busy}
+                  aria-label="Delete rule"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </Tooltip>
             </div>
           </div>
         </div>

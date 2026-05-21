@@ -168,7 +168,7 @@ b8b147d Refactor: extract ingestion pipeline into src/lib/ingestion.ts
 | Onboarded sets endpoint (public) + client helper | [src/app/api/registered/route.ts](../src/app/api/registered/route.ts), [src/auth/registeredApi.ts](../src/auth/registeredApi.ts) |
 | Resend e-mail wrapper | [src/lib/email.ts](../src/lib/email.ts) |
 | Conversation persistence helpers | [src/lib/conversations.ts](../src/lib/conversations.ts) |
-| Auth resolver (`resolveCurrentUser` + `requireSuperAdmin`) | [src/lib/auth.ts](../src/lib/auth.ts) |
+| Auth resolver (`resolveCurrentUser` + `requireAdmin` / `requireSuperAdmin` + account-scope asserts) | [src/lib/auth.ts](../src/lib/auth.ts) |
 | Hybrid search SQL function | [supabase/migrations/20260507141106_hybrid_search.sql](../supabase/migrations/20260507141106_hybrid_search.sql) |
 | Per-machine ingestion CLI | [scripts/ingest.ts](../scripts/ingest.ts) |
 | Ingestion pipeline (chunk + embed + progress writes) | [src/lib/ingestion.ts](../src/lib/ingestion.ts) |
@@ -329,8 +329,10 @@ that machine before re-ingesting.
 Operator-facing super-admins manage manuals end-to-end through the
 browser. Everything below is in production code on `main`:
 
-- Server-gated by `permissionName === "SuperAdministrator"` from
-  Optipeople. Client-side `<AdminGate>` hides chrome for non-admins
+- Server-gated by `permissionName` ∈ {`SuperAdministrator`, `AccountAdministrator`}
+  from Optipeople. Account admins are additionally scoped per-resource
+  (machine / document / conversation / accountId in the path) to their
+  own account. Client-side `<AdminGate>` hides chrome for non-admins
   but the server is the security boundary.
 - Drag-and-drop multi-file upload with **folder tree preservation** —
   drop a whole `knowledgebase/` directory and the structure shows up

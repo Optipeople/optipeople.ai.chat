@@ -1,7 +1,5 @@
-import { AiRulesAccountsList } from "@/components/admin/AiRulesAccountsList";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default function AdminAiRulesPage() {
-  return <AiRulesAccountsList />;
+  redirect("/admin/accounts");
 }

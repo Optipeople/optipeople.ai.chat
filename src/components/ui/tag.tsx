@@ -8,6 +8,7 @@ import {
   CircleInfoIcon,
   XIcon,
 } from "./icons";
+import { Tooltip } from "./tooltip";
 
 export type TagVariant = "default" | "positive" | "warning" | "issue";
 export type TagSize = "small" | "medium";
@@ -16,6 +17,8 @@ export type TagProps = Omit<React.HTMLAttributes<HTMLSpanElement>, "color"> & {
   variant?: TagVariant;
   size?: TagSize;
   showIcon?: boolean;
+  /** Custom icon rendered before the label. */
+  leadingIcon?: React.ReactNode;
   /** If provided, an X button is rendered after the label. */
   onRemove?: () => void;
 };
@@ -53,6 +56,7 @@ export const Tag = React.forwardRef<HTMLSpanElement, TagProps>(
       variant = "default",
       size = "medium",
       showIcon = false,
+      leadingIcon,
       onRemove,
       children,
       ...rest
@@ -78,17 +82,20 @@ export const Tag = React.forwardRef<HTMLSpanElement, TagProps>(
         )}
         {...rest}
       >
+        {leadingIcon}
         {showIcon && isStatus && size === "medium" && v.icon}
         <span className="whitespace-nowrap">{children}</span>
         {onRemove && (
-          <button
-            type="button"
-            aria-label="Remove"
-            onClick={onRemove}
-            className="ml-[2px] inline-flex h-[12px] w-[12px] items-center justify-center text-[var(--ds-grey-medium-06)] hover:text-[var(--ds-grey-dark-09)]"
-          >
-            <XIcon size={10} />
-          </button>
+          <Tooltip content="Remove" side="top" className="ml-[2px]">
+            <button
+              type="button"
+              aria-label="Remove"
+              onClick={onRemove}
+              className="inline-flex h-[12px] w-[12px] items-center justify-center text-[var(--ds-grey-medium-06)] hover:text-[var(--ds-grey-dark-09)]"
+            >
+              <XIcon size={10} />
+            </button>
+          </Tooltip>
         )}
       </span>
     );

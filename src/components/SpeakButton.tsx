@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Loader2, Volume2, VolumeX } from "lucide-react";
+import { Volume2, VolumeX } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 
 type Props = {
   text: string;
@@ -81,26 +83,27 @@ export function SpeakButton({ text, className }: Props) {
           : t("play");
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={state === "loading"}
-      title={label}
-      aria-label={label}
-      className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-60",
-        state === "playing" && "text-[var(--ds-blue-primary)]",
-        state === "error" && "text-[var(--ds-red)]",
-        className,
-      )}
-    >
-      {state === "loading" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : state === "playing" ? (
-        <VolumeX className="h-4 w-4" />
-      ) : (
-        <Volume2 className="h-4 w-4" />
-      )}
-    </button>
+    <Tooltip content={label} side="top">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={state === "loading"}
+        aria-label={label}
+        className={cn(
+          "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-60",
+          state === "playing" && "text-[var(--ds-blue-primary)]",
+          state === "error" && "text-[var(--ds-red)]",
+          className,
+        )}
+      >
+        {state === "loading" ? (
+          <Spinner className="h-4 w-4" />
+        ) : state === "playing" ? (
+          <VolumeX className="h-4 w-4" />
+        ) : (
+          <Volume2 className="h-4 w-4" />
+        )}
+      </button>
+    </Tooltip>
   );
 }

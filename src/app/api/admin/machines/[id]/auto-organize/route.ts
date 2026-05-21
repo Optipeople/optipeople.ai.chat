@@ -8,7 +8,11 @@
 // admin UI calls preview first, shows a checkbox list, then calls apply
 // with whatever the operator left checked.
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertMachineAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import {
   applyAutoOrganize,
   proposeAutoOrganize,
@@ -33,9 +37,10 @@ export type AutoOrganizeApplyResponse = {
   applied: number;
 };
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(req: Request, machineId: string): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertMachineAccess(admin, machineId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -47,10 +52,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id: machineId } = await ctx.params;
+  const denied = await gate(req, machineId);
+  if (denied) return denied;
 
   let body: { mode?: unknown; moves?: unknown };
   try {

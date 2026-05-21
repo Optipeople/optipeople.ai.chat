@@ -15,7 +15,7 @@
 //      (defaulting to "mcp:tools" when the resource advertises it).
 //   5. Return { authorizeUrl } to the admin UI.
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { assertAccountAccess, AuthError, requireAdmin } from "@/lib/auth";
 import {
   getMcpConfig,
   getRedirectUri,
@@ -35,9 +35,13 @@ export const dynamic = "force-dynamic";
 
 const PREFERRED_SCOPE = "mcp:tools";
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(
+  req: Request,
+  accountId: string,
+): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    assertAccountAccess(admin, accountId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -49,10 +53,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ accountId: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { accountId } = await ctx.params;
+  const denied = await gate(req, accountId);
+  if (denied) return denied;
   if (!accountId) {
     return Response.json({ error: "accountId is required" }, { status: 400 });
   }

@@ -29,8 +29,8 @@
     "role": "Rolle",
     "account": "Konto",
     "machine": "Maskine",
-    "admin": "Admin",
-    "aiRules": "AI-regler",
+    "admin": "Maskinindstillinger",
+    "accountSettings": "Kontoindstillinger",
     "switchAccount": "Skift konto",
     "switchMachine": "Skift maskine",
     "language": "Sprog",
@@ -166,6 +166,7 @@
     "regenerate": "Generér igen",
     "newChat": "Ny chat",
     "newChatAria": "Start en ny chat",
+    "changeMachineAria": "Skift maskine",
     "jumpToLatest": "Hop til seneste",
     "showSuggestions": "Vis startspørgsmål",
     "hideSuggestions": "Skjul startspørgsmål",
@@ -211,6 +212,9 @@
     "heading": "Dokumenter",
     "description": "Manualer og dokumenter for denne maskine. Klik på et element for at åbne det.",
     "empty": "Ingen dokumenter er tilgængelige endnu. Bed din administrator om at gøre manualer synlige her.",
+    "adminEmptyTitle": "Ingen dokumenter endnu",
+    "adminEmptyBody": "Tilføj manualer eller billeder for denne maskine i admin. De vises her, og assistenten bruger dem til at besvare operatørernes spørgsmål.",
+    "adminUpload": "Tilføj dokumenter i admin",
     "retry": "Prøv igen",
     "missingUrl": "Manglende URL i svaret",
     "openFailed": "Kunne ikke åbne dokument"
@@ -277,12 +281,30 @@
     }
   },
   "admin": {
+    "nav": {
+      "sections": {
+        "machines": "Maskiner",
+        "accounts": "Konti"
+      },
+      "crumbs": {
+        "machines": "Maskiner",
+        "accounts": "Konti",
+        "knowledge": "Viden",
+        "settings": "Indstillinger",
+        "conversations": "Samtaler",
+        "escalations": "Eskaleringer",
+        "qr": "QR-kode",
+        "rules": "AI-regler",
+        "mcp": "MCP",
+        "loading": "…"
+      }
+    },
     "gate": {
       "notLoggedInTitle": "Du er ikke logget ind",
       "notLoggedInBody": "Log ind for at få adgang til admin-området.",
       "toLogin": "Til login",
       "unauthorizedTitle": "Ikke autoriseret",
-      "unauthorizedBody": "Admin-området er forbeholdt SuperAdministrator-rollen. Din rolle: {role}.",
+      "unauthorizedBody": "Admin-området er forbeholdt administratorer. Din rolle: {role}.",
       "unknownRole": "ukendt",
       "backToChat": "Tilbage til chat"
     },
@@ -295,12 +317,17 @@
       "emptyFirst": "Tryk \"Tilføj maskine\" for at tilføje din første maskine.",
       "emptySearch": "Ingen maskiner matcher din søgning.",
       "colName": "Navn",
-      "colMachineId": "Machine ID",
-      "colAccountId": "Konto ID",
+      "colAccount": "Konto",
+      "colFactory": "Fabrik",
       "colDocuments": "Dokumenter",
       "noName": "(uden navn)",
       "openChatTitle": "Åbn chat i ny fane",
-      "openChatAria": "Åbn chat"
+      "openChatAria": "Åbn chat",
+      "countLabelFiltered": "{shown} af {total} maskiner",
+      "filterAccount": "Konto",
+      "filterFactory": "Fabrik",
+      "filterAllAccounts": "Alle konti",
+      "filterAllFactories": "Alle fabrikker"
     },
     "machineDetail": {
       "fetchFailed": "Maskinen kunne ikke hentes",
@@ -474,8 +501,8 @@
       "resolutionUnresolved": "Uløst",
       "resolutionEscalated": "Eskaleret",
       "resolutionUnknown": "Ukendt",
-      "prev": "← Forrige",
-      "next": "Næste →",
+      "prev": "Forrige",
+      "next": "Næste",
       "pageLabel": "Side {n}"
     },
     "conversationDetail": {
@@ -528,8 +555,8 @@
       "channelServiceTicket": "Service-ticket",
       "channelWebhook": "Webhook",
       "open": "Åbn",
-      "prev": "← Forrige",
-      "next": "Næste →",
+      "prev": "Forrige",
+      "next": "Næste",
       "pageLabel": "Side {n}"
     },
     "addMachine": {

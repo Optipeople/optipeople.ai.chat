@@ -1,7 +1,8 @@
-import { McpList } from "@/components/admin/McpList";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default function AdminMcpPage() {
-  return <McpList />;
+  // MCP lives under each account's settings hub now. Send the admin
+  // to the account picker — for account admins, the picker auto-bounces
+  // into their own account.
+  redirect("/admin/accounts");
 }

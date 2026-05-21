@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Wrench,
 } from "lucide-react";
-import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
+import { isAccountAdmin, isAdmin, useAuth } from "@/auth/AuthContext";
 import { locales, type Locale } from "@/i18n/config";
 import { persistLocale } from "@/i18n/localeApi";
 import { cn } from "@/lib/utils";
@@ -158,7 +158,7 @@ export function UserMenu() {
             )}
           </div>
           <div className="h-px bg-[var(--color-hairline)]" />
-          {isSuperAdmin(user) && (
+          {isAdmin(user) && (
             <>
               <Link
                 href="/admin/machines"
@@ -173,7 +173,15 @@ export function UserMenu() {
                 {t("admin")}
               </Link>
               <Link
-                href="/admin/rules"
+                href={
+                  // Account admins skip the picker — they only have one
+                  // account anyway. The /admin/accounts picker also
+                  // auto-redirects them, so this is mostly belt-and-
+                  // suspenders for the snappier transition.
+                  isAccountAdmin(user) && user?.accountId
+                    ? `/admin/accounts/${encodeURIComponent(user.accountId)}`
+                    : "/admin/accounts"
+                }
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className={cn(
@@ -182,7 +190,7 @@ export function UserMenu() {
                 )}
               >
                 <ShieldCheck className="h-4 w-4" />
-                {t("aiRules")}
+                {t("accountSettings")}
               </Link>
               <div className="h-px bg-[var(--color-hairline)]" />
             </>

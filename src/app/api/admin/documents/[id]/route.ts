@@ -2,7 +2,11 @@
 // DELETE /api/admin/documents/[id] — remove the document, its chunks
 //                                    (cascade), and its Storage object
 
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import {
+  assertDocumentAccess,
+  AuthError,
+  requireAdmin,
+} from "@/lib/auth";
 import { ensureFolderPath } from "@/lib/ingestion";
 import { regenerateSuggestedQuestionsSafe } from "@/lib/suggestions";
 import { getSupabaseServerClient } from "@/lib/supabase";
@@ -10,9 +14,10 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(req: Request, documentId: string): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    await assertDocumentAccess(admin, documentId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -24,10 +29,9 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { id } = await ctx.params;
+  const denied = await gate(req, id);
+  if (denied) return denied;
   let body: {
     title?: unknown;
     summary?: unknown;
@@ -102,10 +106,10 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const denied = await gate(req);
+  const { id } = await ctx.params;
+  const denied = await gate(req, id);
   if (denied) return denied;
 
-  const { id } = await ctx.params;
   const supabase = getSupabaseServerClient();
 
   // Look up the storage path + machine id before deleting the row so we

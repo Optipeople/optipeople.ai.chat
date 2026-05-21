@@ -10,16 +10,20 @@ import {
   deleteAccountAiRule,
   updateAccountAiRule,
 } from "@/lib/aiRules";
-import { AuthError, requireSuperAdmin } from "@/lib/auth";
+import { AuthError, assertAccountAccess, requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_RULE_BODY_LENGTH = 2000;
 
-async function gate(req: Request): Promise<Response | null> {
+async function gate(
+  req: Request,
+  accountId: string,
+): Promise<Response | null> {
   try {
-    await requireSuperAdmin(req);
+    const admin = await requireAdmin(req);
+    assertAccountAccess(admin, accountId);
     return null;
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
@@ -31,10 +35,10 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ accountId: string; ruleId: string }> },
 ) {
-  const denied = await gate(req);
+  const { accountId, ruleId } = await ctx.params;
+  const denied = await gate(req, accountId);
   if (denied) return denied;
 
-  const { accountId, ruleId } = await ctx.params;
   const t = await getTranslations("server");
 
   let parsed: { body?: unknown; enabled?: unknown; position?: unknown };
@@ -115,10 +119,9 @@ export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ accountId: string; ruleId: string }> },
 ) {
-  const denied = await gate(req);
-  if (denied) return denied;
-
   const { accountId, ruleId } = await ctx.params;
+  const denied = await gate(req, accountId);
+  if (denied) return denied;
 
   try {
     await deleteAccountAiRule({ accountId, ruleId });
