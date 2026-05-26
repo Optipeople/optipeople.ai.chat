@@ -214,7 +214,7 @@
     "empty": "No documents available yet. Ask your administrator to make manuals visible here.",
     "adminEmptyTitle": "No documents yet",
     "adminEmptyBody": "Add manuals or images for this machine in the admin. They'll appear here and the assistant will use them to answer operator questions.",
-    "adminUpload": "Add documents in admin",
+    "adminUpload": "Add documents",
     "retry": "Try again",
     "missingUrl": "Missing URL in response",
     "openFailed": "Could not open document"

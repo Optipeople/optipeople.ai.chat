@@ -865,7 +865,11 @@ function ChatApp({
   }
 
   async function submitEscalation(note: string) {
-    if (!conversationId) return;
+    // No conversationId yet means the operator hit "Call service"
+    // before sending any message — the server will mint a conversation
+    // from the note. Still require a machine so the technician knows
+    // what's being escalated.
+    if (!conversationId && !machine?.id) return;
     setEscalate({ phase: "submitting", note });
     try {
       const res = await fetchWithAuth("/api/chat/escalate", {
@@ -873,6 +877,8 @@ function ChatApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId,
+          machineId: conversationId ? undefined : machine?.id ?? null,
+          accountId: conversationId ? undefined : account?.id ?? null,
           note: note.trim() || null,
         }),
       });
@@ -890,6 +896,13 @@ function ChatApp({
       // All active channels (sms / email / webhook) are server-sent;
       // service_ticket exposes the share URL on the `done` view for the
       // operator to copy. Nothing to open client-side.
+
+      // If the server minted a fresh conversation (note-only escalate),
+      // adopt its id so any subsequent client logic that keys off
+      // conversationId sees the right row.
+      if (!conversationId && data.conversationId) {
+        setConversationId(data.conversationId);
+      }
 
       // Lock the chat (escalate.phase === "done" hides the feedback
       // prompt and locks the input bar) so the operator doesn't keep

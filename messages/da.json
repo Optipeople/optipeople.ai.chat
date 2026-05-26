@@ -214,7 +214,7 @@
     "empty": "Ingen dokumenter er tilgængelige endnu. Bed din administrator om at gøre manualer synlige her.",
     "adminEmptyTitle": "Ingen dokumenter endnu",
     "adminEmptyBody": "Tilføj manualer eller billeder for denne maskine i admin. De vises her, og assistenten bruger dem til at besvare operatørernes spørgsmål.",
-    "adminUpload": "Tilføj dokumenter i admin",
+    "adminUpload": "Tilføj dokumenter",
     "retry": "Prøv igen",
     "missingUrl": "Manglende URL i svaret",
     "openFailed": "Kunne ikke åbne dokument"

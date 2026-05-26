@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { getLocale, getTranslations } from "next-intl/server";
 import { defaultLocale, type Locale } from "@/i18n/config";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import { appendUserMessage, createConversation } from "@/lib/conversations";
 import { EmailError, sendEmail } from "@/lib/email";
 import {
   mintShareToken,
@@ -38,6 +39,11 @@ export const dynamic = "force-dynamic";
 
 type Body = {
   conversationId?: unknown;
+  // Used when escalating before any chat has started — server creates a
+  // conversation on the fly and stores `note` as the first user message.
+  // For QR auth these are ignored in favor of the token's pinned IDs.
+  machineId?: unknown;
+  accountId?: unknown;
   note?: unknown;
   qrToken?: unknown;
 };
@@ -45,6 +51,10 @@ type Body = {
 export type EscalateResponse = {
   ok: true;
   escalationId: string;
+  // The conversation the escalation is attached to. When the client
+  // didn't provide a conversationId, this is the id of the conversation
+  // we created on the fly — useful for the operator's local state.
+  conversationId: string;
   channel: EscalationChannel;
   target: string;
   label: string | null;
@@ -78,10 +88,18 @@ export async function POST(req: Request) {
   const qrToken = readQrTokenFromRequest(req, body);
 
   let userIdentity: { userId: string; email: string | null; name: string | null };
+  // When auth is QR, machine/account are pinned by the token and must
+  // override any client-supplied IDs. For bearer auth we trust the body
+  // (same as /api/chat does) but fall back to the user's home account.
+  let pinnedMachineId: string | null = null;
+  let pinnedAccountId: string | null = null;
+  let fallbackAccountId: string | null = null;
+  let pinnedEntryMode: "qr" | "manual" = "manual";
   if (hasBearer) {
     try {
       const u = await resolveCurrentUser(req);
       userIdentity = { userId: u.userId, email: u.email, name: u.name };
+      fallbackAccountId = u.accountId;
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -99,6 +117,9 @@ export async function POST(req: Request) {
       email: session.email,
       name: session.name,
     };
+    pinnedMachineId = session.machineId;
+    pinnedAccountId = session.accountId;
+    pinnedEntryMode = "qr";
   } else {
     return Response.json(
       { error: t("missingAuthHeader") },
@@ -106,13 +127,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const conversationId = body.conversationId;
-  if (typeof conversationId !== "string" || conversationId.length === 0) {
-    return Response.json(
-      { error: t("missingField", { field: "conversationId" }) },
-      { status: 400 },
-    );
-  }
   const note =
     typeof body.note === "string" && body.note.trim().length > 0
       ? body.note.trim().slice(0, 1000)
@@ -120,27 +134,97 @@ export async function POST(req: Request) {
 
   const supabase = getSupabaseServerClient();
 
-  // Confirm ownership — same IDOR guard as the feedback route.
-  const { data: convRow, error: convErr } = await supabase
-    .from("conversations")
-    .select("id, machine_id, account_id, user_id, started_at")
-    .eq("id", conversationId)
-    .maybeSingle();
-  if (convErr) {
-    console.error("escalate: conversation lookup failed:", convErr);
-    return Response.json({ error: t("dbError") }, { status: 500 });
-  }
-  const conversation = convRow as
-    | {
-        id: string;
-        machine_id: string;
-        account_id: string;
-        user_id: string;
-        started_at: string;
+  let conversationId: string;
+  let conversation: {
+    id: string;
+    machine_id: string;
+    account_id: string;
+    user_id: string;
+    started_at: string;
+  };
+
+  const rawConversationId = body.conversationId;
+  const hasConversationId =
+    typeof rawConversationId === "string" && rawConversationId.length > 0;
+
+  if (hasConversationId) {
+    conversationId = rawConversationId as string;
+
+    // Confirm ownership — same IDOR guard as the feedback route.
+    const { data: convRow, error: convErr } = await supabase
+      .from("conversations")
+      .select("id, machine_id, account_id, user_id, started_at")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (convErr) {
+      console.error("escalate: conversation lookup failed:", convErr);
+      return Response.json({ error: t("dbError") }, { status: 500 });
+    }
+    const found = convRow as typeof conversation | null;
+    if (!found || found.user_id !== userIdentity.userId) {
+      return Response.json({ error: t("notFound") }, { status: 404 });
+    }
+    conversation = found;
+  } else {
+    // No prior chat — escalate directly from the operator's note. We
+    // mint a conversation row so the rest of the flow (snapshot, audit
+    // join, share view) doesn't have to branch.
+    const machineId =
+      pinnedMachineId ??
+      (typeof body.machineId === "string" && body.machineId.length > 0
+        ? body.machineId
+        : null);
+    if (!machineId) {
+      return Response.json(
+        { error: t("missingField", { field: "machineId" }) },
+        { status: 400 },
+      );
+    }
+    const accountId =
+      pinnedAccountId ??
+      (typeof body.accountId === "string" && body.accountId.length > 0
+        ? body.accountId
+        : fallbackAccountId);
+    if (!accountId) {
+      return Response.json(
+        { error: t("missingField", { field: "accountId" }) },
+        { status: 400 },
+      );
+    }
+
+    try {
+      conversationId = await createConversation({
+        machineId,
+        accountId,
+        userId: userIdentity.userId,
+        userEmail: userIdentity.email,
+        userName: userIdentity.name,
+        entryMode: pinnedEntryMode,
+      });
+    } catch (err) {
+      console.error("escalate: createConversation failed:", err);
+      return Response.json({ error: t("dbError") }, { status: 500 });
+    }
+
+    // Persist the note as the first user turn so the technician's
+    // snapshot includes it. Best-effort: a failure here doesn't block
+    // escalation since `note` is also delivered out-of-band in
+    // email/SMS/webhook payloads.
+    if (note) {
+      try {
+        await appendUserMessage(conversationId, note);
+      } catch (err) {
+        console.warn("escalate: appendUserMessage failed (soft):", err);
       }
-    | null;
-  if (!conversation || conversation.user_id !== userIdentity.userId) {
-    return Response.json({ error: t("notFound") }, { status: 404 });
+    }
+
+    conversation = {
+      id: conversationId,
+      machine_id: machineId,
+      account_id: accountId,
+      user_id: userIdentity.userId,
+      started_at: new Date().toISOString(),
+    };
   }
 
   // Pull the configured target for the conversation's account. Without
@@ -391,6 +475,7 @@ export async function POST(req: Request) {
   const result: EscalateResponse = {
     ok: true,
     escalationId,
+    conversationId,
     channel: target.channel,
     target: target.target,
     label: target.label,
