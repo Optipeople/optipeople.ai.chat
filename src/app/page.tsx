@@ -1417,7 +1417,7 @@ function ChatApp({
         <div className="mx-auto max-w-3xl px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 sm:px-4 sm:pb-8">
           {(isEmpty || forceShowSuggestions) && (
             <div className="msg-in mb-6 sm:mb-10">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex max-w-xl flex-wrap gap-2">
                 {(visibleSuggestions.length > 0
                   ? visibleSuggestions
                   : FALLBACK_QUESTIONS
