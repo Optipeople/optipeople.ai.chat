@@ -18,6 +18,7 @@ import {
   extensionForMime,
   extractPdfFigures,
   isSupportedImageMime,
+  type ImageMime,
   type PdfFigure,
 } from "./imageCaption";
 import { ensureFolderPath, ensureMachineKb } from "./ingestion";
@@ -59,19 +60,8 @@ export async function ingestImage(
   await ensureMachineKb(input.machineId, input.accountId, input.machineName);
 
   const documentId = randomUUID();
-  const assetId = randomUUID();
   const ext = extensionForMime(input.mimeType);
   const storagePath = `${input.machineId}/${documentId}.${ext}`;
-  const byteSize = input.fileBuffer.byteLength;
-  const title = input.fileName.replace(/\.[^.]+$/, "") || "Image";
-
-  const folderPath =
-    typeof input.folderPath === "string" && input.folderPath.trim()
-      ? input.folderPath.trim()
-      : null;
-  if (folderPath) {
-    await ensureFolderPath(input.machineId, folderPath);
-  }
 
   const { error: uploadErr } = await supabase.storage
     .from("kb-images")
@@ -81,19 +71,114 @@ export async function ingestImage(
     });
   if (uploadErr) throw new Error(`storage upload failed: ${uploadErr.message}`);
 
+  return runImagePipeline({
+    documentId,
+    machineId: input.machineId,
+    storagePath,
+    mimeType: input.mimeType,
+    fileBuffer: input.fileBuffer,
+    fileName: input.fileName,
+    summary: input.summary,
+    folderPath: input.folderPath,
+    createdBy: input.createdBy,
+  });
+}
+
+export type IngestImageFromStorageInput = {
+  machineId: string;
+  accountId: string;
+  // documentId + storagePath were minted by the /sign endpoint; the
+  // client uploaded the image straight to Storage under that path,
+  // bypassing the ~4.5 MB Vercel function body limit.
+  documentId: string;
+  storagePath: string;
+  mimeType: string;
+  fileName: string;
+  summary?: string | null;
+  folderPath?: string | null;
+  createdBy?: string;
+};
+
+// Storage-based entry point. The admin UI uploads the image directly to
+// Storage via a signed URL, then calls this to caption + embed it. We
+// download the bytes once (Claude vision needs them) rather than
+// receiving them through the function request body.
+export async function ingestImageFromStorage(
+  input: IngestImageFromStorageInput,
+): Promise<IngestImageResult> {
+  if (!isSupportedImageMime(input.mimeType)) {
+    throw new Error(
+      `Unsupported image mime: ${input.mimeType} (allowed: image/png, image/jpeg, image/webp)`,
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  await ensureMachineKb(input.machineId, input.accountId);
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from("kb-images")
+    .download(input.storagePath);
+  if (dlErr || !blob) {
+    throw new Error(
+      `download from Storage failed: ${dlErr?.message ?? "object missing"}`,
+    );
+  }
+  const fileBuffer = Buffer.from(await blob.arrayBuffer());
+
+  return runImagePipeline({
+    documentId: input.documentId,
+    machineId: input.machineId,
+    storagePath: input.storagePath,
+    mimeType: input.mimeType,
+    fileBuffer,
+    fileName: input.fileName,
+    summary: input.summary,
+    folderPath: input.folderPath,
+    createdBy: input.createdBy,
+  });
+}
+
+// Shared after-upload pipeline: insert the doc row, caption with Claude
+// vision, embed the caption, write the asset + chunk. Assumes the image
+// is already in the kb-images bucket at storagePath.
+async function runImagePipeline(args: {
+  documentId: string;
+  machineId: string;
+  storagePath: string;
+  mimeType: ImageMime;
+  fileBuffer: Buffer;
+  fileName: string;
+  summary?: string | null;
+  folderPath?: string | null;
+  createdBy?: string;
+}): Promise<IngestImageResult> {
+  const supabase = getSupabaseServerClient();
+  const { documentId, machineId, storagePath, mimeType, fileBuffer } = args;
+  const assetId = randomUUID();
+  const byteSize = fileBuffer.byteLength;
+  const title = args.fileName.replace(/\.[^.]+$/, "") || "Image";
+
+  const folderPath =
+    typeof args.folderPath === "string" && args.folderPath.trim()
+      ? args.folderPath.trim()
+      : null;
+  if (folderPath) {
+    await ensureFolderPath(machineId, folderPath);
+  }
+
   // Insert the doc row early so the admin queue panel shows progress
   // while the captioning + embedding pass runs (caption can take a
   // couple of seconds on a busy Anthropic endpoint).
   const { error: docErr } = await supabase.from("kb_documents").insert({
     id: documentId,
-    machine_id: input.machineId,
+    machine_id: machineId,
     title,
-    summary: input.summary?.trim() || title,
+    summary: args.summary?.trim() || title,
     source_type: "image",
     storage_path: storagePath,
     byte_size: byteSize,
     status: "embedding",
-    created_by: input.createdBy ?? "admin",
+    created_by: args.createdBy ?? "admin",
     folder_path: folderPath,
     progress: 20,
     progress_label: "Beskriver billede (Claude vision)…",
@@ -101,7 +186,7 @@ export async function ingestImage(
   if (docErr) throw new Error(`kb_documents insert failed: ${docErr.message}`);
 
   try {
-    const { caption, altText } = await captionImage(input.fileBuffer, input.mimeType);
+    const { caption, altText } = await captionImage(fileBuffer, mimeType);
 
     await supabase
       .from("kb_documents")
@@ -115,10 +200,10 @@ export async function ingestImage(
     const { error: assetErr } = await supabase.from("kb_assets").insert({
       id: assetId,
       document_id: documentId,
-      machine_id: input.machineId,
+      machine_id: machineId,
       storage_path: storagePath,
       storage_bucket: "kb-images",
-      mime_type: input.mimeType,
+      mime_type: mimeType,
       byte_size: byteSize,
       page_from: null,
       ordinal: 0,
@@ -132,7 +217,7 @@ export async function ingestImage(
 
     const { error: chunkErr } = await supabase.from("kb_chunks").insert({
       document_id: documentId,
-      machine_id: input.machineId,
+      machine_id: machineId,
       asset_id: assetId,
       ordinal: 0,
       page_from: null,
@@ -153,7 +238,7 @@ export async function ingestImage(
       })
       .eq("id", documentId);
 
-    await regenerateSuggestedQuestionsSafe(input.machineId);
+    await regenerateSuggestedQuestionsSafe(machineId);
 
     return {
       documentId,

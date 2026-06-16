@@ -256,160 +256,170 @@ export async function ensureMachineKb(
   if (error) throw new Error(`machine_kb upsert failed: ${error.message}`);
 }
 
-export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult> {
+// Inserts the kb_documents row up-front with status='extracting' so it
+// shows in the admin queue panel from second one — without this the
+// operator stares at nothing for 30–60s while OCR runs on a heavy PDF.
+// We patch the extraction-source / page-count once we know them. Also
+// upserts the folder path. Shared by both ingest entry points.
+async function insertPdfDocRow(args: {
+  documentId: string;
+  machineId: string;
+  storagePath: string;
+  byteSize: number;
+  fileName: string;
+  summary?: string | null;
+  folderPath?: string | null;
+  createdBy?: string;
+}): Promise<void> {
   const supabase = getSupabaseServerClient();
-
-  await ensureMachineKb(input.machineId, input.accountId, input.machineName);
-
-  const documentId = randomUUID();
-  const storagePath = `${input.machineId}/${documentId}.pdf`;
-  const byteSize = input.fileBuffer.byteLength;
-  const title = input.fileName.replace(/\.pdf$/i, "");
-
-  const { error: uploadError } = await supabase.storage
-    .from("kb-documents")
-    .upload(storagePath, input.fileBuffer, {
-      contentType: "application/pdf",
-      upsert: false,
-    });
-  if (uploadError) throw new Error(`storage upload failed: ${uploadError.message}`);
-
   const folderPath =
-    typeof input.folderPath === "string" && input.folderPath.trim()
-      ? input.folderPath.trim()
+    typeof args.folderPath === "string" && args.folderPath.trim()
+      ? args.folderPath.trim()
       : null;
   if (folderPath) {
-    await ensureFolderPath(input.machineId, folderPath);
+    await ensureFolderPath(args.machineId, folderPath);
   }
 
-  // Insert the row up-front with status='extracting' so it shows in the
-  // admin queue panel from second one — without this the operator stares
-  // at nothing for 30–60s while OCR runs on a heavy PDF. We patch the
-  // extraction-source / page-count once we know them.
+  const title = args.fileName.replace(/\.pdf$/i, "");
   const { error: docError } = await supabase.from("kb_documents").insert({
-    id: documentId,
-    machine_id: input.machineId,
+    id: args.documentId,
+    machine_id: args.machineId,
     title,
-    summary: input.summary ?? title,
+    summary: args.summary ?? title,
     source_type: "pdf",
-    storage_path: storagePath,
-    byte_size: byteSize,
+    storage_path: args.storagePath,
+    byte_size: args.byteSize,
     status: "extracting",
-    created_by: input.createdBy ?? "cli",
+    created_by: args.createdBy ?? "cli",
     folder_path: folderPath,
     progress: 5,
     progress_label: "Reading PDF",
   });
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
+}
 
-  const work = (async (): Promise<IngestPdfResult> => {
-    const extracted = await extractPdfText(input.fileBuffer, {
-      onPhaseStart: async (phase) => {
-        if (phase === "claude-ocr") {
-          await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
-        }
-      },
-    });
+// The actual extract → chunk → embed → figures pipeline. Assumes the
+// kb_documents row already exists (status='extracting') and the PDF is
+// already in Storage at storagePath. The fileBuffer is the same bytes,
+// passed in directly to avoid a redundant download. Shared by the
+// buffer-based (CLI) and storage-based (direct-upload) entry points.
+async function runPdfPipeline(args: {
+  documentId: string;
+  machineId: string;
+  storagePath: string;
+  fileBuffer: Buffer;
+  byteSize: number;
+}): Promise<IngestPdfResult> {
+  const supabase = getSupabaseServerClient();
+  const { documentId, machineId, storagePath, fileBuffer, byteSize } = args;
 
-    await supabase
-      .from("kb_documents")
-      .update({
-        status: "embedding",
-        page_count: extracted.pageCount,
-        extraction_source: extracted.source,
-        progress: 30,
-        progress_label: `Chunker (${extracted.pageCount} sider)`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
+  const extracted = await extractPdfText(fileBuffer, {
+    onPhaseStart: async (phase) => {
+      if (phase === "claude-ocr") {
+        await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
+      }
+    },
+  });
 
-    const chunks = chunkText(extracted.text);
-    await writeProgress(
-      documentId,
-      40,
-      `Embedder (${chunks.length} chunks)`,
+  await supabase
+    .from("kb_documents")
+    .update({
+      status: "embedding",
+      page_count: extracted.pageCount,
+      extraction_source: extracted.source,
+      progress: 30,
+      progress_label: `Chunker (${extracted.pageCount} sider)`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", documentId);
+
+  const chunks = chunkText(extracted.text);
+  await writeProgress(documentId, 40, `Embedder (${chunks.length} chunks)`);
+  const embeddings = await embedDocuments(chunks, {
+    onBatchProgress: async (done, total) => {
+      await writeProgress(
+        documentId,
+        embedProgressPct(done, total),
+        `Embedder ${done}/${total}`,
+      );
+    },
+  });
+  if (embeddings.length !== chunks.length) {
+    throw new Error(
+      `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
     );
-    const embeddings = await embedDocuments(chunks, {
-      onBatchProgress: async (done, total) => {
-        await writeProgress(
-          documentId,
-          embedProgressPct(done, total),
-          `Embedder ${done}/${total}`,
-        );
-      },
-    });
-    if (embeddings.length !== chunks.length) {
+  }
+
+  const rows = chunks.map((chunkTextValue, i) => ({
+    document_id: documentId,
+    machine_id: machineId,
+    ordinal: i,
+    page_from: null,
+    page_to: null,
+    text: chunkTextValue,
+    embedding: embeddings[i],
+    embedding_model: VOYAGE_MODEL,
+  }));
+
+  await writeProgress(documentId, 95, "Inserting chunks");
+  const BATCH = 50;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH);
+    const { error } = await supabase.from("kb_chunks").insert(slice);
+    if (error) {
       throw new Error(
-        `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
+        `kb_chunks insert failed at offset ${i}: ${error.message}`,
       );
     }
+  }
 
-    const rows = chunks.map((chunkTextValue, i) => ({
-      document_id: documentId,
-      machine_id: input.machineId,
-      ordinal: i,
-      page_from: null,
-      page_to: null,
-      text: chunkTextValue,
-      embedding: embeddings[i],
-      embedding_model: VOYAGE_MODEL,
-    }));
+  // Figure extraction is best-effort and runs after text chunks are
+  // persisted so a failure here can't strand the document in an
+  // unsearchable state. The function logs and returns 0 on any error.
+  await writeProgress(documentId, 97, "Finder figurer…");
+  await attachPdfFigures({
+    documentId,
+    machineId,
+    pdfBuffer: fileBuffer,
+    pdfStoragePath: storagePath,
+  });
 
-    await writeProgress(documentId, 95, "Inserting chunks");
-    const BATCH = 50;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const slice = rows.slice(i, i + BATCH);
-      const { error } = await supabase.from("kb_chunks").insert(slice);
-      if (error) {
-        throw new Error(
-          `kb_chunks insert failed at offset ${i}: ${error.message}`,
-        );
-      }
-    }
+  await supabase
+    .from("kb_documents")
+    .update({
+      status: "ready",
+      progress: null,
+      progress_label: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", documentId);
 
-    // Figure extraction is best-effort and runs after text chunks are
-    // persisted so a failure here can't strand the document in an
-    // unsearchable state. The function logs and returns 0 on any error.
-    await writeProgress(documentId, 97, "Finder figurer…");
-    await attachPdfFigures({
-      documentId,
-      machineId: input.machineId,
-      pdfBuffer: input.fileBuffer,
-      pdfStoragePath: storagePath,
-    });
+  await regenerateSuggestedQuestionsSafe(machineId);
 
-    await supabase
-      .from("kb_documents")
-      .update({
-        status: "ready",
-        progress: null,
-        progress_label: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
+  return {
+    documentId,
+    chunkCount: chunks.length,
+    pageCount: extracted.pageCount,
+    byteSize,
+    storagePath,
+    extractionSource: extracted.source,
+  };
+}
 
-    await regenerateSuggestedQuestionsSafe(input.machineId);
-
-    return {
-      documentId,
-      chunkCount: chunks.length,
-      pageCount: extracted.pageCount,
-      byteSize,
-      storagePath,
-      extractionSource: extracted.source,
-    };
-  })();
-
+// Races the pipeline against the budget timer and, on any non-timeout
+// failure, marks the row failed so the operator sees what happened
+// instead of a perpetual "extracting" badge. Storage object stays so
+// they can retry via the reprocess button. The timeout path already
+// wrote a Danish-language label in withIngestBudget.
+async function finalizePdfIngest(
+  documentId: string,
+  work: Promise<IngestPdfResult>,
+): Promise<IngestPdfResult> {
   try {
     return await withIngestBudget(documentId, work);
   } catch (err) {
-    // Mark the row failed so the operator sees what happened instead
-    // of a perpetual "extracting" badge. Storage object stays so they
-    // can retry via the reprocess button. The timeout path already
-    // wrote a Danish-language label in withIngestBudget; for any other
-    // failure we surface the raw message.
     if (!(err instanceof IngestTimeoutError)) {
-      await supabase
+      await getSupabaseServerClient()
         .from("kb_documents")
         .update({
           status: "failed",
@@ -422,6 +432,107 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     }
     throw err;
   }
+}
+
+// Buffer-based entry point. Used by the ingest CLI (scripts/ingest.ts),
+// which has the bytes in hand and uploads them as part of ingestion.
+export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult> {
+  const supabase = getSupabaseServerClient();
+
+  await ensureMachineKb(input.machineId, input.accountId, input.machineName);
+
+  const documentId = randomUUID();
+  const storagePath = `${input.machineId}/${documentId}.pdf`;
+  const byteSize = input.fileBuffer.byteLength;
+
+  const { error: uploadError } = await supabase.storage
+    .from("kb-documents")
+    .upload(storagePath, input.fileBuffer, {
+      contentType: "application/pdf",
+      upsert: false,
+    });
+  if (uploadError) throw new Error(`storage upload failed: ${uploadError.message}`);
+
+  await insertPdfDocRow({
+    documentId,
+    machineId: input.machineId,
+    storagePath,
+    byteSize,
+    fileName: input.fileName,
+    summary: input.summary,
+    folderPath: input.folderPath,
+    createdBy: input.createdBy,
+  });
+
+  return finalizePdfIngest(
+    documentId,
+    runPdfPipeline({
+      documentId,
+      machineId: input.machineId,
+      storagePath,
+      fileBuffer: input.fileBuffer,
+      byteSize,
+    }),
+  );
+}
+
+export type IngestPdfFromStorageInput = {
+  machineId: string;
+  accountId: string;
+  // documentId + storagePath were minted by the /sign endpoint; the
+  // client uploaded the PDF straight to Storage under that path,
+  // bypassing the ~4.5 MB Vercel function body limit.
+  documentId: string;
+  storagePath: string;
+  fileName: string;
+  summary?: string | null;
+  folderPath?: string | null;
+  createdBy?: string;
+};
+
+// Storage-based entry point. The admin UI uploads the PDF directly to
+// Storage via a signed URL, then calls this to run the pipeline. We
+// download the bytes once (for extraction + figure rendering) rather
+// than receiving them through the function request body.
+export async function ingestPdfFromStorage(
+  input: IngestPdfFromStorageInput,
+): Promise<IngestPdfResult> {
+  const supabase = getSupabaseServerClient();
+
+  await ensureMachineKb(input.machineId, input.accountId);
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from("kb-documents")
+    .download(input.storagePath);
+  if (dlErr || !blob) {
+    throw new Error(
+      `download from Storage failed: ${dlErr?.message ?? "object missing"}`,
+    );
+  }
+  const fileBuffer = Buffer.from(await blob.arrayBuffer());
+  const byteSize = fileBuffer.byteLength;
+
+  await insertPdfDocRow({
+    documentId: input.documentId,
+    machineId: input.machineId,
+    storagePath: input.storagePath,
+    byteSize,
+    fileName: input.fileName,
+    summary: input.summary,
+    folderPath: input.folderPath,
+    createdBy: input.createdBy,
+  });
+
+  return finalizePdfIngest(
+    input.documentId,
+    runPdfPipeline({
+      documentId: input.documentId,
+      machineId: input.machineId,
+      storagePath: input.storagePath,
+      fileBuffer,
+      byteSize,
+    }),
+  );
 }
 
 export type ReprocessPdfResult = {

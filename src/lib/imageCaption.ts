@@ -15,7 +15,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const MODEL = "claude-sonnet-4-6";
 
-type ImageMime = "image/png" | "image/jpeg" | "image/webp";
+export type ImageMime = "image/png" | "image/jpeg" | "image/webp";
 
 export type ImageCaption = {
   caption: string;

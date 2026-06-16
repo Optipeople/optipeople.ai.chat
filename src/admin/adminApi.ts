@@ -1,5 +1,4 @@
 import { fetchWithAuth } from "@/auth/authApi";
-import { getAccessToken } from "@/auth/storage";
 import type { AdminMachine } from "@/app/api/admin/machines/route";
 import type {
   AdminDocument,
@@ -291,10 +290,11 @@ export async function deleteAdminDocument(id: string): Promise<void> {
   }
 }
 
-// Multipart uploads use raw fetch — fetchWithAuth's transparent retry-on-401
-// can't replay a streamed FormData body, so we do the auth header
-// ourselves. If the token's expired the user just sees an error and can
-// retry; the next regular request will trigger the refresh.
+// Uploads go direct-to-Storage: the client asks /api/admin/ingest/sign
+// for a signed Supabase upload URL, PUTs the file straight there, then
+// calls the finalize endpoint with the documentId to run the pipeline.
+// This bypasses Vercel's ~4.5 MB function request-body limit, which used
+// to reject anything bigger with a 413 before the request reached us.
 export type UploadProgress = (loaded: number, total: number) => void;
 
 export type UploadResult = {
@@ -311,13 +311,10 @@ export async function uploadAdminDocument(args: {
   folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<UploadResult> {
-  return xhrFormUpload<UploadResult>({
-    url: "/api/admin/ingest",
-    machineId: args.machineId,
-    file: args.file,
-    summary: args.summary,
-    folderPath: args.folderPath,
-    onProgress: args.onProgress,
+  return directUpload<UploadResult>({
+    kind: "pdf",
+    finalizeUrl: "/api/admin/ingest",
+    ...args,
   });
 }
 
@@ -337,42 +334,108 @@ export async function uploadAdminImage(args: {
   folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<ImageUploadResult> {
-  return xhrFormUpload<ImageUploadResult>({
-    url: "/api/admin/ingest/image",
-    machineId: args.machineId,
-    file: args.file,
-    summary: args.summary,
-    folderPath: args.folderPath,
-    onProgress: args.onProgress,
+  return directUpload<ImageUploadResult>({
+    kind: "image",
+    finalizeUrl: "/api/admin/ingest/image",
+    ...args,
   });
 }
 
-// XHR (not fetch) gets us real upload-progress events. Same auth caveat
-// as uploadAdminDocument: we attach the bearer manually because the
-// transparent retry-on-401 inside fetchWithAuth can't replay a streamed
-// FormData body.
-function xhrFormUpload<T>(args: {
-  url: string;
+type SignUploadResponse = {
+  documentId: string;
+  storagePath: string;
+  bucket: string;
+  uploadUrl: string;
+  token: string;
+};
+
+async function directUpload<T>(args: {
+  kind: "pdf" | "image";
+  finalizeUrl: string;
   machineId: string;
   file: File;
   summary?: string;
   folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<T> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Session expired");
+  // The bucket enforces allowed_mime_types against the uploaded part's
+  // content-type, which comes from the File. PDFs occasionally arrive
+  // with an empty File.type — force application/pdf so the upload (and
+  // the .pdf storage path the sign endpoint mints) stay consistent, just
+  // as the old server-side upload did. Images already require a concrete
+  // supported type (the sign endpoint rejects otherwise).
+  const contentType =
+    args.kind === "pdf" ? "application/pdf" : args.file.type;
+  const blob =
+    args.file.type === contentType
+      ? args.file
+      : new Blob([args.file], { type: contentType });
 
+  // 1. Mint a signed upload URL (small JSON request — never 413s).
+  const signRes = await fetchWithAuth("/api/admin/ingest/sign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      machineId: args.machineId,
+      kind: args.kind,
+      contentType,
+    }),
+  });
+  if (!signRes.ok) {
+    const body = (await signRes.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Kunne ikke starte upload (${signRes.status})`);
+  }
+  const sign = (await signRes.json()) as SignUploadResponse;
+
+  // 2. PUT the bytes straight to Supabase Storage.
+  await putToSignedUrl({
+    uploadUrl: sign.uploadUrl,
+    body: blob,
+    onProgress: args.onProgress,
+  });
+  // The server pipeline that follows has no streaming progress, so pin
+  // the bar to 100% while it runs (the queue panel switches to the
+  // server-side progress rows from here).
+  args.onProgress?.(1, 1);
+
+  // 3. Finalize: run extract/caption/embed against the stored object.
+  const res = await fetchWithAuth(args.finalizeUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      machineId: args.machineId,
+      documentId: sign.documentId,
+      fileName: args.file.name,
+      contentType,
+      summary: args.summary,
+      folderPath: args.folderPath,
+    }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Upload failed (${res.status})`);
+  }
+  return (await res.json()) as T;
+}
+
+// XHR (not fetch) gets us real upload-progress events. No Authorization
+// header: the upload token is embedded in the signed URL. supabase-js
+// wraps browser File/Blob bodies in multipart form-data (the file under
+// the empty key, plus a cacheControl field), so we replicate that shape
+// exactly — a raw binary PUT would be rejected by the storage server.
+function putToSignedUrl(args: {
+  uploadUrl: string;
+  body: Blob;
+  onProgress?: UploadProgress;
+}): Promise<void> {
   const form = new FormData();
-  form.set("machineId", args.machineId);
-  form.set("file", args.file);
-  if (args.summary) form.set("summary", args.summary);
-  if (args.folderPath) form.set("folderPath", args.folderPath);
+  form.append("cacheControl", "3600");
+  form.append("", args.body);
 
-  return new Promise<T>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", args.url);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    xhr.responseType = "json";
+    xhr.open("PUT", args.uploadUrl);
+    xhr.setRequestHeader("x-upsert", "false");
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && args.onProgress) {
         args.onProgress(e.loaded, e.total);
@@ -380,12 +443,11 @@ function xhrFormUpload<T>(args: {
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as T);
+        resolve();
+      } else if (xhr.status === 413) {
+        reject(new Error("Filen er for stor til at uploade"));
       } else {
-        const message =
-          (xhr.response as { error?: string } | null)?.error ??
-          `Upload failed (${xhr.status})`;
-        reject(new Error(message));
+        reject(new Error(`Upload failed (${xhr.status})`));
       }
     };
     xhr.onerror = () => reject(new Error("Upload failed (network)"));

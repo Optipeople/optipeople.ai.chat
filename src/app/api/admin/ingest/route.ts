@@ -1,15 +1,17 @@
-// POST /api/admin/ingest — multipart upload of a single PDF onto an
-// existing machine_kb row. Synchronous: returns once the document has
-// transitioned to status='ready' (or failed). The route handler runs
-// the full pipeline from src/lib/ingestion.ts, so a heavy PDF can take
-// 30+ seconds — the UI shows a spinner.
+// POST /api/admin/ingest — finalize a PDF that the client already
+// uploaded directly to Storage via /api/admin/ingest/sign. The request
+// body is small JSON (no file bytes) so we never hit Vercel's ~4.5 MB
+// function body limit. Synchronous: returns once the document has
+// transitioned to status='ready' (or failed). The handler downloads the
+// stored PDF and runs the full pipeline from src/lib/ingestion.ts, so a
+// heavy PDF can take 30+ seconds — the UI shows a spinner.
 
 import {
   assertMachineAccess,
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
-import { IngestTimeoutError, ingestPdf } from "@/lib/ingestion";
+import { IngestTimeoutError, ingestPdfFromStorage } from "@/lib/ingestion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +19,11 @@ export const dynamic = "force-dynamic";
 // 5 minutes is the new platform default but we set it explicitly so this
 // doesn't get clipped by an env override.
 export const maxDuration = 300;
+
+// documentId comes from the /sign response; validating its shape keeps a
+// client from smuggling a crafted storage path through string templating.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
   let admin;
@@ -27,35 +34,26 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  let form: FormData;
+  let body: {
+    machineId?: unknown;
+    documentId?: unknown;
+    fileName?: unknown;
+    summary?: unknown;
+    folderPath?: unknown;
+  };
   try {
-    form = await req.formData();
+    body = await req.json();
   } catch {
-    return Response.json(
-      { error: "Expected multipart/form-data" },
-      { status: 400 },
-    );
+    return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
 
-  const machineId = form.get("machineId");
-  const summaryRaw = form.get("summary");
-  const folderRaw = form.get("folderPath");
-  const file = form.get("file");
-
-  if (typeof machineId !== "string" || !machineId) {
+  const machineId = typeof body.machineId === "string" ? body.machineId : "";
+  const documentId = typeof body.documentId === "string" ? body.documentId : "";
+  if (!machineId) {
     return Response.json({ error: "machineId is required" }, { status: 400 });
   }
-  if (!(file instanceof File)) {
-    return Response.json(
-      { error: "file is required (multipart File)" },
-      { status: 400 },
-    );
-  }
-  if (file.type && file.type !== "application/pdf") {
-    return Response.json(
-      { error: "Only application/pdf files are accepted" },
-      { status: 400 },
-    );
+  if (!UUID_RE.test(documentId)) {
+    return Response.json({ error: "documentId is invalid" }, { status: 400 });
   }
 
   let accountId: string;
@@ -66,23 +64,28 @@ export async function POST(req: Request) {
     throw err;
   }
 
+  // Reconstruct the storage path server-side from the validated machine
+  // + document IDs rather than trusting a client-supplied path — it must
+  // match what /sign minted for this document.
+  const storagePath = `${machineId}/${documentId}.pdf`;
+  const fileName =
+    typeof body.fileName === "string" && body.fileName ? body.fileName : "upload.pdf";
   const summary =
-    typeof summaryRaw === "string" && summaryRaw.trim()
-      ? summaryRaw.trim()
+    typeof body.summary === "string" && body.summary.trim()
+      ? body.summary.trim()
       : null;
   const folderPath =
-    typeof folderRaw === "string" && folderRaw.trim() ? folderRaw.trim() : null;
-
-  const buf = Buffer.from(await file.arrayBuffer());
+    typeof body.folderPath === "string" && body.folderPath.trim()
+      ? body.folderPath.trim()
+      : null;
 
   try {
-    const result = await ingestPdf({
+    const result = await ingestPdfFromStorage({
       machineId,
       accountId,
-      // Don't pass machineName — we don't want to overwrite the existing
-      // display_name with whatever happened to be uploaded.
-      fileName: file.name || "upload.pdf",
-      fileBuffer: buf,
+      documentId,
+      storagePath,
+      fileName,
       summary,
       folderPath,
       createdBy: admin.email,
@@ -98,11 +101,8 @@ export async function POST(req: Request) {
         { status: 504 },
       );
     }
-    console.error("admin ingest pipeline failed:", err);
+    console.error("admin ingest failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
-    return Response.json(
-      { error: `Ingestion failed: ${message}` },
-      { status: 500 },
-    );
+    return Response.json({ error: `Ingest failed: ${message}` }, { status: 500 });
   }
 }

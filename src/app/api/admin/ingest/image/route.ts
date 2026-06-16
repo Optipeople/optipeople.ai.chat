@@ -1,19 +1,25 @@
-// POST /api/admin/ingest/image — multipart upload of a single image.
-// Captions it with Claude vision, embeds the caption, and writes one
-// kb_documents (source_type='image') + kb_assets + kb_chunks row. Mirrors
-// the PDF ingest endpoint at /api/admin/ingest for parity in the queue.
+// POST /api/admin/ingest/image — finalize an image that the client
+// already uploaded directly to Storage via /api/admin/ingest/sign. The
+// request body is small JSON (no file bytes) so we never hit Vercel's
+// ~4.5 MB function body limit. Captions the image with Claude vision,
+// embeds the caption, and writes one kb_documents (source_type='image')
+// + kb_assets + kb_chunks row. Mirrors the PDF finalize endpoint at
+// /api/admin/ingest for parity in the queue.
 
 import {
   assertMachineAccess,
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
-import { ingestImage } from "@/lib/imageIngestion";
-import { isSupportedImageMime } from "@/lib/imageCaption";
+import { ingestImageFromStorage } from "@/lib/imageIngestion";
+import { extensionForMime, isSupportedImageMime } from "@/lib/imageCaption";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
   let admin;
@@ -24,34 +30,35 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  let form: FormData;
+  let body: {
+    machineId?: unknown;
+    documentId?: unknown;
+    contentType?: unknown;
+    fileName?: unknown;
+    summary?: unknown;
+    folderPath?: unknown;
+  };
   try {
-    form = await req.formData();
+    body = await req.json();
   } catch {
-    return Response.json(
-      { error: "Expected multipart/form-data" },
-      { status: 400 },
-    );
+    return Response.json({ error: "Expected JSON body" }, { status: 400 });
   }
 
-  const machineId = form.get("machineId");
-  const summaryRaw = form.get("summary");
-  const folderRaw = form.get("folderPath");
-  const file = form.get("file");
+  const machineId = typeof body.machineId === "string" ? body.machineId : "";
+  const documentId = typeof body.documentId === "string" ? body.documentId : "";
+  const contentType =
+    typeof body.contentType === "string" ? body.contentType : "";
 
-  if (typeof machineId !== "string" || !machineId) {
+  if (!machineId) {
     return Response.json({ error: "machineId is required" }, { status: 400 });
   }
-  if (!(file instanceof File)) {
-    return Response.json(
-      { error: "file is required (multipart File)" },
-      { status: 400 },
-    );
+  if (!UUID_RE.test(documentId)) {
+    return Response.json({ error: "documentId is invalid" }, { status: 400 });
   }
-  if (!isSupportedImageMime(file.type)) {
+  if (!isSupportedImageMime(contentType)) {
     return Response.json(
       {
-        error: `Unsupported image type: ${file.type || "(unknown)"} — accept PNG, JPEG, or WebP`,
+        error: `Unsupported image type: ${contentType || "(unknown)"} — accept PNG, JPEG, or WebP`,
       },
       { status: 400 },
     );
@@ -65,22 +72,29 @@ export async function POST(req: Request) {
     throw err;
   }
 
+  // Reconstruct the storage path server-side from the validated machine
+  // + document IDs rather than trusting a client-supplied path — it must
+  // match what /sign minted for this document.
+  const storagePath = `${machineId}/${documentId}.${extensionForMime(contentType)}`;
+  const fileName =
+    typeof body.fileName === "string" && body.fileName ? body.fileName : "image";
   const summary =
-    typeof summaryRaw === "string" && summaryRaw.trim()
-      ? summaryRaw.trim()
+    typeof body.summary === "string" && body.summary.trim()
+      ? body.summary.trim()
       : null;
   const folderPath =
-    typeof folderRaw === "string" && folderRaw.trim() ? folderRaw.trim() : null;
-
-  const buf = Buffer.from(await file.arrayBuffer());
+    typeof body.folderPath === "string" && body.folderPath.trim()
+      ? body.folderPath.trim()
+      : null;
 
   try {
-    const result = await ingestImage({
+    const result = await ingestImageFromStorage({
       machineId,
       accountId,
-      fileName: file.name || "image",
-      fileBuffer: buf,
-      mimeType: file.type,
+      documentId,
+      storagePath,
+      mimeType: contentType,
+      fileName,
       summary,
       folderPath,
       createdBy: admin.email,
