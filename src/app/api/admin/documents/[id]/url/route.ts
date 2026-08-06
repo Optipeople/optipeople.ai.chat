@@ -47,7 +47,7 @@ export async function GET(
   const row = doc as {
     storage_path: string | null;
     title: string;
-    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   };
   if (!row.storage_path) {
     return Response.json(
@@ -56,14 +56,14 @@ export async function GET(
     );
   }
 
-  // Standalone images live in the kb-images bucket; everything else in
-  // kb-documents. Filename extension also follows the source type so a
-  // download attaches the right one.
+  // Standalone images live in the kb-images bucket; everything else
+  // (PDFs and arbitrary files) in kb-documents. The real extension is
+  // baked into storage_path, so derive it from there to attach the right
+  // one on download (.pdf, .png, .smc2, …).
   const isImage = row.source_type === "image";
   const bucket = isImage ? "kb-images" : "kb-documents";
-  const ext = isImage
-    ? row.storage_path.split(".").pop() || "png"
-    : "pdf";
+  const ext =
+    row.storage_path.split(".").pop() || (isImage ? "png" : "pdf");
   const fileName = `${row.title}.${ext}`;
   const { data: signed, error: signErr } = await supabase.storage
     .from(bucket)

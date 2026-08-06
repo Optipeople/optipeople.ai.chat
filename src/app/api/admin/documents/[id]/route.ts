@@ -136,7 +136,7 @@ export async function DELETE(
   } = doc as {
     storage_path: string | null;
     machine_id: string;
-    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   };
   if (storagePath) {
     // Standalone images live in kb-images; everything else in kb-documents.

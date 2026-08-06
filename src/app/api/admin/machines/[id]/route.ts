@@ -22,7 +22,7 @@ export type AdminDocument = {
   title: string;
   summary: string;
   status: string;
-  sourceType: "pdf" | "url" | "manual_note" | "feedback" | "image";
+  sourceType: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   pageCount: number | null;
   byteSize: number | null;
   createdAt: string;
@@ -167,7 +167,7 @@ export async function GET(
         title: string;
         summary: string;
         status: string;
-        source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+        source_type: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
         page_count: number | null;
         byte_size: number | null;
         created_at: string;

@@ -341,6 +341,30 @@ export async function uploadAdminImage(args: {
   });
 }
 
+export type FileUploadResult = {
+  documentId: string;
+  chunkCount: number;
+  byteSize: number;
+  storagePath: string;
+  textIngested: boolean;
+};
+
+// Generic upload for anything that isn't a PDF or image. Stores the raw
+// bytes and best-effort embeds them when text can be recovered.
+export async function uploadAdminFile(args: {
+  machineId: string;
+  file: File;
+  summary?: string;
+  folderPath?: string | null;
+  onProgress?: UploadProgress;
+}): Promise<FileUploadResult> {
+  return directUpload<FileUploadResult>({
+    kind: "file",
+    finalizeUrl: "/api/admin/ingest/file",
+    ...args,
+  });
+}
+
 type SignUploadResponse = {
   documentId: string;
   storagePath: string;
@@ -350,7 +374,7 @@ type SignUploadResponse = {
 };
 
 async function directUpload<T>(args: {
-  kind: "pdf" | "image";
+  kind: "pdf" | "image" | "file";
   finalizeUrl: string;
   machineId: string;
   file: File;
@@ -363,15 +387,23 @@ async function directUpload<T>(args: {
   // with an empty File.type — force application/pdf so the upload (and
   // the .pdf storage path the sign endpoint mints) stay consistent, just
   // as the old server-side upload did. Images already require a concrete
-  // supported type (the sign endpoint rejects otherwise).
+  // supported type (the sign endpoint rejects otherwise). Generic files
+  // are whatever the browser says, falling back to octet-stream —
+  // proprietary formats routinely report an empty type.
   const contentType =
-    args.kind === "pdf" ? "application/pdf" : args.file.type;
+    args.kind === "pdf"
+      ? "application/pdf"
+      : args.kind === "file"
+        ? args.file.type || "application/octet-stream"
+        : args.file.type;
   const blob =
     args.file.type === contentType
       ? args.file
       : new Blob([args.file], { type: contentType });
 
   // 1. Mint a signed upload URL (small JSON request — never 413s).
+  // fileName rides along because a generic file's storage extension is
+  // derived from it; the server sanitises it before use.
   const signRes = await fetchWithAuth("/api/admin/ingest/sign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -379,6 +411,7 @@ async function directUpload<T>(args: {
       machineId: args.machineId,
       kind: args.kind,
       contentType,
+      fileName: args.file.name,
     }),
   });
   if (!signRes.ok) {

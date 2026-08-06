@@ -828,7 +828,6 @@ function UploadCard({
         <input
           ref={inputRef}
           type="file"
-          accept="application/pdf,image/png,image/jpeg,image/webp"
           multiple
           className="hidden"
           onChange={(e) => handleFileInput(e.target.files)}

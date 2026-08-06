@@ -69,7 +69,7 @@ export async function GET(
     storage_path: string | null;
     title: string;
     machine_id: string;
-    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image";
+    source_type: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   };
   // QR sessions are pinned to one machine — refuse cross-machine doc
   // lookups even if the operator guesses a UUID.

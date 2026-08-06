@@ -6,9 +6,9 @@
 // dragged at the drop root has folderPath = null. A file inside
 // `Setup/Calibration/foo.pdf` becomes folderPath = "Setup/Calibration".
 //
-// Accepted extensions: pdf, png, jpg/jpeg, webp. Other files are
-// silently dropped on the floor — the queue panel shows what survived
-// so the operator can tell something was filtered.
+// Every file is accepted. PDFs and images get their dedicated pipelines
+// (text extraction / vision captioning); anything else is classified as
+// a generic "file" — stored as-is and best-effort text-embedded.
 
 type FileSystemEntryLike = {
   isFile: boolean;
@@ -23,7 +23,7 @@ type FileSystemEntryLike = {
   };
 };
 
-export type DroppedKind = "pdf" | "image";
+export type DroppedKind = "pdf" | "image" | "file";
 
 export type DroppedFile = {
   file: File;
@@ -87,10 +87,13 @@ async function walk(
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
 
+// Returns null only for entries that can't be uploaded at all (a folder
+// the browser surfaced as a zero-byte file). Everything with real bytes
+// classifies to one of the three kinds.
 export function classifyFile(file: File): DroppedKind | null {
   if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) return "pdf";
   if (IMAGE_MIMES.has(file.type) || IMAGE_EXTS.test(file.name)) return "image";
-  return null;
+  return "file";
 }
 
 export async function filesFromDrop(dt: DataTransfer): Promise<DroppedFile[]> {

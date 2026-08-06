@@ -19,7 +19,7 @@ export type OperatorDocument = {
   title: string;
   summary: string;
   folderPath: string | null;
-  sourceType: "pdf" | "url" | "manual_note" | "feedback" | "image";
+  sourceType: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   pageCount: number | null;
 };
 

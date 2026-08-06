@@ -24,8 +24,10 @@ import { Tag } from "@/components/ui/tag";
 import {
   reprocessAdminDocument,
   uploadAdminDocument,
+  uploadAdminFile,
   uploadAdminImage,
   type AdminDocument,
+  type FileUploadResult,
   type ImageUploadResult,
   type ReprocessResult,
   type UploadResult,
@@ -50,12 +52,12 @@ type Base = {
 type UploadQueueItem = Base & {
   kind: "upload";
   // Discriminates which ingest endpoint to call. Drag-drop and the file
-  // picker both classify per-file so a single batch can mix PDFs and
-  // images without special-casing in the queue loop.
-  fileKind: "pdf" | "image";
+  // picker both classify per-file so a single batch can mix PDFs, images
+  // and arbitrary files without special-casing in the queue loop.
+  fileKind: "pdf" | "image" | "file";
   file: File;
   folderPath: string | null;
-  result?: UploadResult | ImageUploadResult;
+  result?: UploadResult | ImageUploadResult | FileUploadResult;
 };
 
 type ReprocessQueueItem = Base & {
@@ -139,20 +141,18 @@ export function UploadQueueProvider({
                 ),
               );
             };
+            const uploadArgs = {
+              machineId,
+              file: next.file,
+              folderPath: next.folderPath,
+              onProgress,
+            };
             const result =
               next.fileKind === "image"
-                ? await uploadAdminImage({
-                    machineId,
-                    file: next.file,
-                    folderPath: next.folderPath,
-                    onProgress,
-                  })
-                : await uploadAdminDocument({
-                    machineId,
-                    file: next.file,
-                    folderPath: next.folderPath,
-                    onProgress,
-                  });
+                ? await uploadAdminImage(uploadArgs)
+                : next.fileKind === "file"
+                  ? await uploadAdminFile(uploadArgs)
+                  : await uploadAdminDocument(uploadArgs);
             update((q) =>
               q.map((i) =>
                 i.id === next.id
@@ -501,6 +501,18 @@ function QueueRow({ item }: { item: QueueItem }) {
           item.fileKind === "image" && (
             <p className="mt-0.5 line-clamp-1 text-[12px] text-[var(--color-muted-foreground)]">
               {(item.result as ImageUploadResult).altText}
+            </p>
+          )}
+        {item.status === "done" &&
+          item.kind === "upload" &&
+          item.result &&
+          item.fileKind === "file" && (
+            <p className="mt-0.5 text-[12px] text-[var(--color-muted-foreground)]">
+              {(item.result as FileUploadResult).textIngested
+                ? t("fileChunks", {
+                    chunks: (item.result as FileUploadResult).chunkCount,
+                  })
+                : t("fileStoredOnly")}
             </p>
           )}
         {item.status === "done" &&

@@ -2,8 +2,8 @@
 // admin client can PUT a file directly to Supabase, bypassing Vercel's
 // ~4.5 MB function request-body limit (which returns 413 before the
 // request ever reaches us). The client uploads to uploadUrl, then calls
-// the matching finalize endpoint (/api/admin/ingest or
-// /api/admin/ingest/image) with the returned documentId to run the
+// the matching finalize endpoint (/api/admin/ingest, /ingest/image, or
+// /ingest/file) with the returned documentId to run the
 // extract/caption/embed pipeline against the already-stored object.
 
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,7 @@ import {
   requireAdmin,
 } from "@/lib/auth";
 import { extensionForMime, isSupportedImageMime } from "@/lib/imageCaption";
+import { extensionForFile } from "@/lib/storagePaths";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -42,6 +43,7 @@ export async function POST(req: Request) {
     machineId?: unknown;
     kind?: unknown;
     contentType?: unknown;
+    fileName?: unknown;
   };
   try {
     body = await req.json();
@@ -53,13 +55,14 @@ export async function POST(req: Request) {
   const kind = body.kind;
   const contentType =
     typeof body.contentType === "string" ? body.contentType : "";
+  const fileName = typeof body.fileName === "string" ? body.fileName : "";
 
   if (!machineId) {
     return Response.json({ error: "machineId is required" }, { status: 400 });
   }
-  if (kind !== "pdf" && kind !== "image") {
+  if (kind !== "pdf" && kind !== "image" && kind !== "file") {
     return Response.json(
-      { error: "kind must be 'pdf' or 'image'" },
+      { error: "kind must be 'pdf', 'image', or 'file'" },
       { status: 400 },
     );
   }
@@ -84,6 +87,15 @@ export async function POST(req: Request) {
     }
     bucket = "kb-documents";
     storagePath = `${machineId}/${documentId}.pdf`;
+  } else if (kind === "file") {
+    // Any content type is allowed here — the bucket's allow-list was
+    // dropped so proprietary formats can be stored. The extension comes
+    // from the filename via extensionForFile, whose regex only matches
+    // trailing [A-Za-z0-9]+, so nothing traversable reaches the path.
+    // The finalize endpoint recomputes it the same way rather than
+    // trusting the path we return.
+    bucket = "kb-documents";
+    storagePath = `${machineId}/${documentId}.${extensionForFile(fileName)}`;
   } else {
     if (!isSupportedImageMime(contentType)) {
       return Response.json(
