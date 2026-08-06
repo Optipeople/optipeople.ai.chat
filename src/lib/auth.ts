@@ -5,11 +5,11 @@
 // their permissionName isn't in the allowed set. One round trip per
 // admin request is fine for an internal tool.
 //
-// requireAdmin allows both SuperAdministrator (cross-account) and
-// AccountAdministrator (their own account only). Account admins must
-// have their access scoped per-resource — use assertAccountAccess,
-// assertMachineAccess, assertDocumentAccess or assertConversationAccess
-// from the route handler.
+// requireAdmin allows SuperAdministrator and Partner (both
+// cross-account) plus AccountAdministrator (their own account only).
+// Account admins must have their access scoped per-resource — use
+// assertAccountAccess, assertMachineAccess, assertDocumentAccess or
+// assertConversationAccess from the route handler.
 
 import { getSupabaseServerClient } from "./supabase";
 
@@ -22,6 +22,20 @@ const USER_ME_PATH = "/api/User/GetCurrentUser";
 // drift across environments — permissionName won't.
 const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
 const ACCOUNT_ADMIN_PERMISSION = "AccountAdministrator";
+// Optipeople partners get exactly the same rights as super admins here:
+// cross-account, no per-resource scoping. Keep this in sync with
+// FULL_ACCESS_PERMISSIONS in src/auth/AuthContext.tsx.
+const PARTNER_PERMISSION = "Partner";
+
+// Permissions that grant unscoped, cross-account access.
+const FULL_ACCESS_PERMISSIONS: readonly string[] = [
+  SUPER_ADMIN_PERMISSION,
+  PARTNER_PERMISSION,
+];
+
+function hasFullAccess(permissionName: string): boolean {
+  return FULL_ACCESS_PERMISSIONS.includes(permissionName);
+}
 
 export type AdminRole = "super" | "account";
 
@@ -166,23 +180,25 @@ export async function resolveCurrentUser(
   };
 }
 
-// Throws AuthError on failure. Catch + .toResponse() in the route handler.
+// Throws AuthError on failure. Catch + .toResponse() in the route
+// handler. Partners pass this gate too — they hold the same rights as
+// super admins.
 export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
   const user = await resolveCurrentUser(req);
-  if (user.permissionName !== SUPER_ADMIN_PERMISSION) {
+  if (!hasFullAccess(user.permissionName)) {
     throw new AuthError(403, "Not authorised");
   }
   return user;
 }
 
-// Allows either SuperAdministrator (full access) or AccountAdministrator
-// (account-scoped — see assertAccountAccess and friends). Throws
-// AuthError on failure. Account admins without an accountId on their
-// Optipeople user are rejected — without the scope we can't enforce
-// anything.
+// Allows SuperAdministrator / Partner (full access) or
+// AccountAdministrator (account-scoped — see assertAccountAccess and
+// friends). Throws AuthError on failure. Account admins without an
+// accountId on their Optipeople user are rejected — without the scope
+// we can't enforce anything.
 export async function requireAdmin(req: Request): Promise<Admin> {
   const user = await resolveCurrentUser(req);
-  if (user.permissionName === SUPER_ADMIN_PERMISSION) {
+  if (hasFullAccess(user.permissionName)) {
     return { ...user, role: "super" };
   }
   if (user.permissionName === ACCOUNT_ADMIN_PERMISSION) {

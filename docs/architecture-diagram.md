@@ -138,7 +138,7 @@ Triggered by the admin UI (drag-drop) or the local CLI (`npm run ingest`).
 |-------------------------|----------------------|----------------------------------------------------|
 | `/` (chat)              | Operator             | Optipeople bearer (login screen)                   |
 | `/m/<machineId>` (QR)   | Operator at machine  | `X-QR-Token` from signed QR sticker                |
-| `/admin/*`              | Super-admin or account admin | Optipeople bearer + `permissionName` ∈ {`SuperAdministrator`, `AccountAdministrator`} (checked in every `/api/admin/*` route via `requireAdmin`; account admins are additionally scoped per-resource via `assertAccountAccess` / `assertMachineAccess` / `assertDocumentAccess` / `assertConversationAccess`) |
+| `/admin/*`              | Super-admin, partner or account admin | Optipeople bearer + `permissionName` ∈ {`SuperAdministrator`, `Partner`, `AccountAdministrator`} (checked in every `/api/admin/*` route via `requireAdmin`; partners are treated exactly like super admins, account admins are additionally scoped per-resource via `assertAccountAccess` / `assertMachineAccess` / `assertDocumentAccess` / `assertConversationAccess`) |
 | `/escalation/[token]`   | Service tech         | Signed share token (no Optipeople login required)  |
 
 ## 5. Escalation flow

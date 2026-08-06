@@ -17,7 +17,6 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import { getAccounts, type Account } from "@/auth/accountsApi";
-import { getRegisteredSets } from "@/auth/registeredApi";
 import {
   deleteMcpConfig,
   listMcpConfigs,
@@ -541,19 +540,15 @@ function AddMcpDialog({
   // Load accounts the SuperAdmin has access to. Reuses the same
   // /api/Account/GetAll call as AddMachineDialog.
   useEffect(() => {
-    // Filter to accounts that have at least one machine onboarded into
-    // this Opti Assist instance — same intersection the login picker uses
-    // (AuthContext.reloadAccounts). Configuring MCP for accounts that
-    // have no machines here would be wasted work since no chat session
-    // would ever consume those credentials.
+    // Every account the caller can reach, including ones with no
+    // machines onboarded here yet — MCP credentials are often set up
+    // as part of onboarding an account, before its first machine
+    // exists.
     let cancelled = false;
-    Promise.all([getAccounts(), getRegisteredSets()])
-      .then(([rows, registered]) => {
+    getAccounts()
+      .then((rows) => {
         if (cancelled) return;
-        const filtered = rows
-          .filter((a) => registered.accountIds.has(a.id))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setAccounts(filtered);
+        setAccounts([...rows].sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch((err: unknown) => {
         if (cancelled) return;

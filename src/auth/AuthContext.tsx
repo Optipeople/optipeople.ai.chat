@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -57,8 +58,30 @@ export type User = {
   accountId: string | null;
 };
 
+// Permissions that grant unscoped, cross-account admin rights. Partners
+// deliberately get exactly the same surface as super admins. Keep in
+// sync with FULL_ACCESS_PERMISSIONS in src/lib/auth.ts — the server is
+// the real gate, this only decides what the UI offers.
+const FULL_ACCESS_PERMISSIONS: readonly string[] = [
+  "SuperAdministrator",
+  "Partner",
+];
+
+// Every permission that reaches the admin surface. Account admins are
+// in here too — the server scopes them per-resource.
+const ADMIN_PERMISSIONS: readonly string[] = [
+  ...FULL_ACCESS_PERMISSIONS,
+  "AccountAdministrator",
+];
+
+function isAdminPermission(permissionName: string | null): boolean {
+  return permissionName ? ADMIN_PERMISSIONS.includes(permissionName) : false;
+}
+
 export function isSuperAdmin(user: User | null): boolean {
-  return user?.permissionName === "SuperAdministrator";
+  return user?.permissionName
+    ? FULL_ACCESS_PERMISSIONS.includes(user.permissionName)
+    : false;
 }
 
 // Account administrator scoped to their own Optipeople account. They
@@ -68,10 +91,10 @@ export function isAccountAdmin(user: User | null): boolean {
   return user?.permissionName === "AccountAdministrator";
 }
 
-// Either flavour of admin. Used by AdminGate and UserMenu to decide
+// Any flavour of admin. Used by AdminGate and UserMenu to decide
 // whether to show the admin entries.
 export function isAdmin(user: User | null): boolean {
-  return isSuperAdmin(user) || isAccountAdmin(user);
+  return isAdminPermission(user?.permissionName ?? null);
 }
 
 export type AuthContextValue = {
@@ -148,9 +171,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [consentStatus, setConsentStatus] = useState<ConsentStatus | null>(
     null,
   );
+  // Mirror of user.permissionName that reloadAccounts can read without
+  // waiting for a re-render. The role fetch is awaited before the
+  // account fetch (see login / the hydrate effect), so by the time
+  // accounts load this is populated.
+  const permissionRef = useRef<string | null>(null);
 
   const logout = useCallback(() => {
     clearSession();
+    permissionRef.current = null;
     setUser(null);
     setAccounts([]);
     setCurrentAccount(null);
@@ -253,14 +282,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoadingAccounts(true);
     setAccountsError(null);
     try {
-      // Same filter as machines: only show accounts that have at least one
-      // machine onboarded into this Opti Assist instance. Keeps the picker
-      // focused on what the operator can actually use.
+      // Operators only see accounts that have at least one machine
+      // onboarded into this Opti Assist instance — anything else is a
+      // dead end for them. Admins see every account they can reach in
+      // Optipeople, since onboarding an account's first machine starts
+      // by picking that account.
+      const adminView = isAdminPermission(permissionRef.current);
       const [rawList, registered] = await Promise.all([
         getAccounts(),
-        getRegisteredSets(),
+        adminView ? null : getRegisteredSets(),
       ]);
-      const list = rawList.filter((a) => registered.accountIds.has(a.id));
+      const list = registered
+        ? rawList.filter((a) => registered.accountIds.has(a.id))
+        : rawList;
       setAccounts(list);
       setAccountsForbidden(false);
 
@@ -322,6 +356,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await getCurrentUser();
       if (me) {
+        permissionRef.current = me.permissionName;
         setUser((prev) =>
           prev
             ? {
@@ -360,8 +395,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedMachine = getCurrentMachine();
       if (storedMachine) setCurrentMachine(storedMachine);
       /* eslint-enable react-hooks/set-state-in-effect */
-      void reloadAccounts();
-      void refreshRole();
+      // Role first — reloadAccounts needs it to decide whether to
+      // narrow the list to onboarded accounts.
+      void refreshRole().then(() => reloadAccounts());
       void refreshConsent();
     }
     setIsInitializing(false);
@@ -385,7 +421,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // the app re-renders. Best-effort: if the lookup fails we leave
         // the existing cookie alone.
         void applyStoredLocale(resolvedEmail);
-        await Promise.all([reloadAccounts(), refreshRole(), refreshConsent()]);
+        // Role first — see the hydrate effect above.
+        await refreshRole();
+        await Promise.all([reloadAccounts(), refreshConsent()]);
       } catch (err) {
         setLoginError(err instanceof Error ? err.message : "Login failed");
         throw err;

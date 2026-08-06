@@ -112,6 +112,8 @@
     "subtitleNoAccount": "Choose the machine you are working at.",
     "loading": "Loading machines…",
     "empty": "No machines have been added to Opti Assist for this account. Email {email} for help getting the machines added.",
+    "emptyAdmin": "No machines have been added to Opti Assist for this account yet. Add the first one under {link}.",
+    "emptyAdminLink": "Machine settings",
     "search": "Search machines…",
     "switchAccount": "Switch account"
   },

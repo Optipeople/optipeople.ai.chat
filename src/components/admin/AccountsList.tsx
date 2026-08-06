@@ -20,10 +20,12 @@ import { cn } from "@/lib/utils";
 
 type AccountRow = Account & { machineCount: number };
 
-// Picker for /admin/accounts. SuperAdmins see every account that has
-// at least one machine onboarded into this Opti Assist instance.
-// Account admins skip the picker — they only ever have one account
-// they can manage, so we hop straight into the hub.
+// Picker for /admin/accounts. Super admins and partners see every
+// Optipeople account they have access to — including ones with no
+// machines onboarded here yet, so they can configure an account before
+// (or while) adding its first machine. The machine count tells them
+// which is which. Account admins skip the picker — they only ever have
+// one account they can manage, so we hop straight into the hub.
 export function AccountsList() {
   const router = useRouter();
   const { user } = useAuth();
@@ -50,7 +52,6 @@ export function AccountsList() {
           counts.set(m.accountId, (counts.get(m.accountId) ?? 0) + 1);
         }
         const merged: AccountRow[] = rows
-          .filter((a) => counts.has(a.id))
           .map((a) => ({ ...a, machineCount: counts.get(a.id) ?? 0 }))
           .sort((a, b) => a.name.localeCompare(b.name));
         setAccounts(merged);
@@ -125,7 +126,7 @@ export function AccountsList() {
       ) : filtered.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           {total === 0
-            ? "No accounts have machines onboarded yet."
+            ? "No accounts available."
             : "No accounts match your search."}
         </div>
       ) : (

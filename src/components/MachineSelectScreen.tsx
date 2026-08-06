@@ -1,16 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { ChevronRight, ChevronLeft, Search, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/AppHeader";
-import { useAuth } from "@/auth/AuthContext";
+import { isAdmin, useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function MachineSelectScreen() {
   const {
+    user,
     accounts,
     currentAccount,
     machines,
@@ -79,16 +81,30 @@ export function MachineSelectScreen() {
 
           {!isLoadingMachines && !machinesError && machines.length === 0 && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
-              {t.rich("empty", {
-                email: () => (
-                  <a
-                    href={`mailto:${tc("supportEmail")}`}
-                    className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
-                  >
-                    {tc("supportEmail")}
-                  </a>
-                ),
-              })}
+              {/* Admins can reach accounts with nothing onboarded yet —
+                  point them at the place where they fix that instead of
+                  telling them to email support. */}
+              {isAdmin(user)
+                ? t.rich("emptyAdmin", {
+                    link: () => (
+                      <Link
+                        href="/admin/machines"
+                        className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
+                      >
+                        {t("emptyAdminLink")}
+                      </Link>
+                    ),
+                  })
+                : t.rich("empty", {
+                    email: () => (
+                      <a
+                        href={`mailto:${tc("supportEmail")}`}
+                        className="font-medium text-[var(--color-foreground)] underline underline-offset-2 hover:text-[var(--color-brand)]"
+                      >
+                        {tc("supportEmail")}
+                      </a>
+                    ),
+                  })}
             </p>
           )}
 

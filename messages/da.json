@@ -112,6 +112,8 @@
     "subtitleNoAccount": "Vælg den maskine du arbejder ved.",
     "loading": "Indlæser maskiner…",
     "empty": "Der er ingen maskiner tilføjet i Opti Assist på denne konto. Skriv til {email} for hjælp med at få maskinerne tilføjet.",
+    "emptyAdmin": "Der er endnu ingen maskiner tilføjet i Opti Assist på denne konto. Tilføj den første under {link}.",
+    "emptyAdminLink": "Maskinindstillinger",
     "search": "Søg efter maskiner…",
     "switchAccount": "Skift konto"
   },
