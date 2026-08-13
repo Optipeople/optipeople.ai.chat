@@ -10,8 +10,17 @@ const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
 export const VOYAGE_MODEL = "voyage-4-large";
 export const VOYAGE_DIMS = 1024;
 
-// Voyage allows up to 128 inputs per batch.
+// Voyage allows up to 128 inputs per batch, AND caps the total tokens per
+// submitted batch (120k for voyage-4-large). Both limits must be respected;
+// dense documents can hit the token cap with far fewer than 128 inputs.
 const MAX_BATCH = 128;
+const MAX_BATCH_TOKENS = 100_000; // headroom under Voyage's 120k cap
+
+// Conservative token estimate (~3 chars/token). Overestimating just makes
+// batches smaller; underestimating risks a 400 from Voyage.
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3) + 1;
+}
 
 type VoyageInputType = "document" | "query";
 
@@ -88,11 +97,31 @@ export async function embedDocuments(
   texts: string[],
   opts: { onBatchProgress?: EmbedProgressHook } = {},
 ): Promise<number[][]> {
+  // Pre-split into batches that respect both the input-count and the
+  // per-batch token limits. A single oversized text still goes out alone;
+  // truncation: true clips it to the model context (32k), well under the cap.
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let currentTokens = 0;
+  for (const text of texts) {
+    const tokens = estimateTokens(text);
+    if (
+      current.length > 0 &&
+      (current.length >= MAX_BATCH || currentTokens + tokens > MAX_BATCH_TOKENS)
+    ) {
+      batches.push(current);
+      current = [];
+      currentTokens = 0;
+    }
+    current.push(text);
+    currentTokens += tokens;
+  }
+  if (current.length > 0) batches.push(current);
+
   const out: number[][] = [];
-  const totalBatches = Math.ceil(texts.length / MAX_BATCH);
+  const totalBatches = batches.length;
   let batchesDone = 0;
-  for (let i = 0; i < texts.length; i += MAX_BATCH) {
-    const slice = texts.slice(i, i + MAX_BATCH);
+  for (const slice of batches) {
     const batch = await embedBatch(slice, "document");
     out.push(...batch);
     batchesDone += 1;
