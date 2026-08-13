@@ -160,15 +160,21 @@ export type RegisterAccountInput = {
   subscriptionTypeId: string;
 };
 
-// Mirrors the portal's own setup wizard: registering an account also
-// creates its first admin user, who gets the portal's invite mail.
+// Mirrors the portal backoffice's admin flow: registering an account
+// also creates its first admin user, who gets the portal's invite mail.
 // Returns the new account's id when the portal includes it in the
 // response; the caller falls back to re-fetching Account/GetAll.
-export async function registerNewAccount(
+//
+// NOTE: Account/RegisterNewAccount looks like the obvious endpoint but
+// is the portal's PUBLIC self-signup route, gated by Cloudflare
+// Turnstile (CF-Turnstile-Token header) — calling it with only a bearer
+// yields 401. Authenticated admin creation goes through
+// Account/RegisterAccount, same payload shape.
+export async function registerAccount(
   input: RegisterAccountInput,
 ): Promise<string | null> {
   const data = await post<{ id?: string; accountId?: string }>(
-    "Account/RegisterNewAccount",
+    "Account/RegisterAccount",
     {
       accountName: input.accountName,
       adminName: input.adminName,

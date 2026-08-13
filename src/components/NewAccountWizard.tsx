@@ -26,7 +26,7 @@ import {
   getRoles,
   getSubscriptionTypes,
   getTimeZones,
-  registerNewAccount,
+  registerAccount,
   type PortalCountry,
   type PortalOption,
   type PortalTimeZone,
@@ -158,7 +158,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const submitAccount = () =>
     run(async () => {
       const name = accountName.trim();
-      let id = await registerNewAccount({
+      let id = await registerAccount({
         accountName: name,
         adminName: adminName.trim(),
         email: adminEmail.trim(),
