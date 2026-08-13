@@ -12,6 +12,11 @@
 // the OCR pass that ran just before.
 
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  fromAnthropicUsage,
+  recordUsage,
+  type UsageAttribution,
+} from "./usage";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -25,6 +30,7 @@ export type ImageCaption = {
 export async function captionImage(
   buf: Buffer,
   mime: ImageMime,
+  usage?: UsageAttribution,
 ): Promise<ImageCaption> {
   const anthropic = new Anthropic();
   const base64 = buf.toString("base64");
@@ -53,6 +59,16 @@ export async function captionImage(
       },
     ],
   });
+
+  if (usage) {
+    await recordUsage({
+      ...usage,
+      provider: "anthropic",
+      model: MODEL,
+      operation: "image_caption",
+      ...fromAnthropicUsage(res.usage),
+    });
+  }
 
   const text = res.content
     .map((b) => (b.type === "text" ? b.text : ""))
@@ -102,7 +118,10 @@ export type PdfFigure = {
 // once (Claude's document input handles multi-page PDFs natively) and
 // ask for one row per visible figure/diagram. The list is bounded — we
 // cap output tokens and the model is told to skip pure-text pages.
-export async function extractPdfFigures(buf: Buffer): Promise<PdfFigure[]> {
+export async function extractPdfFigures(
+  buf: Buffer,
+  usage?: UsageAttribution,
+): Promise<PdfFigure[]> {
   const anthropic = new Anthropic();
   const base64 = buf.toString("base64");
 
@@ -135,6 +154,17 @@ export async function extractPdfFigures(buf: Buffer): Promise<PdfFigure[]> {
   });
 
   const final = await stream.finalMessage();
+
+  if (usage) {
+    await recordUsage({
+      ...usage,
+      provider: "anthropic",
+      model: MODEL,
+      operation: "figure_extraction",
+      ...fromAnthropicUsage(final.usage),
+    });
+  }
+
   const text = final.content
     .map((b) => (b.type === "text" ? b.text : ""))
     .join("")

@@ -16,6 +16,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ensureFolderPath } from "./ingestion";
 import { getSupabaseServerClient } from "./supabase";
+import { fromAnthropicUsage, recordUsage } from "./usage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -119,7 +120,7 @@ export async function proposeAutoOrganize(
     return { proposals: [], folders: STANDARD_FOLDERS };
   }
 
-  const assignments = await classifyWithClaude(candidates);
+  const assignments = await classifyWithClaude(machineId, candidates);
 
   // Default to "leave alone" (proposedFolder = currentFolder) when the
   // model didn't return a row for a given id, or returned an unknown
@@ -207,6 +208,7 @@ Return EXACTLY a JSON array with one object per document: [{"id": "...", "folder
 type Assignment = { id: string; folder: string | null };
 
 async function classifyWithClaude(
+  machineId: string,
   candidates: AutoOrganizeCandidate[],
 ): Promise<Assignment[]> {
   const folderList = STANDARD_FOLDERS.map(
@@ -236,6 +238,14 @@ async function classifyWithClaude(
     max_tokens: Math.min(4000, 80 + candidates.length * 40),
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
+  });
+
+  await recordUsage({
+    machineId,
+    provider: "anthropic",
+    model: MODEL,
+    operation: "auto_organize",
+    ...fromAnthropicUsage(res.usage),
   });
 
   const text = res.content

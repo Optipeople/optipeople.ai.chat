@@ -7,6 +7,7 @@ import type {
   BetaMessageParam as MessageParam,
   BetaTool as Tool,
   BetaToolResultBlockParam as ToolResultBlockParam,
+  BetaToolUnion as ToolUnion,
   BetaToolUseBlock as ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/beta/messages";
 import {
@@ -28,12 +29,20 @@ import {
   type QrSession,
 } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
+import { fromAnthropicUsage, recordUsage } from "@/lib/usage";
 import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6";
+// Haiku 4.5 — grounded manual Q&A over search_kb snippets is squarely
+// its target workload, at a third of Sonnet 4.6's price ($1/$5 vs $3/$15
+// per MTok). Two Haiku-specific caveats: it rejects `output_config.effort`
+// (Sonnet/Opus only — re-add `output_config: { effort: "medium" }` if we
+// ever move back up a tier), and its minimum cacheable prefix is 4096
+// tokens, so machines with a tiny doc manifest may silently skip the
+// system-prompt cache. Both are acceptable at Haiku pricing.
+const MODEL = "claude-haiku-4-5";
 
 // Hard cap on the agentic loop. The model usually finishes in 1–2 tool
 // calls; this is a safety net against pathological loops.
@@ -167,6 +176,15 @@ const LIST_DOCUMENTS_TOOL: Tool = {
 // has authorized credentials. See docs/optipeople-data-access.md.
 const TOOLS: Tool[] = [SEARCH_KB_TOOL, LIST_DOCUMENTS_TOOL];
 
+// Under the current MCP connector beta (mcp-client-2025-11-20) every
+// entry in `mcp_servers` must be referenced by exactly one mcp_toolset
+// entry in `tools` — the server list alone is a validation error.
+// Appended to TOOLS only when the account has an authorized MCP config.
+const MCP_TOOLSET: ToolUnion = {
+  type: "mcp_toolset",
+  mcp_server_name: "optipeople",
+};
+
 // Client wire shape. User messages can include attachmentIds pointing at
 // rows in conversation_attachments — we re-sign each one per request so
 // the URLs stay valid across the agentic loop.
@@ -193,9 +211,39 @@ type ChatRequest = {
 const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 const ATTACHMENT_SIGNED_URL_TTL = 600;
 
-// Resolve attachmentIds → signed-URL image blocks for the user turns
-// that have them. Bad/missing/cross-machine refs are skipped silently
-// so a stale id in the client doesn't blow up the whole turn.
+// History cap for the model call. Input cost grows linearly with the
+// history the client re-sends every turn, so past HISTORY_TRIGGER
+// messages we only forward a recent window to the model. The window's
+// start index moves in HISTORY_STEP jumps rather than sliding by one
+// each turn — a plain "last N" window would change the prompt prefix on
+// every request and defeat prompt caching; the stepped window keeps the
+// prefix byte-stable between cuts. Audit persistence is unaffected (the
+// full history still lands in the conversations tables).
+const HISTORY_TRIGGER = 30;
+const HISTORY_STEP = 20;
+const HISTORY_MIN = 10;
+
+function trimHistory(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length <= HISTORY_TRIGGER) return messages;
+  // Grows from HISTORY_MIN back up as the conversation continues, then
+  // resets — so the window start only moves once per HISTORY_STEP turns.
+  const keep =
+    HISTORY_MIN + ((messages.length - HISTORY_TRIGGER - 1) % HISTORY_STEP);
+  const out = messages.slice(messages.length - keep);
+  // The API requires the first message to be a user turn.
+  const firstUser = out.findIndex((m) => m.role === "user");
+  if (firstUser === -1) return messages.slice(-1);
+  return firstUser > 0 ? out.slice(firstUser) : out;
+}
+
+// Resolve attachmentIds → signed-URL image blocks. Only the LATEST user
+// turn gets real image blocks: signed URLs change on every request, so
+// an image block in an older turn would invalidate the prompt-cache
+// prefix from that point onward — and would keep re-billing ~1.6k image
+// tokens per photo per turn for pictures that rarely matter after the
+// turn they were sent in. Older turns get a stable text placeholder
+// instead. Bad/missing/cross-machine refs are skipped silently so a
+// stale id in the client doesn't blow up the whole turn.
 async function buildConversation(
   messages: ChatMessage[],
   machineId: string,
@@ -203,13 +251,23 @@ async function buildConversation(
   const supabase = getSupabaseServerClient();
   const out: MessageParam[] = [];
 
-  // One-shot lookup of every referenced attachment so we don't do a
-  // round trip per image. Same machine_id scope as the linking step.
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  const latest = lastUserIdx >= 0 ? messages[lastUserIdx] : null;
+
+  // One-shot lookup of the latest turn's attachments — older turns are
+  // rendered as placeholders and need no signing. Same machine_id scope
+  // as the linking step.
   const ids = Array.from(
     new Set(
-      messages
-        .filter((m) => m.role === "user" && Array.isArray(m.attachmentIds))
-        .flatMap((m) => m.attachmentIds!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)),
+      latest && latest.role === "user" && Array.isArray(latest.attachmentIds)
+        ? latest.attachmentIds.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+        : [],
     ),
   );
   type AttRow = {
@@ -233,7 +291,7 @@ async function buildConversation(
     }
   }
 
-  for (const m of messages) {
+  for (const [i, m] of messages.entries()) {
     if (m.role !== "user") {
       out.push({ role: "assistant", content: m.content });
       continue;
@@ -241,6 +299,16 @@ async function buildConversation(
     const refs = (m.attachmentIds ?? []).slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
     if (refs.length === 0) {
       out.push({ role: "user", content: m.content });
+      continue;
+    }
+    if (i !== lastUserIdx) {
+      // Photos from earlier turns: stable text placeholder (see note
+      // on the function). Deterministic so the cached prefix holds.
+      const note = `[${refs.length} photo(s) were attached to this message — omitted from history]`;
+      out.push({
+        role: "user",
+        content: m.content.trim() ? `${m.content}\n\n${note}` : note,
+      });
       continue;
     }
     const blocks: ContentBlockParam[] = [];
@@ -275,12 +343,47 @@ async function buildConversation(
   return out;
 }
 
+// Clone the outgoing messages with a cache breakpoint on the very last
+// content block. The next request whose prefix matches — the following
+// iteration of the agentic loop inside this turn, or the operator's
+// next turn — then reads everything up to here at ~0.1x input price
+// instead of re-billing the whole conversation in full. Cloning rather
+// than mutating matters: `conversation` keeps growing across loop
+// iterations and only the LAST block may carry the marker (the API
+// allows 4 breakpoints per request; the system prompt uses one, and
+// stale markers on earlier blocks would eat the rest).
+function withCacheBreakpoint(messages: MessageParam[]): MessageParam[] {
+  const last = messages[messages.length - 1];
+  if (!last) return messages;
+  const blocks: ContentBlockParam[] =
+    typeof last.content === "string"
+      ? last.content.length > 0
+        ? [{ type: "text", text: last.content }]
+        : []
+      : [...(last.content as ContentBlockParam[])];
+  if (blocks.length === 0) return messages;
+  blocks[blocks.length - 1] = {
+    ...blocks[blocks.length - 1],
+    cache_control: { type: "ephemeral" },
+  } as ContentBlockParam;
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
 type DocumentManifest = {
   id: string;
   title: string;
   summary: string;
   page_count: number | null;
 };
+
+// Caps on tool-result text going back to the model. Everything in a
+// tool_result is re-billed as input on every later loop iteration (and
+// cached-read on later turns), so long tails are pure cost. Chunk
+// snippets occasionally run very long (tables, dense pages) — past
+// ~2000 chars the tail rarely adds signal. Document summaries in
+// list_documents only need enough to identify the manual.
+const MAX_SNIPPET_CHARS = 2000;
+const MAX_LIST_SUMMARY_CHARS = 280;
 
 async function buildSystemPrompt(
   machineId: string,
@@ -429,7 +532,7 @@ async function executeSearchKb(
   const query = input.query.trim();
 
   const supabase = getSupabaseServerClient();
-  const queryEmbedding = await embedQuery(query);
+  const queryEmbedding = await embedQuery(query, { machineId });
   const { data, error } = await supabase.rpc("search_kb", {
     p_machine_id: machineId,
     p_query_embedding: queryEmbedding,
@@ -555,16 +658,24 @@ async function executeSearchKb(
           document_id: r.document_id,
           title: titleByDoc.get(r.document_id) ?? "(unknown)",
           page_from: r.page_from,
-          page_to: r.page_to,
-          score: r.rrf_score,
-          text: r.text,
-          // The model uses these three fields to spot image hits and
-          // optionally embed the figure inline in its reply via
-          // ![alt](opti:asset/<asset_id>). When it doesn't embed inline,
-          // the operator-side UI still renders the thumbnail below.
-          is_image: !!asset,
-          image_alt: asset?.alt_text ?? null,
-          asset_id: assetId ?? null,
+          text:
+            r.text.length > MAX_SNIPPET_CHARS
+              ? `${r.text.slice(0, MAX_SNIPPET_CHARS)} …[truncated]`
+              : r.text,
+          // Image hits carry these three extra fields so the model can
+          // spot them and optionally embed the figure inline via
+          // ![alt](opti:asset/<asset_id>). Text-only hits omit them
+          // entirely — every key here is re-billed as input on each
+          // later loop iteration, so no null-noise. (page_to and the
+          // raw rrf score are dropped for the same reason: the model
+          // cites by title + page_from, and results are already ranked.)
+          ...(asset && assetId
+            ? {
+                is_image: true,
+                image_alt: asset.alt_text ?? null,
+                asset_id: assetId,
+              }
+            : {}),
         };
       }),
     },
@@ -628,7 +739,10 @@ async function executeListDocuments(
       results: rows.map((r) => ({
         document_id: r.id,
         title: r.title,
-        summary: r.summary,
+        summary:
+          (r.summary ?? "").length > MAX_LIST_SUMMARY_CHARS
+            ? `${r.summary.slice(0, MAX_LIST_SUMMARY_CHARS)}…`
+            : r.summary,
         folder_path: r.folder_path,
         source_type: r.source_type,
         page_count: r.page_count,
@@ -861,15 +975,14 @@ export async function POST(req: Request) {
           });
         }
 
-        // Convert each ChatMessage into a MessageParam the SDK expects.
-        // For user messages with attachments we build a content-block
-        // array: one text block followed by one image block per
-        // attachment. Each image source is a freshly-signed URL — they
-        // expire after a few minutes, which is fine for the synchronous
-        // request lifetime but means we have to re-sign on every turn
-        // (handled here per request).
+        // Convert each ChatMessage into a MessageParam the SDK expects,
+        // after capping how much history goes to the model (trimHistory
+        // — the audit tables above already got the full picture). Only
+        // the latest user turn carries real image blocks; its signed
+        // URLs expire after a few minutes, which is fine for the
+        // synchronous request lifetime.
         let conversation: MessageParam[] = await buildConversation(
-          userMessages,
+          trimHistory(userMessages),
           resolvedMachineId,
         );
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
@@ -899,6 +1012,12 @@ export async function POST(req: Request) {
             // it gives us one code path to maintain. mcp_servers is
             // conditionally included only when the account has an
             // authorized config.
+            // Two cache breakpoints per request: the system prompt
+            // (per-machine, shared across conversations → 1h TTL) and
+            // the last block of the conversation (5m default TTL — it
+            // covers the next loop iteration and the operator's next
+            // turn). Longer-TTL entries must precede shorter ones,
+            // which holds here: system renders before messages.
             const s = anthropic.beta.messages.stream({
               model: MODEL,
               max_tokens: 2048,
@@ -909,14 +1028,16 @@ export async function POST(req: Request) {
                   cache_control: { type: "ephemeral", ttl: "1h" },
                 },
               ],
-              tools: TOOLS,
-              messages: conversation,
+              tools: mcpAccess ? [...TOOLS, MCP_TOOLSET] : TOOLS,
+              messages: withCacheBreakpoint(conversation),
               ...(mcpAccess
                 ? {
                     // The MCP connector is gated behind a beta opt-in
                     // header; without it the API rejects mcp_servers.
+                    // The current revision also requires the matching
+                    // MCP_TOOLSET entry in `tools` (added above).
                     // See https://docs.claude.com/en/docs/agents-and-tools/mcp-connector
-                    betas: ["mcp-client-2025-04-04"],
+                    betas: ["mcp-client-2025-11-20"],
                     mcp_servers: [
                       {
                         name: "optipeople",
@@ -995,6 +1116,20 @@ export async function POST(req: Request) {
           totalUsage.input_tokens += usageIn;
           totalUsage.output_tokens += usageOut;
           lastStopReason = final.stop_reason;
+
+          // Per-account metering. Unlike the messages columns this keeps
+          // the full cache split and the model name. recordUsage swallows
+          // its own failures, so no safe() wrapper needed.
+          await recordUsage({
+            accountId: resolvedAccountId,
+            machineId: resolvedMachineId,
+            conversationId,
+            userId: user.userId,
+            provider: "anthropic",
+            model: MODEL,
+            operation: "chat",
+            ...fromAnthropicUsage(final.usage),
+          });
 
           const toolUses = final.content.filter(
             (c): c is ToolUseBlock => c.type === "tool_use",

@@ -14,6 +14,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { defaultLocale, isLocale, locales, type Locale } from "@/i18n/config";
 import { getSupabaseServerClient } from "./supabase";
+import { fromAnthropicUsage, recordUsage } from "./usage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 // Pool size per language. The chat client picks 3 at random on load, so a
@@ -114,6 +115,14 @@ export async function regenerateSuggestedQuestions(
     max_tokens: 1500,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
+  });
+
+  await recordUsage({
+    machineId,
+    provider: "anthropic",
+    model: MODEL,
+    operation: "suggestions",
+    ...fromAnthropicUsage(res.usage),
   });
 
   const text = res.content

@@ -26,8 +26,21 @@ import type {
   AutoOrganizeProposal,
   StandardFolder,
 } from "@/lib/autoOrganize";
+import type {
+  AdminAccountUsageResponse,
+  AdminUsageRow,
+  AdminUsageTotals,
+} from "@/app/api/admin/accounts/[accountId]/usage/route";
+import type {
+  AdminUsageOverviewResponse,
+  AdminUsageOverviewRow,
+} from "@/app/api/admin/usage/route";
 
 export type {
+  AdminAccountUsageResponse,
+  AdminUsageOverviewRow,
+  AdminUsageRow,
+  AdminUsageTotals,
   AdminChunkRef,
   AdminConversationDetail,
   AdminConversationListItem,
@@ -652,4 +665,28 @@ export async function clearAdminEscalationTarget(
   if (!res.ok) {
     throw new Error(`Kunne ikke fjerne target (${res.status})`);
   }
+}
+
+export async function getAdminAccountUsage(
+  accountId: string,
+  days = 30,
+): Promise<AdminAccountUsageResponse> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/usage?days=${days}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente forbrug (${res.status})`);
+  }
+  return (await res.json()) as AdminAccountUsageResponse;
+}
+
+export async function getAdminUsageOverview(
+  days = 30,
+): Promise<AdminUsageOverviewRow[]> {
+  const res = await fetchWithAuth(`/api/admin/usage?days=${days}`);
+  if (!res.ok) {
+    throw new Error(`Kunne ikke hente forbrug (${res.status})`);
+  }
+  const body = (await res.json()) as AdminUsageOverviewResponse;
+  return body.accounts;
 }

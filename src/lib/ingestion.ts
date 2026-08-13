@@ -418,6 +418,7 @@ async function runPdfPipeline(args: {
   if (!sidecar) {
     const extracted = await extractPdfText(await getBuffer(), {
       force: args.force,
+      usage: { machineId },
       onPhaseStart: async (phase) => {
         if (phase === "claude-ocr") {
           await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
@@ -470,7 +471,7 @@ async function runPdfPipeline(args: {
     );
     for (const batch of planEmbedBatches(chunks.slice(next))) {
       if (outOfTime()) return { done: false, documentId };
-      const embeddings = await embedDocumentBatch(batch);
+      const embeddings = await embedDocumentBatch(batch, { machineId });
       if (embeddings.length !== batch.length) {
         throw new Error(
           `embedding count mismatch (${embeddings.length} vs ${batch.length})`,

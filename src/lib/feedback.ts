@@ -106,7 +106,9 @@ export async function promoteFeedbackToKb(
   const chunks = chunkText(chunkContent);
   // Solution text is short by construction; embedDocuments handles the
   // single-chunk case fine and we get one Voyage call here.
-  const embeddings = await embedDocuments(chunks);
+  const embeddings = await embedDocuments(chunks, {
+    usage: { machineId: input.machineId },
+  });
   if (embeddings.length !== chunks.length) {
     // Roll back the doc row so we don't leave an empty document hanging.
     await supabase.from("kb_documents").delete().eq("id", documentId);

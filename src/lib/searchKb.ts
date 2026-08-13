@@ -34,7 +34,9 @@ export async function searchKb(args: {
   if (!query) return { results: [], chunkIds: [] };
 
   const supabase = getSupabaseServerClient();
-  const queryEmbedding = await embedQuery(query);
+  const queryEmbedding = await embedQuery(query, {
+    machineId: args.machineId,
+  });
   const { data, error } = await supabase.rpc("search_kb", {
     p_machine_id: args.machineId,
     p_query_embedding: queryEmbedding,

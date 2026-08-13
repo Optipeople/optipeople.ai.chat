@@ -186,7 +186,9 @@ async function runImagePipeline(args: {
   if (docErr) throw new Error(`kb_documents insert failed: ${docErr.message}`);
 
   try {
-    const { caption, altText } = await captionImage(fileBuffer, mimeType);
+    const { caption, altText } = await captionImage(fileBuffer, mimeType, {
+      machineId,
+    });
 
     await supabase
       .from("kb_documents")
@@ -212,7 +214,9 @@ async function runImagePipeline(args: {
     });
     if (assetErr) throw new Error(`kb_assets insert failed: ${assetErr.message}`);
 
-    const [embedding] = await embedDocuments([caption]);
+    const [embedding] = await embedDocuments([caption], {
+      usage: { machineId },
+    });
     if (!embedding) throw new Error("embedding for caption was empty");
 
     const { error: chunkErr } = await supabase.from("kb_chunks").insert({
@@ -285,7 +289,9 @@ export async function attachPdfFigures(args: {
 
   let figures: PdfFigure[];
   try {
-    figures = await extractPdfFigures(args.pdfBuffer);
+    figures = await extractPdfFigures(args.pdfBuffer, {
+      machineId: args.machineId,
+    });
   } catch (err) {
     console.warn("attachPdfFigures: extractPdfFigures failed:", err);
     return 0;
@@ -313,7 +319,10 @@ export async function attachPdfFigures(args: {
 
   let embeddings: number[][];
   try {
-    embeddings = await embedDocuments(figures.map((f) => f.caption));
+    embeddings = await embedDocuments(
+      figures.map((f) => f.caption),
+      { usage: { machineId: args.machineId } },
+    );
   } catch (err) {
     console.warn("attachPdfFigures: embedDocuments failed:", err);
     return 0;

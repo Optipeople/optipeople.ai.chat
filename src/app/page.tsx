@@ -54,6 +54,10 @@ import {
 } from "@/auth/qrStorage";
 import { cn } from "@/lib/utils";
 
+// Temporarily disabled: hides the realtime voice-conversation entry point.
+// Dictation (mic button / live transcription) is unaffected.
+const VOICE_CONVERSATION_ENABLED = false;
+
 // Deep-link helper: super-admins navigate from /admin/machines to a
 // pre-selected chat via /?account=…&machine=…. We watch the auth state,
 // pick the right account+machine once the relevant lists have loaded,
@@ -1757,25 +1761,27 @@ function ChatApp({
                 />
               </Button>
             )}
-            <button
-              type="button"
-              onClick={() => setVoiceConvOpen(true)}
-              disabled={
-                inputLocked ||
-                voiceState !== "idle" ||
-                !machine?.id ||
-                !account?.id
-              }
-              aria-label={tChat("voiceLabels.startConversation")}
-              title={tChat("voiceLabels.startConversation")}
-              className={cn(
-                "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[4px] border transition-colors sm:h-auto sm:w-[52px]",
-                "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
-                "hover:bg-[var(--color-muted)] disabled:opacity-60",
-              )}
-            >
-              <AudioLines className="h-5 w-5" />
-            </button>
+            {VOICE_CONVERSATION_ENABLED ? (
+              <button
+                type="button"
+                onClick={() => setVoiceConvOpen(true)}
+                disabled={
+                  inputLocked ||
+                  voiceState !== "idle" ||
+                  !machine?.id ||
+                  !account?.id
+                }
+                aria-label={tChat("voiceLabels.startConversation")}
+                title={tChat("voiceLabels.startConversation")}
+                className={cn(
+                  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[4px] border transition-colors sm:h-auto sm:w-[52px]",
+                  "border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-foreground)]",
+                  "hover:bg-[var(--color-muted)] disabled:opacity-60",
+                )}
+              >
+                <AudioLines className="h-5 w-5" />
+              </button>
+            ) : null}
           </div>
         </div>
         </div>
@@ -1787,7 +1793,7 @@ function ChatApp({
         <span />
         <span />
       </div>
-      {voiceConvOpen && machine?.id && account?.id ? (
+      {VOICE_CONVERSATION_ENABLED && voiceConvOpen && machine?.id && account?.id ? (
         <VoiceConversation
           machineId={machine.id}
           accountId={account.id}

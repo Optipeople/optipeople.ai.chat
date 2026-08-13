@@ -15,6 +15,11 @@
 
 import { createRequire } from "node:module";
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  fromAnthropicUsage,
+  recordUsage,
+  type UsageAttribution,
+} from "./usage";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
@@ -46,7 +51,10 @@ function clean(raw: string): string {
   return raw.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function extractWithClaude(buf: Buffer): Promise<string> {
+async function extractWithClaude(
+  buf: Buffer,
+  usage?: UsageAttribution,
+): Promise<string> {
   const anthropic = new Anthropic();
   const base64 = buf.toString("base64");
 
@@ -84,6 +92,16 @@ async function extractWithClaude(buf: Buffer): Promise<string> {
 
   const final = await stream.finalMessage();
 
+  if (usage) {
+    await recordUsage({
+      ...usage,
+      provider: "anthropic",
+      model: OCR_MODEL,
+      operation: "pdf_ocr",
+      ...fromAnthropicUsage(final.usage),
+    });
+  }
+
   const parts: string[] = [];
   for (const block of final.content) {
     if (block.type === "text") parts.push(block.text);
@@ -97,7 +115,11 @@ export type ExtractPhaseHook = (
 
 export async function extractPdfText(
   buf: Buffer,
-  opts: { force?: PdfExtractionForce; onPhaseStart?: ExtractPhaseHook } = {},
+  opts: {
+    force?: PdfExtractionForce;
+    onPhaseStart?: ExtractPhaseHook;
+    usage?: UsageAttribution;
+  } = {},
 ): Promise<PdfExtractionResult> {
   const phase = async (p: PdfExtractionSource) => {
     if (!opts.onPhaseStart) return;
@@ -121,7 +143,7 @@ export async function extractPdfText(
       `[pdfText] forced Claude OCR (${cleaned.length} chars / ${numpages} pages from pdf-parse)`,
     );
     await phase("claude-ocr");
-    const ocr = await extractWithClaude(buf);
+    const ocr = await extractWithClaude(buf, opts.usage);
     return {
       text: clean(ocr),
       pageCount: numpages,
@@ -143,7 +165,7 @@ export async function extractPdfText(
       `${charsPerPage.toFixed(0)}/page) — falling back to Claude OCR`,
   );
   await phase("claude-ocr");
-  const ocr = await extractWithClaude(buf);
+  const ocr = await extractWithClaude(buf, opts.usage);
   const cleanedOcr = clean(ocr);
   return { text: cleanedOcr, pageCount: numpages, source: "claude-ocr" };
 }

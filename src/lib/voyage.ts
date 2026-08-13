@@ -6,6 +6,8 @@
 // Voyage explicitly trains the model to produce different embeddings for
 // the same text under these two prompts; mixing them silently degrades recall.
 
+import { recordUsage, type UsageAttribution } from "./usage";
+
 const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
 export const VOYAGE_MODEL = "voyage-4-large";
 export const VOYAGE_DIMS = 1024;
@@ -32,6 +34,7 @@ type VoyageResponse = {
 async function embedBatch(
   inputs: string[],
   inputType: VoyageInputType,
+  usage?: UsageAttribution,
 ): Promise<number[][]> {
   if (!process.env.VOYAGE_API_KEY) {
     throw new Error("VOYAGE_API_KEY not set");
@@ -68,6 +71,16 @@ async function embedBatch(
 
     if (res.ok) {
       const body = (await res.json()) as VoyageResponse;
+      // Voyage reports one total, no in/out split — stored as input.
+      if (usage && (body.usage?.total_tokens ?? 0) > 0) {
+        await recordUsage({
+          ...usage,
+          provider: "voyage",
+          model: VOYAGE_MODEL,
+          operation: "embedding",
+          inputTokens: body.usage!.total_tokens,
+        });
+      }
       const sorted = body.data.slice().sort((a, b) => a.index - b.index);
       return sorted.map((d) => d.embedding);
     }
@@ -121,20 +134,23 @@ export function planEmbedBatches(texts: string[]): string[][] {
 
 // Embed one pre-planned batch of document texts. The caller is
 // responsible for keeping the batch within limits (use planEmbedBatches).
-export async function embedDocumentBatch(texts: string[]): Promise<number[][]> {
-  return embedBatch(texts, "document");
+export async function embedDocumentBatch(
+  texts: string[],
+  usage?: UsageAttribution,
+): Promise<number[][]> {
+  return embedBatch(texts, "document", usage);
 }
 
 export async function embedDocuments(
   texts: string[],
-  opts: { onBatchProgress?: EmbedProgressHook } = {},
+  opts: { onBatchProgress?: EmbedProgressHook; usage?: UsageAttribution } = {},
 ): Promise<number[][]> {
   const batches = planEmbedBatches(texts);
   const out: number[][] = [];
   const totalBatches = batches.length;
   let batchesDone = 0;
   for (const slice of batches) {
-    const batch = await embedBatch(slice, "document");
+    const batch = await embedBatch(slice, "document", opts.usage);
     out.push(...batch);
     batchesDone += 1;
     if (opts.onBatchProgress) {
@@ -149,7 +165,10 @@ export async function embedDocuments(
   return out;
 }
 
-export async function embedQuery(text: string): Promise<number[]> {
-  const [vec] = await embedBatch([text], "query");
+export async function embedQuery(
+  text: string,
+  usage?: UsageAttribution,
+): Promise<number[]> {
+  const [vec] = await embedBatch([text], "query", usage);
   return vec;
 }

@@ -14,11 +14,18 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import { getAccounts, type Account } from "@/auth/accountsApi";
-import { getAdminMachines } from "@/admin/adminApi";
+import { getAdminMachines, getAdminUsageOverview } from "@/admin/adminApi";
 import { isAccountAdmin, useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
-type AccountRow = Account & { machineCount: number };
+// tokens30d is input+output over the last 30 days; null means the usage
+// endpoint failed (the list still renders, the column shows —).
+type AccountRow = Account & { machineCount: number; tokens30d: number | null };
+
+const TOKENS_FMT = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 // Picker for /admin/accounts. Super admins and partners see every
 // Optipeople account they have access to — including ones with no
@@ -44,15 +51,31 @@ export function AccountsList() {
   useEffect(() => {
     if (isAccountAdmin(user)) return;
     let cancelled = false;
-    Promise.all([getAccounts(), getAdminMachines()])
-      .then(([rows, machines]) => {
+    Promise.all([
+      getAccounts(),
+      getAdminMachines(),
+      // Usage is decoration on this list — never let it block or fail
+      // the account picker.
+      getAdminUsageOverview().catch(() => null),
+    ])
+      .then(([rows, machines, usage]) => {
         if (cancelled) return;
         const counts = new Map<string, number>();
         for (const m of machines) {
           counts.set(m.accountId, (counts.get(m.accountId) ?? 0) + 1);
         }
+        const tokens =
+          usage === null
+            ? null
+            : new Map(
+                usage.map((u) => [u.accountId, u.inputTokens + u.outputTokens]),
+              );
         const merged: AccountRow[] = rows
-          .map((a) => ({ ...a, machineCount: counts.get(a.id) ?? 0 }))
+          .map((a) => ({
+            ...a,
+            machineCount: counts.get(a.id) ?? 0,
+            tokens30d: tokens ? (tokens.get(a.id) ?? 0) : null,
+          }))
           .sort((a, b) => a.name.localeCompare(b.name));
         setAccounts(merged);
       })
@@ -156,6 +179,11 @@ export function AccountsList() {
                     <span className="tabular-nums text-[var(--color-foreground)]">
                       {a.machineCount}
                     </span>
+                    <span className="mx-1.5">·</span>
+                    Tokens (30d):{" "}
+                    <span className="tabular-nums text-[var(--color-foreground)]">
+                      {a.tokens30d === null ? "—" : TOKENS_FMT.format(a.tokens30d)}
+                    </span>
                   </p>
                 </div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
@@ -170,6 +198,7 @@ export function AccountsList() {
                 <DataTableHeader>Name</DataTableHeader>
                 <DataTableHeader>Account ID</DataTableHeader>
                 <DataTableHeader align="right">Machines</DataTableHeader>
+                <DataTableHeader align="right">Tokens (30d)</DataTableHeader>
                 <DataTableHeader className="w-10" />
               </DataTableHead>
               <DataTableBody>
@@ -188,6 +217,9 @@ export function AccountsList() {
                     </DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">
                       {a.machineCount}
+                    </DataTableCell>
+                    <DataTableCell align="right" className="tabular-nums">
+                      {a.tokens30d === null ? "—" : TOKENS_FMT.format(a.tokens30d)}
                     </DataTableCell>
                     <DataTableCell align="right">
                       <ChevronRight className="ml-auto h-4 w-4 text-[var(--ds-grey-medium-05)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--ds-grey-dark-09)]" />

@@ -128,7 +128,9 @@ export async function ingestFileFromStorage(
     }
 
     const chunks = chunkText(text);
-    const embeddings = await embedDocuments(chunks);
+    const embeddings = await embedDocuments(chunks, {
+      usage: { accountId: input.accountId, machineId: input.machineId },
+    });
     if (embeddings.length !== chunks.length) {
       throw new Error(
         `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
