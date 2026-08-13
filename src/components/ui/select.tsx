@@ -151,6 +151,7 @@ export function Select({
     top: number;
     left: number;
     width: number;
+    maxHeight: number;
   } | null>(null);
   const typeBufferRef = React.useRef<{ buf: string; t: number }>({
     buf: "",
@@ -161,10 +162,16 @@ export function Select({
     if (disabled) return;
     const r = triggerRef.current?.getBoundingClientRect();
     if (r) {
+      // Cap the menu to the space below the trigger so long lists (e.g.
+      // countries) scroll inside the menu instead of growing past the
+      // viewport — which made the page scrollable and instantly closed
+      // the menu via the close-on-scroll listener.
+      const spaceBelow = window.innerHeight - r.bottom - 12;
       setMenuRect({
         top: r.bottom + window.scrollY + 6,
         left: r.left + window.scrollX,
         width: r.width,
+        maxHeight: Math.max(160, Math.min(400, spaceBelow)),
       });
     }
     const i = options.findIndex((o) => o.value === value);
@@ -201,13 +208,20 @@ export function Select({
       closeMenu(false);
     };
     const onResize = () => closeMenu(false);
+    // Close when the page scrolls (the menu would drift away from its
+    // trigger) — but not when the user scrolls inside the menu itself.
+    const onScroll = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && listRef.current?.contains(target)) return;
+      closeMenu(false);
+    };
     document.addEventListener("pointerdown", onDocPointer);
     window.addEventListener("resize", onResize);
-    window.addEventListener("scroll", onResize, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("pointerdown", onDocPointer);
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("scroll", onResize, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open, closeMenu]);
 
@@ -374,7 +388,7 @@ function SelectMenu({
 }: {
   listRef: React.RefObject<HTMLUListElement | null>;
   listboxId: string;
-  rect: { top: number; left: number; width: number };
+  rect: { top: number; left: number; width: number; maxHeight: number };
   options: ReadonlyArray<SelectOption>;
   value: string;
   activeIndex: number;
@@ -383,8 +397,10 @@ function SelectMenu({
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
   // Focus the listbox once mounted so keyboard nav works immediately.
+  // preventScroll: without it the browser scrolls the page to reveal
+  // the focused list, and the close-on-scroll handler kills the menu.
   React.useEffect(() => {
-    listRef.current?.focus();
+    listRef.current?.focus({ preventScroll: true });
     // listRef is a stable ref — depending on it is just to satisfy
     // exhaustive-deps without re-running on every render.
   }, [listRef]);
@@ -405,10 +421,11 @@ function SelectMenu({
         top: rect.top,
         left: rect.left,
         minWidth: rect.width,
+        maxHeight: rect.maxHeight,
       }}
       className={cn(
         "z-50 flex flex-col gap-[6px] rounded-[2px] bg-white outline-none",
-        "px-[8px] py-[12px]",
+        "overflow-y-auto px-[8px] py-[12px]",
         "shadow-[0px_0px_0.5px_rgba(0,0,0,0.4),0px_0px_0.75px_rgba(0,0,0,0.3),0px_7px_11px_rgba(0,0,0,0.25)]",
       )}
     >
@@ -431,7 +448,7 @@ function SelectMenu({
               if (!opt.disabled) onSelect(i);
             }}
             className={cn(
-              "flex items-center rounded-[2px]",
+              "flex shrink-0 items-center rounded-[2px]",
               "font-['Hanken_Grotesk',sans-serif] font-normal text-[14px] leading-[14px]",
               "text-[var(--ds-grey-dark-09)]",
               "cursor-pointer select-none",
