@@ -1,16 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronRight, Search, X } from "lucide-react";
+import { ChevronRight, Plus, Search, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/AppHeader";
-import { useAuth } from "@/auth/AuthContext";
+import { NewAccountWizard } from "@/components/NewAccountWizard";
+import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function AccountSelectScreen() {
   const {
+    user,
     accounts,
     isLoadingAccounts,
     accountsError,
@@ -21,6 +23,10 @@ export function AccountSelectScreen() {
   const tc = useTranslations("common");
 
   const [query, setQuery] = useState("");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  // Super admins and partners can create accounts; everyone else picks
+  // from what already exists.
+  const canCreateAccount = isSuperAdmin(user);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -70,7 +76,7 @@ export function AccountSelectScreen() {
             </div>
           )}
 
-          {!isLoadingAccounts && !accountsError && accounts.length === 0 && (
+          {!isLoadingAccounts && !accountsError && accounts.length === 0 && !canCreateAccount && (
             <p className="py-4 text-[15px] text-[var(--color-muted-foreground)]">
               {t.rich("empty", {
                 email: () => (
@@ -146,8 +152,23 @@ export function AccountSelectScreen() {
               )}
             </>
           )}
+
+          {canCreateAccount && !isLoadingAccounts && (
+            <div className="mt-5 border-t border-[var(--ds-grey-light-02)] pt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setWizardOpen(true)}
+                className="w-full"
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                {t("newAccount")}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
+
+      {wizardOpen && <NewAccountWizard onClose={() => setWizardOpen(false)} />}
 
       <div className="brand-stripe" aria-hidden>
         <span />

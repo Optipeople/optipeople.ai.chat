@@ -7,7 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/AppHeader";
-import { isAdmin, useAuth } from "@/auth/AuthContext";
+import { isAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function MachineSelectScreen() {
@@ -33,7 +33,9 @@ export function MachineSelectScreen() {
     return machines.filter((m) => m.name.toLowerCase().includes(q));
   }, [machines, query]);
 
-  const canGoBack = accounts.length > 1;
+  // Super admins/partners can always return to the picker — it hosts the
+  // "New account" button, even when they only see one account today.
+  const canGoBack = accounts.length > 1 || isSuperAdmin(user);
 
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-background)]">

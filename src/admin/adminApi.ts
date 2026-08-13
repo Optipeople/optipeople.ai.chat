@@ -81,8 +81,11 @@ export async function updateAdminMachineName(
   }
 }
 
+// Omit machineId to create a local-only machine that isn't in the
+// Optipeople portal yet (New account wizard); displayName is required
+// in that case since there's no portal name to inherit.
 export async function createAdminMachine(input: {
-  machineId: string;
+  machineId?: string;
   accountId: string;
   displayName: string | null;
 }): Promise<AdminMachine> {

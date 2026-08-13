@@ -24,6 +24,7 @@ import {
   getMachinesForAccount,
   type Machine,
 } from "./machinesApi";
+import { getLocalMachinesForAccount } from "./localMachinesApi";
 import { getRegisteredSets } from "./registeredApi";
 import { fetchStoredLocale, persistLocale } from "@/i18n/localeApi";
 import {
@@ -76,6 +77,12 @@ const ADMIN_PERMISSIONS: readonly string[] = [
 
 function isAdminPermission(permissionName: string | null): boolean {
   return permissionName ? ADMIN_PERMISSIONS.includes(permissionName) : false;
+}
+
+function isFullAccessPermission(permissionName: string | null): boolean {
+  return permissionName
+    ? FULL_ACCESS_PERMISSIONS.includes(permissionName)
+    : false;
 }
 
 export function isSuperAdmin(user: User | null): boolean {
@@ -228,12 +235,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // Operators should only see machines onboarded into Opti Assist.
       // Intersect Optipeople's full machine list with machine_kb so the
-      // picker hides anything we can't serve answers for.
-      const [rawList, registered] = await Promise.all([
+      // picker hides anything we can't serve answers for. Machines
+      // created by the New account wizard don't exist in the portal yet,
+      // so they're fetched separately and appended — best-effort, the
+      // portal-backed list must not break if that call fails.
+      const [rawList, registered, localList] = await Promise.all([
         getMachinesForAccount(account.id),
         getRegisteredSets(),
+        getLocalMachinesForAccount(account.id).catch(() => [] as Machine[]),
       ]);
-      const list = rawList.filter((m) => registered.machineIds.has(m.id));
+      const list = [
+        ...rawList.filter((m) => registered.machineIds.has(m.id)),
+        ...localList,
+      ];
       setMachines(list);
       setMachinesForbidden(false);
 
@@ -298,7 +312,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccounts(list);
       setAccountsForbidden(false);
 
-      if (list.length === 1) {
+      // Auto-select a lone account — except for super admins/partners,
+      // who must always pass the picker: it's where they create new
+      // accounts, and skipping it would strand a one-account admin with
+      // no way to reach that button.
+      if (list.length === 1 && !isFullAccessPermission(permissionRef.current)) {
         const only: StoredAccount = { id: list[0].id, name: list[0].name };
         saveCurrentAccount(only);
         setCurrentAccount(only);
