@@ -1,10 +1,13 @@
 // GET  /api/admin/machines — list every known machine_kb row with its
 //                            ready-document count. Account admins see
 //                            only machines for their own account.
-// POST /api/admin/machines — create a new machine_kb row from an
-//                            Optipeople machine the admin picked.
-//                            Account admins can only create within
-//                            their own account.
+// POST /api/admin/machines — create a new machine_kb row, either from
+//                            an Optipeople machine the admin picked
+//                            (machineId set) or as a local-only machine
+//                            that isn't in the portal yet (machineId
+//                            omitted, displayName required — used by the
+//                            New account wizard). Account admins can
+//                            only create within their own account.
 
 import { getTranslations } from "next-intl/server";
 import {
@@ -113,7 +116,10 @@ export async function POST(req: Request) {
       ? body.displayName.trim()
       : null;
 
-  if (!machineId || !accountId) {
+  // Without a portal machine to inherit a name from, a local machine
+  // must at least bring its own display name.
+  const isLocal = !machineId;
+  if (!accountId || (isLocal && !displayName)) {
     return Response.json(
       { error: t("admin.machineFieldsRequired") },
       { status: 400 },
@@ -129,22 +135,37 @@ export async function POST(req: Request) {
 
   const supabase = getSupabaseServerClient();
 
-  const { data: existing } = await supabase
-    .from("machine_kb")
-    .select("machine_id")
-    .eq("machine_id", machineId)
-    .maybeSingle();
-  if (existing) {
-    return Response.json(
-      { error: t("admin.machineAlreadyExists") },
-      { status: 409 },
-    );
+  if (!isLocal) {
+    // The portal machine may already be onboarded either as the primary
+    // key (classic onboarding) or as the link target of a local machine.
+    const [{ data: byId }, { data: byPortalId }] = await Promise.all([
+      supabase
+        .from("machine_kb")
+        .select("machine_id")
+        .eq("machine_id", machineId)
+        .maybeSingle(),
+      supabase
+        .from("machine_kb")
+        .select("machine_id")
+        .eq("portal_machine_id", machineId)
+        .maybeSingle(),
+    ]);
+    if (byId || byPortalId) {
+      return Response.json(
+        { error: t("admin.machineAlreadyExists") },
+        { status: 409 },
+      );
+    }
   }
 
   const { data, error } = await supabase
     .from("machine_kb")
     .insert({
-      machine_id: machineId,
+      // Local machines get a generated id; portal machines keep the
+      // Optipeople id as their local id (unchanged behaviour) and record
+      // it in portal_machine_id too so MCP scoping reads one column.
+      machine_id: isLocal ? `local-${crypto.randomUUID()}` : machineId,
+      portal_machine_id: isLocal ? null : machineId,
       account_id: accountId,
       display_name: displayName,
     })

@@ -300,7 +300,7 @@ async function buildSystemPrompt(
       .order("title", { ascending: true }),
     supabase
       .from("machine_kb")
-      .select("display_name")
+      .select("display_name, portal_machine_id")
       .eq("machine_id", machineId)
       .maybeSingle(),
     listEnabledAccountAiRules(accountId).catch((err) => {
@@ -312,9 +312,16 @@ async function buildSystemPrompt(
   ]);
   if (docsRes.error) throw docsRes.error;
   const docs = (docsRes.data ?? []) as DocumentManifest[];
-  const displayName =
-    (machineRes.data as { display_name: string | null } | null)?.display_name ??
-    null;
+  const machineRow = machineRes.data as {
+    display_name: string | null;
+    portal_machine_id: string | null;
+  } | null;
+  const displayName = machineRow?.display_name ?? null;
+  // Optipeople id of this machine. Wizard-created machines have none
+  // until an admin links them to a portal machine — MCP data tools can't
+  // be scoped to them, so the guidance below is suppressed and the model
+  // works from the KB alone.
+  const portalMachineId = machineRow?.portal_machine_id ?? null;
 
   const manifest =
     docs.length === 0
@@ -331,21 +338,24 @@ async function buildSystemPrompt(
   // MCP tools when the operator asks a generic question like "what
   // errors happened today" — the answer is implicitly "on this machine".
   const machineIdentity = `Active machine for this conversation:
-- machine_id: ${machineId}
+- machine_id: ${portalMachineId ?? machineId}
 - display_name: ${displayName ?? "(unnamed)"}
 
 Every question the operator asks is about THIS machine unless they explicitly name a different one. Never list other machines or ask the operator which machine they mean — there is only one in scope.`;
 
-  // Only emit MCP guidance when the account actually has MCP connected;
-  // otherwise the model would be told about tools it can't see.
-  const mcpGuidance = hasMcp
-    ? `
+  // Only emit MCP guidance when the account actually has MCP connected
+  // AND this machine has an Optipeople id to scope the tools by;
+  // otherwise the model would be told about tools it can't use for this
+  // machine.
+  const mcpGuidance =
+    hasMcp && portalMachineId
+      ? `
 
 Optipeople MCP rules (machine-scoped data — uptime, stops, KPIs, telemetry):
-- ALWAYS pass machine_id="${machineId}" to any MCP tool that accepts it (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_stops_concluesion_statistic, get_time_distribution_statistic, get_total_uptime_by_date, get_total_working_hours_by_date, get_part_counter_log, get_telemetry_data, get_kpi_report_by_date, etc.). Do NOT call the account-wide variants (e.g. get_machines_basic_info, get_factories_data) for operator questions — they return data for other machines the operator doesn't care about.
+- ALWAYS pass machine_id="${portalMachineId}" to any MCP tool that accepts it (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_stops_concluesion_statistic, get_time_distribution_statistic, get_total_uptime_by_date, get_total_working_hours_by_date, get_part_counter_log, get_telemetry_data, get_kpi_report_by_date, etc.). Do NOT call the account-wide variants (e.g. get_machines_basic_info, get_factories_data) for operator questions — they return data for other machines the operator doesn't care about.
 - If you genuinely need to resolve a name to an id, use the machine_id above directly; do NOT call get_machine_id or get_machines_basic_info just to find it.
-- When the operator asks something open-ended like "what's been going on today" or "any errors", scope the query to machine_id="${machineId}" and today's date. Never ask the operator which machine they mean.`
-    : "";
+- When the operator asks something open-ended like "what's been going on today" or "any errors", scope the query to machine_id="${portalMachineId}" and today's date. Never ask the operator which machine they mean.`
+      : "";
 
   // Inviolable rules go first so they take primacy over anything that
   // follows. The locked system rule is always rule #1; admin rules are

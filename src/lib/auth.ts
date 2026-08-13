@@ -33,7 +33,10 @@ const FULL_ACCESS_PERMISSIONS: readonly string[] = [
   PARTNER_PERMISSION,
 ];
 
-function hasFullAccess(permissionName: string): boolean {
+// Exported for routes that serve non-admin users too and only need the
+// "may this caller see any account?" half of the check (e.g. the local
+// machine listing used by the machine picker).
+export function hasFullAccess(permissionName: string): boolean {
   return FULL_ACCESS_PERMISSIONS.includes(permissionName);
 }
 
