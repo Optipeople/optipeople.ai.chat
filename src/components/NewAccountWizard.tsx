@@ -18,7 +18,7 @@ import { Select } from "@/components/ui/select";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/auth/AuthContext";
-import { getAccounts } from "@/auth/accountsApi";
+import { getAccounts, searchAccounts, type Account } from "@/auth/accountsApi";
 import {
   createFactory,
   createPortalUser,
@@ -165,10 +165,19 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
         subscriptionTypeId,
       });
       if (!id) {
-        // The portal response didn't carry the new id — recover it from
-        // the account list, which the creator's token can always see.
+        // The portal response didn't carry the new id — recover it by
+        // name from the account lists. A partner's Account/GetAll can
+        // omit an account they just registered, so also try the paged
+        // search the portal backoffice itself lists accounts with.
+        const byName = (rows: Account[]) =>
+          rows.find(
+            (a) => a.name.trim().toLowerCase() === name.toLowerCase(),
+          )?.id ?? null;
         const all = await getAccounts().catch(() => []);
-        id = all.find((a) => a.name === name)?.id ?? null;
+        id = byName(all);
+        if (!id) {
+          id = byName(await searchAccounts(name).catch(() => []));
+        }
       }
       if (!id) {
         // Account exists in the portal but we can't address it, so the

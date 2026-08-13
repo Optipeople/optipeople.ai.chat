@@ -188,10 +188,36 @@ export type RegisterAccountInput = {
   subscriptionTypeId: string;
 };
 
+const GUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+
+// The RegisterAccount response's data is unpinned in the swagger. Pull
+// the new account id out of any shape it could plausibly take: a bare
+// guid string, {id}/{accountId}, or those nested under an account
+// object. Strings must look like guids so a "created successfully"
+// message is never mistaken for an id.
+function extractAccountId(data: unknown): string | null {
+  if (typeof data === "string") {
+    const value = data.trim();
+    return GUID_RE.test(value) ? value : null;
+  }
+  if (data && typeof data === "object") {
+    const obj = data as { id?: unknown; accountId?: unknown; account?: unknown };
+    for (const candidate of [obj.id, obj.accountId]) {
+      if (typeof candidate === "string" && GUID_RE.test(candidate.trim())) {
+        return candidate.trim();
+      }
+    }
+    if (obj.account !== undefined && obj.account !== null) {
+      return extractAccountId(obj.account);
+    }
+  }
+  return null;
+}
+
 // Mirrors the portal backoffice's admin flow: registering an account
 // also creates its first admin user, who gets the portal's invite mail.
 // Returns the new account's id when the portal includes it in the
-// response; the caller falls back to re-fetching Account/GetAll.
+// response; the caller falls back to searching the account lists.
 //
 // NOTE: Account/RegisterNewAccount looks like the obvious endpoint but
 // is the portal's PUBLIC self-signup route, gated by Cloudflare
@@ -201,7 +227,7 @@ export type RegisterAccountInput = {
 export async function registerAccount(
   input: RegisterAccountInput,
 ): Promise<string | null> {
-  const data = await post<{ id?: string; accountId?: string }>(
+  const data = await post<unknown>(
     "Account/RegisterAccount",
     {
       accountName: input.accountName,
@@ -212,8 +238,7 @@ export async function registerAccount(
     },
     "Failed to create account",
   );
-  const id = data?.id ?? data?.accountId;
-  return typeof id === "string" && id.length > 0 ? id : null;
+  return extractAccountId(data);
 }
 
 export type CreateFactoryInput = {

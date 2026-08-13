@@ -17,6 +17,7 @@ import { getCurrentUser } from "./currentUserApi";
 import {
   AccountsForbiddenError,
   getAccounts,
+  searchAccounts,
   type Account,
 } from "./accountsApi";
 import {
@@ -302,13 +303,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Optipeople, since onboarding an account's first machine starts
       // by picking that account.
       const adminView = isAdminPermission(permissionRef.current);
-      const [rawList, registered] = await Promise.all([
+      // A partner's Account/GetAll can omit an account they just
+      // registered even though the portal backoffice lists it (via the
+      // paged search route). For full-access users, merge that route in
+      // — best-effort — so the picker matches what the portal shows.
+      const fullAccess = isFullAccessPermission(permissionRef.current);
+      const [rawList, registered, supplemental] = await Promise.all([
         getAccounts(),
         adminView ? null : getRegisteredSets(),
+        fullAccess ? searchAccounts("").catch(() => []) : [],
       ]);
-      const list = registered
+      let list = registered
         ? rawList.filter((a) => registered.accountIds.has(a.id))
         : rawList;
+      const known = new Set(list.map((a) => a.id));
+      const extras = supplemental.filter((a) => !known.has(a.id));
+      if (extras.length > 0) list = [...list, ...extras];
       setAccounts(list);
       setAccountsForbidden(false);
 
