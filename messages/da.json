@@ -131,6 +131,7 @@
     "factoryNameLabel": "Fabriksnavn",
     "countryLabel": "Land",
     "timeZoneLabel": "Tidszone",
+    "timeZoneEmpty": "Ingen tidszoner fundet for dette land",
     "createFactory": "Opret fabrik",
     "step3Heading": "Tilføj maskine",
     "step3Description": "Tilføjer maskinen i Opti Assist, så dens vidensbase og chat virker med det samme. Den kan kobles til en Optipeople-maskine senere.",

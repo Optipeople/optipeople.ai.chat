@@ -29,7 +29,6 @@ import {
   registerAccount,
   type PortalCountry,
   type PortalOption,
-  type PortalTimeZone,
 } from "@/auth/portalSetupApi";
 import { createAdminMachine } from "@/admin/adminApi";
 
@@ -61,7 +60,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const [factoryName, setFactoryName] = useState("");
   const [countries, setCountries] = useState<PortalCountry[] | null>(null);
   const [countryId, setCountryId] = useState("");
-  const [timeZones, setTimeZones] = useState<PortalTimeZone[] | null>(null);
+  const [timeZones, setTimeZones] = useState<PortalOption[] | null>(null);
   const [timeZoneId, setTimeZoneId] = useState("");
 
   // Step 3 — local Opti Assist machine.
@@ -103,7 +102,8 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
 
   // Timezones depend on the chosen country.
   useEffect(() => {
-    if (!countryId) {
+    const country = countries?.find((c) => c.option.id === countryId);
+    if (!country) {
       /* eslint-disable react-hooks/set-state-in-effect */
       setTimeZones(null);
       setTimeZoneId("");
@@ -113,11 +113,11 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
     let cancelled = false;
     setTimeZones(null);
     setTimeZoneId("");
-    getTimeZones(countryId)
+    getTimeZones(country)
       .then((rows) => {
         if (cancelled) return;
         setTimeZones(rows);
-        if (rows.length === 1) setTimeZoneId(rows[0].option.id);
+        if (rows.length === 1) setTimeZoneId(rows[0].id);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -127,7 +127,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [countryId, t]);
+  }, [countryId, countries, t]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -186,12 +186,12 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const submitFactory = () =>
     run(async () => {
       const country = countries?.find((c) => c.option.id === countryId);
-      const timeZone = timeZones?.find((tz) => tz.option.id === timeZoneId);
+      const timeZone = timeZones?.find((tz) => tz.id === timeZoneId);
       if (!accountId || !country || !timeZone) return;
       await createFactory({
         accountId,
         name: factoryName.trim(),
-        country,
+        country: country.option,
         timeZone,
       });
       setStep(3);
@@ -336,14 +336,23 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
             <Select
               label={t("timeZoneLabel")}
               placeholder={
-                countryId && timeZones === null ? t("loadingLookup") : undefined
+                countryId && timeZones === null
+                  ? t("loadingLookup")
+                  : timeZones?.length === 0
+                    ? t("timeZoneEmpty")
+                    : undefined
               }
               value={timeZoneId}
               onValueChange={setTimeZoneId}
-              disabled={submitting || !countryId || timeZones === null}
+              disabled={
+                submitting ||
+                !countryId ||
+                timeZones === null ||
+                timeZones.length === 0
+              }
               items={(timeZones ?? []).map((tz) => ({
-                value: tz.option.id,
-                label: tz.option.name,
+                value: tz.id,
+                label: tz.name,
               }))}
             />
           </div>

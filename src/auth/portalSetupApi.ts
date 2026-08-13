@@ -105,9 +105,9 @@ export async function getRoles(): Promise<PortalOption[]> {
   return toOptions(rows);
 }
 
-// Countries and timezones are forwarded to Factory/Create verbatim (the
-// endpoint takes the full objects, not just ids), so keep the raw rows
-// alongside the option list.
+// Country rows are kept raw alongside the option: per the swagger's
+// Country schema they can embed their timezones (countryTimeZones[]),
+// which saves the TimeZone/GetByCountry round-trip when present.
 export type PortalCountry = {
   option: PortalOption;
   raw: Record<string, unknown>;
@@ -126,28 +126,56 @@ export async function getCountries(): Promise<PortalCountry[]> {
     .filter((c): c is PortalCountry => c !== null);
 }
 
-export type PortalTimeZone = {
-  option: PortalOption;
-  raw: Record<string, unknown>;
+// The swagger's TimeZone schema labels rows with `title` + `value`
+// (e.g. "(UTC+01:00) …" / IANA id) — not `name`. Keep the old aliases
+// as fallbacks for shapes the portal may serve elsewhere.
+type RawTimeZone = {
+  id?: string | number;
+  title?: string;
+  displayName?: string;
+  name?: string;
+  value?: string;
 };
 
-export async function getTimeZones(countryId?: string): Promise<PortalTimeZone[]> {
-  const path = countryId
-    ? `TimeZone/GetByCountry?countryId=${encodeURIComponent(countryId)}`
-    : "TimeZone/GetAll";
-  const rows = await get<Record<string, unknown>[]>(
-    path,
-    "Failed to fetch time zones",
-  );
-  return (rows ?? [])
-    .map((raw) => {
-      const r = raw as RawNamed & { displayName?: string };
-      const id = r.id;
-      const name = r.displayName ?? r.name;
-      if (id === undefined || id === null || !name) return null;
-      return { option: { id: String(id), name }, raw };
-    })
-    .filter((tz): tz is PortalTimeZone => tz !== null);
+function toTimeZoneOption(r: RawTimeZone | null | undefined): PortalOption | null {
+  if (!r) return null;
+  const name = r.title ?? r.displayName ?? r.name ?? r.value;
+  if (r.id === undefined || r.id === null || !name) return null;
+  return { id: String(r.id), name };
+}
+
+function embeddedTimeZones(country: PortalCountry): PortalOption[] {
+  const rows = country.raw.countryTimeZones;
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) =>
+      toTimeZoneOption((row as { timeZone?: RawTimeZone | null }).timeZone),
+    )
+    .filter((o): o is PortalOption => o !== null);
+}
+
+export async function getTimeZones(
+  country: PortalCountry,
+): Promise<PortalOption[]> {
+  // Prefer the timezones embedded on the country row itself.
+  const embedded = embeddedTimeZones(country);
+  if (embedded.length > 0) return embedded;
+
+  // TimeZone/GetByCountry's query param is named `country` — not
+  // countryId, which the portal silently ignores (yielding an empty
+  // list). The swagger doesn't pin whether it wants the country's id or
+  // its name, so try the id first and fall back to the name.
+  for (const value of [country.option.id, country.option.name]) {
+    const rows = await get<RawTimeZone[]>(
+      `TimeZone/GetByCountry?country=${encodeURIComponent(value)}`,
+      "Failed to fetch time zones",
+    );
+    const options = (rows ?? [])
+      .map(toTimeZoneOption)
+      .filter((o): o is PortalOption => o !== null);
+    if (options.length > 0) return options;
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -191,19 +219,22 @@ export async function registerAccount(
 export type CreateFactoryInput = {
   accountId: string;
   name: string;
-  timeZone: PortalTimeZone;
-  country: PortalCountry;
+  timeZone: PortalOption;
+  country: PortalOption;
 };
 
+// Factory/Create binds FactoryUpdateViewModel, whose timezone/country
+// are the slim {id, name} models (TimeZoneModel/CountryModel) — not the
+// raw lookup rows, which label timezones `title` instead of `name`.
 export async function createFactory(input: CreateFactoryInput): Promise<void> {
   await post(
     `Factory/Create?accountId=${encodeURIComponent(input.accountId)}`,
     {
       name: input.name,
       accountId: input.accountId,
-      timeZoneId: input.timeZone.option.id,
-      timezone: input.timeZone.raw,
-      country: input.country.raw,
+      timeZoneId: input.timeZone.id,
+      timezone: { id: input.timeZone.id, name: input.timeZone.name },
+      country: { id: input.country.id, name: input.country.name },
     },
     "Failed to create factory",
   );

@@ -131,6 +131,7 @@
     "factoryNameLabel": "Factory name",
     "countryLabel": "Country",
     "timeZoneLabel": "Time zone",
+    "timeZoneEmpty": "No time zones found for this country",
     "createFactory": "Create factory",
     "step3Heading": "Add machine",
     "step3Description": "Adds the machine to Opti Assist so its knowledge base and chat work right away. It can be linked to an Optipeople machine later.",
