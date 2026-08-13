@@ -10,16 +10,33 @@
 // kb_documents row) plus the machine display name, so the prompt stays
 // well under a couple of thousand tokens even with dozens of manuals. A
 // single Haiku call returns both languages.
+//
+// Generation is grounding-checked before persisting: summaries are often
+// just file names (`summary: args.summary ?? title` at ingest), so the
+// model can produce plausible questions the manuals never answer. We
+// over-generate CANDIDATE_COUNT pairs, embed each question, and keep only
+// pairs whose best KB chunk clears MIN_TOP_SIMILARITY — the same
+// embedding space the chat's search_kb retrieval runs in.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { defaultLocale, isLocale, locales, type Locale } from "@/i18n/config";
 import { getSupabaseServerClient } from "./supabase";
 import { fromAnthropicUsage, recordUsage } from "./usage";
+import { embedQueries, VOYAGE_MODEL } from "./voyage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 // Pool size per language. The chat client picks 3 at random on load, so a
 // larger pool means more variety across sessions.
 const TARGET_COUNT = 10;
+// How many candidate pairs to ask the model for. The surplus over
+// TARGET_COUNT is headroom for the grounding filter to discard.
+const CANDIDATE_COUNT = 16;
+// A candidate pair survives if either language's question reaches this
+// cosine similarity against its best kb_chunk. Deliberately conservative:
+// the ranking (best TARGET_COUNT kept) does the fine sorting; this floor
+// only cuts questions with no real manual content behind them. Dropped
+// candidates are logged with their scores for later calibration.
+const MIN_TOP_SIMILARITY = 0.45;
 const MAX_DOC_SUMMARIES = 30;
 
 const LOCALE_LABELS: Record<Locale, string> = {
@@ -41,7 +58,7 @@ The operator is at the machine and wants fast, concrete answers from the manual.
 - Grounded in the machine's actual manual content. Use ONLY alarm codes, button names, or components that explicitly appear in the manual extracts below — never invent codes or names.
 - Technical terms, alarm codes, and button names stay in the original language as they appear in the manual (do not translate them).
 
-Produce EXACTLY ${TARGET_COUNT} questions in BOTH English and Danish. The same ${TARGET_COUNT} topics in each language — i.e. en[i] and da[i] cover the same question, just translated.
+Produce EXACTLY ${CANDIDATE_COUNT} questions in BOTH English and Danish. The same ${CANDIDATE_COUNT} topics in each language — i.e. en[i] and da[i] cover the same question, just translated.
 
 Return EXACTLY this JSON object — no prose, no markdown fences:
 {"en": ["...", "...", ...], "da": ["...", "...", ...]}`;
@@ -106,13 +123,13 @@ export async function regenerateSuggestedQuestions(
     "",
     corpus,
     "",
-    `Generate ${TARGET_COUNT} short starter questions per language as the JSON object described.`,
+    `Generate ${CANDIDATE_COUNT} short starter questions per language as the JSON object described.`,
   ].join("\n");
 
   const anthropic = new Anthropic();
   const res = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 1500,
+    max_tokens: 2000,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
   });
@@ -130,9 +147,106 @@ export async function regenerateSuggestedQuestions(
     .join("")
     .trim();
 
-  const bundle = parseBundleJson(text);
+  const candidates = parseBundleJson(text);
+
+  // Grounding check — drop candidates the KB can't actually answer.
+  // Best-effort: if Voyage or the RPC is unavailable we'd rather persist
+  // unvalidated questions than leave the machine with a stale pool.
+  let bundle: SuggestionsBundle;
+  try {
+    bundle = await filterUngroundedQuestions(machineId, candidates);
+  } catch (err) {
+    console.warn(
+      `suggestions: grounding check failed for machine=${machineId}, persisting unvalidated pool:`,
+      err instanceof Error ? err.message : err,
+    );
+    bundle = truncateBundle(candidates);
+  }
+
   await persistSuggestions(machineId, bundle);
   return bundle;
+}
+
+// One candidate topic = the same question in every locale (en[i]/da[i]).
+// Scored by the best cosine similarity any of its language variants
+// achieves against the machine's chunks, so a Danish question about an
+// English manual isn't punished for the language gap.
+type CandidateTopic = {
+  variants: { locale: Locale; text: string }[];
+  score: number;
+};
+
+async function filterUngroundedQuestions(
+  machineId: string,
+  candidates: SuggestionsBundle,
+): Promise<SuggestionsBundle> {
+  const maxLen = Math.max(...locales.map((l) => candidates[l].length));
+  const topics: CandidateTopic[] = [];
+  for (let i = 0; i < maxLen; i++) {
+    const variants = locales
+      .filter((l) => candidates[l][i])
+      .map((l) => ({ locale: l, text: candidates[l][i] }));
+    if (variants.length > 0) topics.push({ variants, score: 0 });
+  }
+  if (topics.length === 0) return EMPTY_BUNDLE;
+
+  // One Voyage batch for every variant of every topic, then one cheap
+  // top-1 similarity RPC per variant.
+  const texts = topics.flatMap((t) => t.variants.map((v) => v.text));
+  const embeddings = await embedQueries(texts, { machineId });
+  const sims = await Promise.all(
+    embeddings.map((vec) => maxChunkSimilarity(machineId, vec)),
+  );
+  let cursor = 0;
+  for (const topic of topics) {
+    for (let v = 0; v < topic.variants.length; v++) {
+      topic.score = Math.max(topic.score, sims[cursor++]);
+    }
+  }
+
+  const kept = topics
+    .filter((t) => t.score >= MIN_TOP_SIMILARITY)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, TARGET_COUNT);
+  const dropped = topics.filter((t) => t.score < MIN_TOP_SIMILARITY);
+  if (dropped.length > 0) {
+    console.info(
+      `suggestions: machine=${machineId} dropped ${dropped.length}/${topics.length} ungrounded candidate(s): ` +
+        dropped
+          .map((t) => `"${t.variants[0].text}" (${t.score.toFixed(2)})`)
+          .join(", "),
+    );
+  }
+
+  const out = Object.fromEntries(
+    locales.map((l) => [l, [] as string[]]),
+  ) as SuggestionsBundle;
+  for (const topic of kept) {
+    for (const v of topic.variants) out[v.locale].push(v.text);
+  }
+  return out;
+}
+
+async function maxChunkSimilarity(
+  machineId: string,
+  queryEmbedding: number[],
+): Promise<number> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc("kb_max_similarity", {
+    p_machine_id: machineId,
+    p_query_embedding: queryEmbedding,
+    p_embedding_model: VOYAGE_MODEL,
+  });
+  if (error) {
+    throw new Error(`kb_max_similarity rpc: ${error.message}`);
+  }
+  return typeof data === "number" ? data : 0;
+}
+
+function truncateBundle(bundle: SuggestionsBundle): SuggestionsBundle {
+  return Object.fromEntries(
+    locales.map((l) => [l, bundle[l].slice(0, TARGET_COUNT)]),
+  ) as SuggestionsBundle;
 }
 
 // Best-effort wrapper for triggers that shouldn't fail the parent flow
@@ -205,13 +319,18 @@ function parseBundleJson(text: string): SuggestionsBundle {
   if (start < 0 || end <= start) return EMPTY_BUNDLE;
   try {
     const parsed = JSON.parse(stripped.slice(start, end + 1));
-    return coerceBundle(parsed);
+    // Keep the full candidate pool here — the grounding filter cuts it
+    // down to TARGET_COUNT before persisting.
+    return coerceBundle(parsed, CANDIDATE_COUNT);
   } catch {
     return EMPTY_BUNDLE;
   }
 }
 
-function coerceBundle(value: unknown): SuggestionsBundle {
+function coerceBundle(
+  value: unknown,
+  limit = TARGET_COUNT,
+): SuggestionsBundle {
   const out: SuggestionsBundle = { ...EMPTY_BUNDLE };
   if (!value || typeof value !== "object" || Array.isArray(value)) return out;
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -221,7 +340,7 @@ function coerceBundle(value: unknown): SuggestionsBundle {
       .filter((q): q is string => typeof q === "string")
       .map((q) => q.trim())
       .filter((q) => q.length > 0 && q.length <= 120)
-      .slice(0, TARGET_COUNT);
+      .slice(0, limit);
   }
   return out;
 }

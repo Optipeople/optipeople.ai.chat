@@ -172,3 +172,17 @@ export async function embedQuery(
   const [vec] = await embedBatch([text], "query", usage);
   return vec;
 }
+
+// Batch variant of embedQuery — many short queries in as few Voyage calls
+// as the batch limits allow. Used by the suggestion generator to ground-
+// check a whole candidate pool at once.
+export async function embedQueries(
+  texts: string[],
+  usage?: UsageAttribution,
+): Promise<number[][]> {
+  const out: number[][] = [];
+  for (const slice of planEmbedBatches(texts)) {
+    out.push(...(await embedBatch(slice, "query", usage)));
+  }
+  return out;
+}
