@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Wrench,
 } from "lucide-react";
-import { isAccountAdmin, isAdmin, useAuth } from "@/auth/AuthContext";
+import { isAccountAdmin, isAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { locales, type Locale } from "@/i18n/config";
 import { persistLocale } from "@/i18n/localeApi";
 import { cn } from "@/lib/utils";
@@ -25,18 +25,16 @@ export function UserMenu() {
     logout,
     currentAccount,
     accounts,
-    selectAccount,
+    clearSelectedAccount,
     currentMachine,
     machines,
-    selectMachine,
+    clearSelectedMachine,
   } = useAuth();
   const t = useTranslations("userMenu");
   const locale = useLocale() as Locale;
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [expanded, setExpanded] = useState<
-    "account" | "machine" | "language" | null
-  >(null);
+  const [expanded, setExpanded] = useState<"language" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -195,49 +193,47 @@ export function UserMenu() {
               <div className="h-px bg-[var(--color-hairline)]" />
             </>
           )}
-          {accounts.length > 1 && (
+          {(accounts.length > 1 || isSuperAdmin(user)) && (
             <>
-              <SwitcherSection
-                label={t("switchAccount")}
-                icon={<Repeat className="h-4 w-4" />}
-                isOpen={expanded === "account"}
-                onToggle={() =>
-                  setExpanded((prev) => (prev === "account" ? null : "account"))
-                }
-                items={accounts.map((a) => ({
-                  id: a.id,
-                  name: a.name,
-                  isCurrent: a.id === currentAccount?.id,
-                }))}
-                onSelect={(id) => {
-                  if (id === currentAccount?.id) return;
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
                   setOpen(false);
-                  selectAccount(id);
+                  clearSelectedAccount();
+                  // The account/machine pickers are state-gated screens on
+                  // "/", so get there in case we're on an admin page.
+                  router.push("/");
                 }}
-              />
+                className={cn(
+                  "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
+                  "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+                )}
+              >
+                <Repeat className="h-4 w-4" />
+                {t("switchAccount")}
+              </button>
               <div className="h-px bg-[var(--color-hairline)]" />
             </>
           )}
           {machines.length > 1 && (
             <>
-              <SwitcherSection
-                label={t("switchMachine")}
-                icon={<Wrench className="h-4 w-4" />}
-                isOpen={expanded === "machine"}
-                onToggle={() =>
-                  setExpanded((prev) => (prev === "machine" ? null : "machine"))
-                }
-                items={machines.map((m) => ({
-                  id: m.id,
-                  name: m.name,
-                  isCurrent: m.id === currentMachine?.id,
-                }))}
-                onSelect={(id) => {
-                  if (id === currentMachine?.id) return;
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
                   setOpen(false);
-                  selectMachine(id);
+                  clearSelectedMachine();
+                  router.push("/");
                 }}
-              />
+                className={cn(
+                  "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
+                  "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]",
+                )}
+              >
+                <Wrench className="h-4 w-4" />
+                {t("switchMachine")}
+              </button>
               <div className="h-px bg-[var(--color-hairline)]" />
             </>
           )}
