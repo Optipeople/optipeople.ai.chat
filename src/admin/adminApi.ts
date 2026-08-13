@@ -265,20 +265,76 @@ export type ReprocessResult = {
   extractionSource: "pdf-parse" | "claude-ocr";
 };
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Long ingests span multiple server calls: the pipeline checkpoints its
+// work and answers 202 { done: false } when its per-invocation time
+// budget runs out; POSTing again resumes from the checkpoint. This
+// helper loops until the server reports done (endpoints that never
+// return done:false — images, generic files — exit on the first pass).
+//
+// Continuation calls (resume=true) also retry transient failures: if a
+// server invocation gets reaped at the platform limit mid-batch, the
+// work done so far is persisted and calling again is safe. A 504 with
+// code "timeout" is NOT transient — the server already marked the
+// document failed — so it surfaces immediately, as does any failure on
+// the very first call.
+async function postJsonUntilDone<T>(
+  url: string,
+  makeBody: (resume: boolean) => Record<string, unknown>,
+  errorLabel: string,
+): Promise<T> {
+  // Runaway guard: each continuation represents ~3.5 min of server-side
+  // work, so 200 calls is far beyond any realistic document.
+  const MAX_CALLS = 200;
+  const MAX_CONSECUTIVE_FAILURES = 3;
+  let resume = false;
+  let failures = 0;
+  for (let call = 0; call < MAX_CALLS; call++) {
+    let res: Response;
+    try {
+      res = await fetchWithAuth(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeBody(resume)),
+      });
+    } catch (err) {
+      if (!resume || ++failures > MAX_CONSECUTIVE_FAILURES) throw err;
+      await sleep(5_000);
+      continue;
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+      };
+      const transient = res.status >= 500 && body.code !== "timeout";
+      if (resume && transient && ++failures <= MAX_CONSECUTIVE_FAILURES) {
+        await sleep(5_000);
+        continue;
+      }
+      throw new Error(body.error ?? `${errorLabel} (${res.status})`);
+    }
+    failures = 0;
+    const body = (await res.json()) as { done?: boolean } & T;
+    if (body.done === false) {
+      resume = true;
+      continue;
+    }
+    return body as T;
+  }
+  throw new Error(errorLabel);
+}
+
 export async function reprocessAdminDocument(
   id: string,
   force: "ocr" | "pdf-parse" = "ocr",
 ): Promise<ReprocessResult> {
-  const res = await fetchWithAuth(`/api/admin/documents/${id}/reprocess`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Reprocess fejlede (${res.status})`);
-  }
-  return (await res.json()) as ReprocessResult;
+  return postJsonUntilDone<ReprocessResult>(
+    `/api/admin/documents/${id}/reprocess`,
+    (resume) => ({ force, resume }),
+    "Reprocess fejlede",
+  );
 }
 
 export async function deleteAdminDocument(id: string): Promise<void> {
@@ -432,10 +488,13 @@ async function directUpload<T>(args: {
   args.onProgress?.(1, 1);
 
   // 3. Finalize: run extract/caption/embed against the stored object.
-  const res = await fetchWithAuth(args.finalizeUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  // Big PDFs span several calls — the server checkpoints and answers
+  // done:false until the whole document is processed. The ingest
+  // endpoint detects continuations by the existing kb_documents row, so
+  // the body is identical on every call.
+  return postJsonUntilDone<T>(
+    args.finalizeUrl,
+    () => ({
       machineId: args.machineId,
       documentId: sign.documentId,
       fileName: args.file.name,
@@ -443,12 +502,8 @@ async function directUpload<T>(args: {
       summary: args.summary,
       folderPath: args.folderPath,
     }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Upload failed (${res.status})`);
-  }
-  return (await res.json()) as T;
+    "Upload failed",
+  );
 }
 
 // XHR (not fetch) gets us real upload-progress events. No Authorization

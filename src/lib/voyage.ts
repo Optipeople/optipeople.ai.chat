@@ -93,13 +93,12 @@ export type EmbedProgressHook = (
   total: number,
 ) => void | Promise<void>;
 
-export async function embedDocuments(
-  texts: string[],
-  opts: { onBatchProgress?: EmbedProgressHook } = {},
-): Promise<number[][]> {
-  // Pre-split into batches that respect both the input-count and the
-  // per-batch token limits. A single oversized text still goes out alone;
-  // truncation: true clips it to the model context (32k), well under the cap.
+// Pre-split into batches that respect both the input-count and the
+// per-batch token limits. A single oversized text still goes out alone;
+// truncation: true clips it to the model context (32k), well under the cap.
+// Exported so the resumable ingest pipeline can embed batch-by-batch and
+// checkpoint between batches.
+export function planEmbedBatches(texts: string[]): string[][] {
   const batches: string[][] = [];
   let current: string[] = [];
   let currentTokens = 0;
@@ -117,7 +116,20 @@ export async function embedDocuments(
     currentTokens += tokens;
   }
   if (current.length > 0) batches.push(current);
+  return batches;
+}
 
+// Embed one pre-planned batch of document texts. The caller is
+// responsible for keeping the batch within limits (use planEmbedBatches).
+export async function embedDocumentBatch(texts: string[]): Promise<number[][]> {
+  return embedBatch(texts, "document");
+}
+
+export async function embedDocuments(
+  texts: string[],
+  opts: { onBatchProgress?: EmbedProgressHook } = {},
+): Promise<number[][]> {
+  const batches = planEmbedBatches(texts);
   const out: number[][] = [];
   const totalBatches = batches.length;
   let batchesDone = 0;

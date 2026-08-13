@@ -7,7 +7,7 @@ import {
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
-import { ensureFolderPath } from "@/lib/ingestion";
+import { deleteSidecar, ensureFolderPath } from "@/lib/ingestion";
 import { regenerateSuggestedQuestionsSafe } from "@/lib/suggestions";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -146,6 +146,11 @@ export async function DELETE(
       .remove([storagePath]);
     if (storageErr) {
       console.warn("admin DELETE storage cleanup failed:", storageErr);
+    }
+    if (bucket === "kb-documents") {
+      // A doc deleted mid-ingest may have an extraction checkpoint
+      // sidecar sitting next to the PDF; best-effort sweep.
+      await deleteSidecar(storagePath);
     }
   }
 

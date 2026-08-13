@@ -16,7 +16,11 @@ import {
 } from "./pdfText";
 import { regenerateSuggestedQuestionsSafe } from "./suggestions";
 import { getSupabaseServerClient } from "./supabase";
-import { embedDocuments, VOYAGE_MODEL } from "./voyage";
+import {
+  embedDocumentBatch,
+  planEmbedBatches,
+  VOYAGE_MODEL,
+} from "./voyage";
 
 export type IngestPdfInput = {
   machineId: string;
@@ -139,10 +143,14 @@ async function writeProgress(
   }
 }
 
-// Vercel kills the function at 300s. We give the actual work 270s and
-// reserve ~30s for the failure path (mark the row failed, return a
-// response). The reserved budget is generous because Supabase writes
-// from a cold instance can spike to a few seconds.
+// Vercel kills the function at 300s. Long-running ingests don't fail on
+// that anymore: the pipeline checkpoints between embedding batches and,
+// once the SOFT budget is spent, returns { done: false } so the client
+// immediately calls back and the next invocation resumes where this one
+// stopped. The HARD budget below is a backstop for a single step that
+// can't checkpoint (Claude OCR of a huge scan, a Voyage batch stuck in
+// retries) — it flips the row to failed before the platform reaps us.
+export const INGEST_SOFT_BUDGET_MS = 210_000;
 const INGEST_BUDGET_MS = 270_000;
 
 const TIMEOUT_LABEL =
@@ -191,6 +199,65 @@ async function withIngestBudget<T>(
     return await Promise.race([work, timeout]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+// Extraction checkpoint: the extracted text is persisted as a JSON
+// sidecar next to the PDF in Storage so a continuation invocation can
+// skip straight to embedding (re-running Claude OCR would cost dollars
+// and minutes). chunkText() is deterministic, so the continuation
+// recomputes the same chunk list from the sidecar text and resumes at
+// the first ordinal that isn't in kb_chunks yet. The sidecar is deleted
+// when the document reaches 'ready'.
+type ExtractedSidecar = {
+  text: string;
+  pageCount: number;
+  source: PdfExtractionSource;
+};
+
+export function extractionSidecarPath(storagePath: string): string {
+  return `${storagePath}.extracted.json`;
+}
+
+async function writeSidecar(
+  storagePath: string,
+  sidecar: ExtractedSidecar,
+): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.storage
+    .from("kb-documents")
+    .upload(extractionSidecarPath(storagePath), JSON.stringify(sidecar), {
+      contentType: "application/json",
+      upsert: true,
+    });
+  if (error) throw new Error(`sidecar write failed: ${error.message}`);
+}
+
+async function readSidecar(
+  storagePath: string,
+): Promise<ExtractedSidecar | null> {
+  const supabase = getSupabaseServerClient();
+  const { data: blob, error } = await supabase.storage
+    .from("kb-documents")
+    .download(extractionSidecarPath(storagePath));
+  if (error || !blob) return null;
+  try {
+    const parsed = JSON.parse(await blob.text()) as ExtractedSidecar;
+    if (typeof parsed.text !== "string" || !parsed.text) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSidecar(storagePath: string): Promise<void> {
+  try {
+    const supabase = getSupabaseServerClient();
+    await supabase.storage
+      .from("kb-documents")
+      .remove([extractionSidecarPath(storagePath)]);
+  } catch (err) {
+    console.warn("sidecar cleanup failed:", err);
   }
 }
 
@@ -298,89 +365,157 @@ async function insertPdfDocRow(args: {
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 }
 
-// The actual extract → chunk → embed → figures pipeline. Assumes the
-// kb_documents row already exists (status='extracting') and the PDF is
-// already in Storage at storagePath. The fileBuffer is the same bytes,
-// passed in directly to avoid a redundant download. Shared by the
-// buffer-based (CLI) and storage-based (direct-upload) entry points.
+// Outcome of one pipeline invocation. done:false means the soft budget
+// ran out mid-work — everything completed so far is persisted, and the
+// caller (ultimately the admin client) should call again to continue.
+export type IngestPdfOutcome =
+  | ({ done: true } & IngestPdfResult)
+  | { done: false; documentId: string };
+
+// The actual extract → chunk → embed → figures pipeline, resumable at
+// every embedding-batch boundary. Assumes the kb_documents row already
+// exists and the PDF is in Storage at storagePath. Each phase persists
+// its result before the next starts (sidecar after extraction, kb_chunks
+// rows after every Voyage batch), so an invocation that runs out of soft
+// budget returns { done: false } and the next invocation picks up from
+// the checkpoint instead of redoing work.
 async function runPdfPipeline(args: {
   documentId: string;
   machineId: string;
   storagePath: string;
-  fileBuffer: Buffer;
   byteSize: number;
-}): Promise<IngestPdfResult> {
+  // ms epoch after which the pipeline should checkpoint and yield.
+  // null = run to completion (the CLI has no platform time limit).
+  deadlineAt: number | null;
+  force?: PdfExtractionForce;
+  // Pass when the caller already has the bytes; otherwise the pipeline
+  // downloads from Storage only when a phase actually needs them
+  // (a resumed embed run doesn't).
+  fileBuffer?: Buffer;
+}): Promise<IngestPdfOutcome> {
   const supabase = getSupabaseServerClient();
-  const { documentId, machineId, storagePath, fileBuffer, byteSize } = args;
+  const { documentId, machineId, storagePath, byteSize } = args;
 
-  const extracted = await extractPdfText(fileBuffer, {
-    onPhaseStart: async (phase) => {
-      if (phase === "claude-ocr") {
-        await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
-      }
-    },
-  });
-
-  await supabase
-    .from("kb_documents")
-    .update({
-      status: "embedding",
-      page_count: extracted.pageCount,
-      extraction_source: extracted.source,
-      progress: 30,
-      progress_label: `Chunker (${extracted.pageCount} sider)`,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", documentId);
-
-  const chunks = chunkText(extracted.text);
-  await writeProgress(documentId, 40, `Embedder (${chunks.length} chunks)`);
-  const embeddings = await embedDocuments(chunks, {
-    onBatchProgress: async (done, total) => {
-      await writeProgress(
-        documentId,
-        embedProgressPct(done, total),
-        `Embedder ${done}/${total}`,
+  let buf: Buffer | null = args.fileBuffer ?? null;
+  const getBuffer = async (): Promise<Buffer> => {
+    if (buf) return buf;
+    const { data: blob, error } = await supabase.storage
+      .from("kb-documents")
+      .download(storagePath);
+    if (error || !blob) {
+      throw new Error(
+        `download from Storage failed: ${error?.message ?? "object missing"}`,
       );
-    },
-  });
-  if (embeddings.length !== chunks.length) {
-    throw new Error(
-      `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
-    );
+    }
+    buf = Buffer.from(await blob.arrayBuffer());
+    return buf;
+  };
+  const outOfTime = () =>
+    args.deadlineAt !== null && Date.now() >= args.deadlineAt;
+
+  // 1. Extraction — skipped entirely when a checkpoint sidecar exists.
+  let sidecar = await readSidecar(storagePath);
+  if (!sidecar) {
+    const extracted = await extractPdfText(await getBuffer(), {
+      force: args.force,
+      onPhaseStart: async (phase) => {
+        if (phase === "claude-ocr") {
+          await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
+        }
+      },
+    });
+    sidecar = {
+      text: extracted.text,
+      pageCount: extracted.pageCount,
+      source: extracted.source,
+    };
+    await writeSidecar(storagePath, sidecar);
+    await supabase
+      .from("kb_documents")
+      .update({
+        status: "embedding",
+        page_count: sidecar.pageCount,
+        extraction_source: sidecar.source,
+        progress: 30,
+        progress_label: `Chunker (${sidecar.pageCount} sider)`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", documentId);
   }
 
-  const rows = chunks.map((chunkTextValue, i) => ({
-    document_id: documentId,
-    machine_id: machineId,
-    ordinal: i,
-    page_from: null,
-    page_to: null,
-    text: chunkTextValue,
-    embedding: embeddings[i],
-    embedding_model: VOYAGE_MODEL,
-  }));
+  // 2. Chunking is deterministic, so a continuation recomputes the same
+  // list and resumes at the first ordinal missing from kb_chunks. Figure
+  // caption chunks don't interfere: they carry asset_id and live at
+  // ordinal ≥ 1e6.
+  const chunks = chunkText(sidecar.text);
+  const { data: lastChunk, error: lastErr } = await supabase
+    .from("kb_chunks")
+    .select("ordinal")
+    .eq("document_id", documentId)
+    .is("asset_id", null)
+    .order("ordinal", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastErr) throw new Error(`resume lookup failed: ${lastErr.message}`);
+  let next = lastChunk ? (lastChunk as { ordinal: number }).ordinal + 1 : 0;
 
-  await writeProgress(documentId, 95, "Inserting chunks");
-  const BATCH = 50;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const slice = rows.slice(i, i + BATCH);
-    const { error } = await supabase.from("kb_chunks").insert(slice);
-    if (error) {
-      throw new Error(
-        `kb_chunks insert failed at offset ${i}: ${error.message}`,
+  // 3. Embed the remaining chunks batch-by-batch, persisting each batch
+  // before starting the next. Deadline is checked between batches — the
+  // slots where stopping loses no work.
+  if (next < chunks.length) {
+    await writeProgress(
+      documentId,
+      embedProgressPct(next, chunks.length),
+      `Embedder ${next}/${chunks.length}`,
+    );
+    for (const batch of planEmbedBatches(chunks.slice(next))) {
+      if (outOfTime()) return { done: false, documentId };
+      const embeddings = await embedDocumentBatch(batch);
+      if (embeddings.length !== batch.length) {
+        throw new Error(
+          `embedding count mismatch (${embeddings.length} vs ${batch.length})`,
+        );
+      }
+      const rows = batch.map((text, i) => ({
+        document_id: documentId,
+        machine_id: machineId,
+        ordinal: next + i,
+        page_from: null,
+        page_to: null,
+        text,
+        embedding: embeddings[i],
+        embedding_model: VOYAGE_MODEL,
+      }));
+      const INSERT_BATCH = 50;
+      for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+        const slice = rows.slice(i, i + INSERT_BATCH);
+        const { error } = await supabase.from("kb_chunks").insert(slice);
+        if (error) {
+          throw new Error(
+            `kb_chunks insert failed at ordinal ${next + i}: ${error.message}`,
+          );
+        }
+      }
+      next += batch.length;
+      await writeProgress(
+        documentId,
+        embedProgressPct(next, chunks.length),
+        `Embedder ${next}/${chunks.length}`,
       );
     }
   }
 
-  // Figure extraction is best-effort and runs after text chunks are
+  // 4. Figure extraction is best-effort and runs after text chunks are
   // persisted so a failure here can't strand the document in an
-  // unsearchable state. The function logs and returns 0 on any error.
+  // unsearchable state. Wipe-then-attach keeps it idempotent if a prior
+  // invocation died between attaching figures and flipping to ready.
+  if (outOfTime()) return { done: false, documentId };
   await writeProgress(documentId, 97, "Finder figurer…");
+  await wipePdfFigures(documentId);
   await attachPdfFigures({
     documentId,
     machineId,
-    pdfBuffer: fileBuffer,
+    pdfBuffer: await getBuffer(),
     pdfStoragePath: storagePath,
   });
 
@@ -394,29 +529,29 @@ async function runPdfPipeline(args: {
     })
     .eq("id", documentId);
 
+  await deleteSidecar(storagePath);
   await regenerateSuggestedQuestionsSafe(machineId);
 
   return {
+    done: true,
     documentId,
     chunkCount: chunks.length,
-    pageCount: extracted.pageCount,
+    pageCount: sidecar.pageCount,
     byteSize,
     storagePath,
-    extractionSource: extracted.source,
+    extractionSource: sidecar.source,
   };
 }
 
-// Races the pipeline against the budget timer and, on any non-timeout
-// failure, marks the row failed so the operator sees what happened
-// instead of a perpetual "extracting" badge. Storage object stays so
-// they can retry via the reprocess button. The timeout path already
-// wrote a Danish-language label in withIngestBudget.
-async function finalizePdfIngest(
+// On any non-timeout failure, marks the row failed so the operator sees
+// what happened instead of a perpetual "extracting" badge. Storage
+// object (and the extraction sidecar) stay so a retry can resume.
+async function markFailedOnError<T>(
   documentId: string,
-  work: Promise<IngestPdfResult>,
-): Promise<IngestPdfResult> {
+  work: Promise<T>,
+): Promise<T> {
   try {
-    return await withIngestBudget(documentId, work);
+    return await work;
   } catch (err) {
     if (!(err instanceof IngestTimeoutError)) {
       await getSupabaseServerClient()
@@ -436,6 +571,8 @@ async function finalizePdfIngest(
 
 // Buffer-based entry point. Used by the ingest CLI (scripts/ingest.ts),
 // which has the bytes in hand and uploads them as part of ingestion.
+// Runs with no deadline (a local process has no platform time limit),
+// so the outcome is always done:true.
 export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult> {
   const supabase = getSupabaseServerClient();
 
@@ -464,7 +601,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
     createdBy: input.createdBy,
   });
 
-  return finalizePdfIngest(
+  const outcome = await markFailedOnError(
     documentId,
     runPdfPipeline({
       documentId,
@@ -472,8 +609,13 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
       storagePath,
       fileBuffer: input.fileBuffer,
       byteSize,
+      deadlineAt: null,
     }),
   );
+  if (!outcome.done) {
+    throw new Error("ingestPdf: pipeline yielded without a deadline");
+  }
+  return outcome;
 }
 
 export type IngestPdfFromStorageInput = {
@@ -491,47 +633,69 @@ export type IngestPdfFromStorageInput = {
 };
 
 // Storage-based entry point. The admin UI uploads the PDF directly to
-// Storage via a signed URL, then calls this to run the pipeline. We
-// download the bytes once (for extraction + figure rendering) rather
-// than receiving them through the function request body.
+// Storage via a signed URL, then calls this to run the pipeline. Called
+// repeatedly for big documents: the first call creates the kb_documents
+// row and starts the pipeline; when the soft budget runs out it returns
+// { done: false } and the client calls again, which lands in the resume
+// branch (row already exists) and continues from the checkpoint.
 export async function ingestPdfFromStorage(
   input: IngestPdfFromStorageInput,
-): Promise<IngestPdfResult> {
+): Promise<IngestPdfOutcome> {
   const supabase = getSupabaseServerClient();
+  const deadlineAt = Date.now() + INGEST_SOFT_BUDGET_MS;
 
   await ensureMachineKb(input.machineId, input.accountId);
 
-  const { data: blob, error: dlErr } = await supabase.storage
-    .from("kb-documents")
-    .download(input.storagePath);
-  if (dlErr || !blob) {
-    throw new Error(
-      `download from Storage failed: ${dlErr?.message ?? "object missing"}`,
-    );
-  }
-  const fileBuffer = Buffer.from(await blob.arrayBuffer());
-  const byteSize = fileBuffer.byteLength;
+  // Resume detection: a row for this documentId means an earlier
+  // invocation already started the pipeline.
+  const { data: existing, error: exErr } = await supabase
+    .from("kb_documents")
+    .select("id, byte_size")
+    .eq("id", input.documentId)
+    .maybeSingle();
+  if (exErr) throw new Error(`ingest lookup failed: ${exErr.message}`);
 
-  await insertPdfDocRow({
-    documentId: input.documentId,
-    machineId: input.machineId,
-    storagePath: input.storagePath,
-    byteSize,
-    fileName: input.fileName,
-    summary: input.summary,
-    folderPath: input.folderPath,
-    createdBy: input.createdBy,
-  });
+  let byteSize: number;
+  let fileBuffer: Buffer | undefined;
+  if (existing) {
+    byteSize = (existing as { byte_size: number | null }).byte_size ?? 0;
+  } else {
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from("kb-documents")
+      .download(input.storagePath);
+    if (dlErr || !blob) {
+      throw new Error(
+        `download from Storage failed: ${dlErr?.message ?? "object missing"}`,
+      );
+    }
+    fileBuffer = Buffer.from(await blob.arrayBuffer());
+    byteSize = fileBuffer.byteLength;
 
-  return finalizePdfIngest(
-    input.documentId,
-    runPdfPipeline({
+    await insertPdfDocRow({
       documentId: input.documentId,
       machineId: input.machineId,
       storagePath: input.storagePath,
-      fileBuffer,
       byteSize,
-    }),
+      fileName: input.fileName,
+      summary: input.summary,
+      folderPath: input.folderPath,
+      createdBy: input.createdBy,
+    });
+  }
+
+  return markFailedOnError(
+    input.documentId,
+    withIngestBudget(
+      input.documentId,
+      runPdfPipeline({
+        documentId: input.documentId,
+        machineId: input.machineId,
+        storagePath: input.storagePath,
+        fileBuffer,
+        byteSize,
+        deadlineAt,
+      }),
+    ),
   );
 }
 
@@ -542,20 +706,30 @@ export type ReprocessPdfResult = {
   extractionSource: PdfExtractionSource;
 };
 
-// Re-runs extraction + embedding for an existing document. Downloads
-// the original PDF from Storage, wipes its chunks, re-extracts (with
-// optional force="ocr" override), re-chunks and re-embeds. The
+export type ReprocessPdfOutcome =
+  | ({ done: true } & ReprocessPdfResult)
+  | { done: false; documentId: string };
+
+// Re-runs extraction + embedding for an existing document. Wipes its
+// chunks, re-extracts (with optional force="ocr" override), re-chunks
+// and re-embeds via the same resumable pipeline as fresh ingests. The
 // kb_documents row stays — only its chunks, page_count, and
 // extraction_source are touched.
+//
+// resume: true skips the wipe and continues a reprocess that returned
+// { done: false } — only honored while the doc is mid-embedding with a
+// checkpoint sidecar present; anything else falls back to a full rerun.
 export async function reprocessPdf(args: {
   documentId: string;
   force?: PdfExtractionForce;
-}): Promise<ReprocessPdfResult> {
+  resume?: boolean;
+}): Promise<ReprocessPdfOutcome> {
   const supabase = getSupabaseServerClient();
+  const deadlineAt = Date.now() + INGEST_SOFT_BUDGET_MS;
 
   const { data: doc, error: docErr } = await supabase
     .from("kb_documents")
-    .select("id, machine_id, storage_path")
+    .select("id, machine_id, storage_path, status")
     .eq("id", args.documentId)
     .maybeSingle();
   if (docErr) throw new Error(`reprocess lookup failed: ${docErr.message}`);
@@ -564,155 +738,70 @@ export async function reprocessPdf(args: {
     id: string;
     machine_id: string;
     storage_path: string | null;
+    status: string;
   };
   if (!row.storage_path) {
     throw new Error("Document has no original file in Storage");
   }
 
-  const { data: blob, error: dlErr } = await supabase.storage
-    .from("kb-documents")
-    .download(row.storage_path);
-  if (dlErr || !blob) {
-    throw new Error(
-      `download from Storage failed: ${dlErr?.message ?? "unknown"}`,
-    );
-  }
-  const buf = Buffer.from(await blob.arrayBuffer());
+  const resuming =
+    args.resume === true &&
+    row.status === "embedding" &&
+    (await readSidecar(row.storage_path)) !== null;
 
-  await supabase
-    .from("kb_documents")
-    .update({
-      status: "extracting",
-      progress: 5,
-      progress_label: "Reading PDF",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", row.id);
-
-  // Drop the old chunks before re-inserting. ON DELETE CASCADE on
-  // kb_chunks handles document deletion, but for re-embed we delete
-  // explicitly since the document row is being kept. Figure assets are
-  // wiped too so the upcoming attachPdfFigures pass writes a fresh set
-  // (their caption chunks cascade away with them).
-  const { error: delErr } = await supabase
-    .from("kb_chunks")
-    .delete()
-    .eq("document_id", row.id);
-  if (delErr) {
-    throw new Error(`wipe old chunks failed: ${delErr.message}`);
-  }
-  await wipePdfFigures(row.id);
-
-  const work = (async (): Promise<ReprocessPdfResult> => {
-    const extracted = await extractPdfText(buf, {
-      force: args.force,
-      onPhaseStart: async (phase) => {
-        if (phase === "claude-ocr") {
-          await writeProgress(row.id, 10, "Running OCR (Claude vision)…");
-        }
-      },
-    });
+  if (!resuming) {
+    // Fresh reprocess: clear every checkpoint so the pipeline starts
+    // from extraction. Stale sidecar first — it would otherwise short-
+    // circuit the forced re-extraction.
+    await deleteSidecar(row.storage_path);
 
     await supabase
       .from("kb_documents")
       .update({
-        status: "embedding",
-        progress: 30,
-        progress_label: `Chunker (${extracted.pageCount} sider)`,
+        status: "extracting",
+        progress: 5,
+        progress_label: "Reading PDF",
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
 
-    const chunks = chunkText(extracted.text);
-    await writeProgress(
+    // Drop the old chunks before re-inserting. ON DELETE CASCADE on
+    // kb_chunks handles document deletion, but for re-embed we delete
+    // explicitly since the document row is being kept. Figure assets are
+    // wiped too so the upcoming attachPdfFigures pass writes a fresh set
+    // (their caption chunks cascade away with them).
+    const { error: delErr } = await supabase
+      .from("kb_chunks")
+      .delete()
+      .eq("document_id", row.id);
+    if (delErr) {
+      throw new Error(`wipe old chunks failed: ${delErr.message}`);
+    }
+    await wipePdfFigures(row.id);
+  }
+
+  const outcome = await markFailedOnError(
+    row.id,
+    withIngestBudget(
       row.id,
-      40,
-      `Embedder (${chunks.length} chunks)`,
-    );
-    const embeddings = await embedDocuments(chunks, {
-      onBatchProgress: async (done, total) => {
-        await writeProgress(
-          row.id,
-          embedProgressPct(done, total),
-          `Embedder ${done}/${total}`,
-        );
-      },
-    });
-    if (embeddings.length !== chunks.length) {
-      throw new Error(
-        `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
-      );
-    }
-
-    const rows = chunks.map((text, i) => ({
-      document_id: row.id,
-      machine_id: row.machine_id,
-      ordinal: i,
-      page_from: null,
-      page_to: null,
-      text,
-      embedding: embeddings[i],
-      embedding_model: VOYAGE_MODEL,
-    }));
-    await writeProgress(row.id, 95, "Inserting chunks");
-    const BATCH = 50;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const slice = rows.slice(i, i + BATCH);
-      const { error } = await supabase.from("kb_chunks").insert(slice);
-      if (error) {
-        throw new Error(
-          `kb_chunks insert failed at offset ${i}: ${error.message}`,
-        );
-      }
-    }
-
-    await writeProgress(row.id, 97, "Finder figurer…");
-    await attachPdfFigures({
-      documentId: row.id,
-      machineId: row.machine_id,
-      pdfBuffer: buf,
-      pdfStoragePath: row.storage_path!,
-    });
-
-    await supabase
-      .from("kb_documents")
-      .update({
-        status: "ready",
-        page_count: extracted.pageCount,
-        extraction_source: extracted.source,
-        progress: null,
-        progress_label: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
-
-    await regenerateSuggestedQuestionsSafe(row.machine_id);
-
-    return {
-      documentId: row.id,
-      chunkCount: chunks.length,
-      pageCount: extracted.pageCount,
-      extractionSource: extracted.source,
-    };
-  })();
-
-  try {
-    return await withIngestBudget(row.id, work);
-  } catch (err) {
-    if (!(err instanceof IngestTimeoutError)) {
-      await supabase
-        .from("kb_documents")
-        .update({
-          status: "failed",
-          progress: null,
-          progress_label:
-            err instanceof Error ? err.message.slice(0, 200) : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
-    }
-    throw err;
-  }
+      runPdfPipeline({
+        documentId: row.id,
+        machineId: row.machine_id,
+        storagePath: row.storage_path,
+        byteSize: 0, // unused by the reprocess result shape
+        deadlineAt,
+        force: args.force,
+      }),
+    ),
+  );
+  if (!outcome.done) return outcome;
+  return {
+    done: true,
+    documentId: outcome.documentId,
+    chunkCount: outcome.chunkCount,
+    pageCount: outcome.pageCount,
+    extractionSource: outcome.extractionSource,
+  };
 }
 
 // Wipes existing kb_documents (and via cascade, kb_chunks) for a machine,

@@ -1,10 +1,14 @@
 // POST /api/admin/ingest — finalize a PDF that the client already
 // uploaded directly to Storage via /api/admin/ingest/sign. The request
 // body is small JSON (no file bytes) so we never hit Vercel's ~4.5 MB
-// function body limit. Synchronous: returns once the document has
-// transitioned to status='ready' (or failed). The handler downloads the
-// stored PDF and runs the full pipeline from src/lib/ingestion.ts, so a
-// heavy PDF can take 30+ seconds — the UI shows a spinner.
+// function body limit.
+//
+// Big documents span multiple calls: the pipeline checkpoints its work
+// and, when the invocation's soft time budget runs out, responds with
+// 202 { done: false }. The client immediately POSTs the same body again
+// and the pipeline resumes from the checkpoint (the existing
+// kb_documents row is the resume signal). Small documents complete in
+// one call and get { done: true, ...result }.
 
 import {
   assertMachineAccess,
@@ -80,7 +84,7 @@ export async function POST(req: Request) {
       : null;
 
   try {
-    const result = await ingestPdfFromStorage({
+    const outcome = await ingestPdfFromStorage({
       machineId,
       accountId,
       documentId,
@@ -90,7 +94,10 @@ export async function POST(req: Request) {
       folderPath,
       createdBy: admin.email,
     });
-    return Response.json(result);
+    if (!outcome.done) {
+      return Response.json(outcome, { status: 202 });
+    }
+    return Response.json(outcome);
   } catch (err) {
     if (err instanceof IngestTimeoutError) {
       // The doc row is already flipped to 'failed' with the same label
