@@ -24,7 +24,6 @@ import {
   createPortalUser,
   getCountries,
   getRoles,
-  getSubscriptionTypes,
   getTimeZones,
   registerAccount,
   type PortalCountry,
@@ -51,10 +50,6 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const [accountName, setAccountName] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
-  const [subscriptionTypes, setSubscriptionTypes] = useState<
-    PortalOption[] | null
-  >(null);
-  const [subscriptionTypeId, setSubscriptionTypeId] = useState("");
 
   // Step 2 — factory.
   const [factoryName, setFactoryName] = useState("");
@@ -74,14 +69,6 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
 
   // Lazy lookups per step, loaded once.
   useEffect(() => {
-    if (step === 1 && subscriptionTypes === null) {
-      getSubscriptionTypes()
-        .then(setSubscriptionTypes)
-        .catch((err: unknown) => {
-          setSubscriptionTypes([]);
-          setError(err instanceof Error ? err.message : t("lookupFailed"));
-        });
-    }
     if (step === 2 && countries === null) {
       getCountries()
         .then(setCountries)
@@ -98,7 +85,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
           setError(err instanceof Error ? err.message : t("lookupFailed"));
         });
     }
-  }, [step, subscriptionTypes, countries, roles, t]);
+  }, [step, countries, roles, t]);
 
   // Timezones depend on the chosen country.
   useEffect(() => {
@@ -162,7 +149,6 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
         accountName: name,
         adminName: adminName.trim(),
         email: adminEmail.trim(),
-        subscriptionTypeId,
       });
       if (!id) {
         // The portal response didn't carry the new id — recover it by
@@ -238,8 +224,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const canSubmitAccount =
     accountName.trim().length > 0 &&
     adminName.trim().length > 0 &&
-    adminEmail.includes("@") &&
-    subscriptionTypeId.length > 0;
+    adminEmail.includes("@");
   const canSubmitFactory =
     factoryName.trim().length > 0 && countryId.length > 0 && timeZoneId.length > 0;
   const canSubmitMachine = machineName.trim().length > 0;
@@ -306,19 +291,6 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
               value={adminEmail}
               onChange={(e) => setAdminEmail(e.target.value)}
               disabled={submitting}
-            />
-            <Select
-              label={t("subscriptionLabel")}
-              placeholder={
-                subscriptionTypes === null ? t("loadingLookup") : undefined
-              }
-              value={subscriptionTypeId}
-              onValueChange={setSubscriptionTypeId}
-              disabled={submitting || subscriptionTypes === null}
-              items={(subscriptionTypes ?? []).map((s) => ({
-                value: s.id,
-                label: s.name,
-              }))}
             />
           </div>
         )}

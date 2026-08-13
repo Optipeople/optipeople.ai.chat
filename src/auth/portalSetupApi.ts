@@ -92,12 +92,24 @@ function toOptions(rows: RawNamed[] | null): PortalOption[] {
     .filter((o): o is PortalOption => o !== null);
 }
 
-export async function getSubscriptionTypes(): Promise<PortalOption[]> {
+async function getSubscriptionTypes(): Promise<PortalOption[]> {
   const rows = await get<RawNamed[]>(
     "AccountSubscriptionType/GetAll",
     "Failed to fetch subscription types",
   );
   return toOptions(rows);
+}
+
+// Every account is created on the "Normal" subscription — the wizard no
+// longer asks. Resolved by name at submit time because the portal's ids
+// aren't documented as stable across environments.
+async function getNormalSubscriptionTypeId(): Promise<string> {
+  const types = await getSubscriptionTypes();
+  const normal = types.find((t) => t.name.trim().toLowerCase() === "normal");
+  if (!normal) {
+    throw new Error('The portal has no "Normal" subscription type');
+  }
+  return normal.id;
 }
 
 export async function getRoles(): Promise<PortalOption[]> {
@@ -185,7 +197,6 @@ export type RegisterAccountInput = {
   accountName: string;
   adminName: string;
   email: string;
-  subscriptionTypeId: string;
 };
 
 const GUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -227,13 +238,14 @@ function extractAccountId(data: unknown): string | null {
 export async function registerAccount(
   input: RegisterAccountInput,
 ): Promise<string | null> {
+  const subscriptionTypeId = await getNormalSubscriptionTypeId();
   const data = await post<unknown>(
     "Account/RegisterAccount",
     {
       accountName: input.accountName,
       adminName: input.adminName,
       email: input.email,
-      subscriptionTypeId: input.subscriptionTypeId,
+      subscriptionTypeId,
       useDefaultSystemEmail: true,
     },
     "Failed to create account",

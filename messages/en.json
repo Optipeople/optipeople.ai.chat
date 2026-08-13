@@ -123,7 +123,6 @@
     "adminNameLabel": "Administrator name",
     "adminEmailLabel": "Administrator email",
     "adminEmailHelp": "Receives the invitation email",
-    "subscriptionLabel": "Subscription",
     "createAccount": "Create account",
     "accountCreatedButUnresolved": "The account was created in Optipeople, but its id could not be resolved, so the remaining steps can't run here. Finish the setup in the Optipeople portal.",
     "step2Heading": "Create factory",

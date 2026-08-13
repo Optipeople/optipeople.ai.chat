@@ -123,7 +123,6 @@
     "adminNameLabel": "Administratorens navn",
     "adminEmailLabel": "Administratorens email",
     "adminEmailHelp": "Modtager invitationsmailen",
-    "subscriptionLabel": "Abonnement",
     "createAccount": "Opret konto",
     "accountCreatedButUnresolved": "Kontoen blev oprettet i Optipeople, men dens id kunne ikke findes, så de resterende trin kan ikke køres her. Færdiggør opsætningen i Optipeople-portalen.",
     "step2Heading": "Opret fabrik",
