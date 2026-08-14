@@ -10,6 +10,11 @@ import { cn } from "@/lib/utils";
  *                 active to dark orange (#f98700). Default.
  *  - secondary:   white fill, light grey border.
  *  - destructive: red fill, hovers to darker border.
+ *  - ghost:       hairline-bordered surface pill. Codifies the toolbar
+ *                 button recipe that already shipped on the admin
+ *                 documents tree (not a new design). Pair with
+ *                 size="pill".
+ *  - ghostDanger: the red counterpart of ghost, from the same toolbar.
  */
 const buttonVariants = cva(
   [
@@ -44,6 +49,16 @@ const buttonVariants = cva(
           "disabled:bg-none disabled:bg-[var(--ds-grey-light-02)] disabled:border-[var(--ds-grey-light-02)]",
           "disabled:text-[var(--ds-text-disabled)]",
         ].join(" "),
+        ghost: [
+          "gap-1 rounded-[4px] border font-medium normal-case leading-normal",
+          "border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-foreground)]",
+          "hover:bg-[var(--color-muted)] disabled:opacity-50",
+        ].join(" "),
+        ghostDanger: [
+          "gap-1 rounded-[4px] border font-medium normal-case leading-normal",
+          "border-[var(--ds-red)]/30 bg-[var(--ds-red-bg)] text-[var(--ds-red)]",
+          "hover:bg-[var(--ds-red)]/10 disabled:opacity-50",
+        ].join(" "),
         destructive: [
           "bg-[linear-gradient(180deg,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0)_100%),linear-gradient(90deg,var(--ds-red)_0%,var(--ds-red)_100%)]",
           "border-[var(--ds-red-dark)] text-[var(--ds-grey-light-01)]",
@@ -62,6 +77,8 @@ const buttonVariants = cva(
         // Figma "push-button" — 28px tall, 1px border. Matches the
         // node at design/E9Dzu5wW6UovSB6UI1Z3N6?node-id=30-1338.
         compact: "h-[28px] border px-[18px] py-[7px] text-[14px]",
+        // Toolbar pill sizing used with the ghost variants.
+        pill: "px-2.5 py-1 text-[12px]",
       },
     },
     defaultVariants: { variant: "primary", size: "default" },

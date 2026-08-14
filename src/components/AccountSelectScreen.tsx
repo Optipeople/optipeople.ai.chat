@@ -61,7 +61,7 @@ export function AccountSelectScreen() {
 
           {accountsError && (
             <div className="mb-4 rounded-[4px] border border-[var(--ds-grey-light-02)] bg-[var(--color-muted)] p-4">
-              <p className="mb-3 text-[14px] text-[#b00020]">{accountsError}</p>
+              <p className="mb-3 text-[14px] text-[var(--color-error)]">{accountsError}</p>
               <Button
                 type="button"
                 onClick={() => void reloadAccounts()}

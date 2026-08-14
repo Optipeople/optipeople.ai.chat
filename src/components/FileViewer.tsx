@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,6 +14,7 @@ import { ExternalLink, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { Button, buttonClasses } from "@/components/ui/button";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/utils";
 
 // Centralized file viewer for kb_documents and kb_assets. Renders PDFs in
@@ -188,6 +190,8 @@ function ViewerModal({
 }) {
   const t = useTranslations("viewer");
   const tCommon = useTranslations("common");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true);
   const title =
     state.phase === "ready"
       ? state.file.title
@@ -200,6 +204,7 @@ function ViewerModal({
       : null;
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex flex-col bg-black/75 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"

@@ -16,6 +16,30 @@ export type LoginResponse = {
   expires_in?: number;
 };
 
+// Thrown when no session exists or the refresh token is dead. Callers
+// must treat this as "log in again", never as a retryable failure.
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Session expired");
+    this.name = "SessionExpiredError";
+  }
+}
+
+export type LoginErrorCode = "invalidCredentials" | "loginFailed" | "noToken";
+
+// Login failures carry a code so the UI can render a localized message
+// instead of whatever English string the backend produced.
+export class LoginError extends Error {
+  code: LoginErrorCode;
+  status?: number;
+  constructor(code: LoginErrorCode, status?: number) {
+    super(`Login failed: ${code}${status ? ` (${status})` : ""}`);
+    this.name = "LoginError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 async function postLogin(body: Record<string, string>): Promise<Response> {
   return fetch(LOGIN_URL, {
     method: "POST",
@@ -27,6 +51,7 @@ async function postLogin(body: Record<string, string>): Promise<Response> {
 export async function login(
   email: string,
   password: string,
+  remember = true,
 ): Promise<LoginResponse> {
   clearSession();
 
@@ -38,17 +63,20 @@ export async function login(
 
   if (!res.ok) {
     if (res.status === 400 || res.status === 401) {
-      throw new Error("Invalid email or password");
+      throw new LoginError("invalidCredentials", res.status);
     }
-    throw new Error(`Login failed (${res.status})`);
+    throw new LoginError("loginFailed", res.status);
   }
 
   const data = (await res.json()) as LoginResponse;
   if (!data.access_token) {
-    throw new Error("Authentication failed: no access token received");
+    throw new LoginError("noToken");
   }
 
-  saveSession({ ...data, user_name: data.user_name ?? email });
+  saveSession(
+    { ...data, user_name: data.user_name ?? email },
+    { persist: remember },
+  );
   return data;
 }
 
@@ -110,7 +138,7 @@ export async function fetchWithAuth(
   }
 
   const token = getAccessToken();
-  if (!token) throw new Error("Session expired");
+  if (!token) throw new SessionExpiredError();
 
   const res = await fetch(url, withAuthHeader(init, token));
   if (res.status !== 401) return res;
@@ -121,7 +149,7 @@ export async function fetchWithAuth(
     });
   }
   const newToken = await refreshInFlight;
-  if (!newToken) throw new Error("Session expired");
+  if (!newToken) throw new SessionExpiredError();
 
   return fetch(url, withAuthHeader(init, newToken));
 }

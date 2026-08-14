@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { SectionExpander } from "@/components/ui/section-expander";
 import { MachineDetail, MachineSettings } from "@/components/admin/MachineDetail";
@@ -23,43 +23,68 @@ const SECTIONS: readonly SectionKey[] = [
 //
 // `?section=...` (set by the legacy sub-route redirects and by deep
 // links from other pages) opens that section and scrolls it into view.
+// Toggling keeps the URL in sync via router.replace so the open section
+// survives refresh/share.
 export function MachineSections({ machineId }: { machineId: string }) {
   const tn = useTranslations("admin.nav.crumbs");
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const raw = searchParams?.get("section") ?? null;
   const target = (SECTIONS as readonly string[]).includes(raw ?? "")
     ? (raw as SectionKey)
     : null;
 
-  const [knowledgeOpen, setKnowledgeOpen] = useState(target === "knowledge");
-  const [settingsOpen, setSettingsOpen] = useState(
-    target === null || target === "settings",
-  );
-  const [conversationsOpen, setConversationsOpen] = useState(
-    target === "conversations",
-  );
-  const [escalationsOpen, setEscalationsOpen] = useState(
-    target === "escalations",
-  );
+  const [open, setOpen] = useState<Record<SectionKey, boolean>>(() => ({
+    knowledge: target === "knowledge",
+    settings: target === null || target === "settings",
+    conversations: target === "conversations",
+    escalations: target === "escalations",
+  }));
 
   const knowledgeRef = useRef<HTMLDivElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const conversationsRef = useRef<HTMLDivElement | null>(null);
   const escalationsRef = useRef<HTMLDivElement | null>(null);
+  const refs: Record<
+    SectionKey,
+    React.RefObject<HTMLDivElement | null>
+  > = {
+    knowledge: knowledgeRef,
+    settings: settingsRef,
+    conversations: conversationsRef,
+    escalations: escalationsRef,
+  };
+
+  // Distinguishes ?section= changes issued by our own toggles (no
+  // scroll wanted) from external ones (initial load / in-page links).
+  const selfUpdate = useRef(false);
 
   useEffect(() => {
-    if (!target) return;
-    const el =
-      target === "knowledge"
-        ? knowledgeRef.current
-        : target === "settings"
-          ? settingsRef.current
-          : target === "conversations"
-            ? conversationsRef.current
-            : escalationsRef.current;
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    const self = selfUpdate.current;
+    selfUpdate.current = false;
+    if (!target || self) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpen((o) => (o[target] ? o : { ...o, [target]: true }));
+    refs[target].current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+    // refs is rebuilt each render but its entries are stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
+
+  function toggle(key: SectionKey) {
+    const willOpen = !open[key];
+    setOpen((o) => ({ ...o, [key]: !o[key] }));
+    if (willOpen) {
+      selfUpdate.current = true;
+      router.replace(`${pathname}?section=${key}`, { scroll: false });
+    } else if (target === key) {
+      selfUpdate.current = true;
+      router.replace(pathname, { scroll: false });
+    }
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -69,8 +94,8 @@ export function MachineSections({ machineId }: { machineId: string }) {
         className="scroll-mt-4"
       >
         <SectionExpander
-          expanded={settingsOpen}
-          onToggle={() => setSettingsOpen((v) => !v)}
+          expanded={open.settings}
+          onToggle={() => toggle("settings")}
           keepMounted
           panel={
             <div className="pt-5 sm:pt-6">
@@ -88,8 +113,8 @@ export function MachineSections({ machineId }: { machineId: string }) {
         className="scroll-mt-4"
       >
         <SectionExpander
-          expanded={knowledgeOpen}
-          onToggle={() => setKnowledgeOpen((v) => !v)}
+          expanded={open.knowledge}
+          onToggle={() => toggle("knowledge")}
           keepMounted
           panel={
             <div className="pt-5 sm:pt-6">
@@ -107,12 +132,12 @@ export function MachineSections({ machineId }: { machineId: string }) {
         className="scroll-mt-4"
       >
         <SectionExpander
-          expanded={conversationsOpen}
-          onToggle={() => setConversationsOpen((v) => !v)}
+          expanded={open.conversations}
+          onToggle={() => toggle("conversations")}
           keepMounted
           panel={
             <div className="pt-5 sm:pt-6">
-              <ConversationsList machineId={machineId} embedded />
+              <ConversationsList source={{ kind: "machine", machineId }} embedded />
             </div>
           }
         >
@@ -126,8 +151,8 @@ export function MachineSections({ machineId }: { machineId: string }) {
         className="scroll-mt-4"
       >
         <SectionExpander
-          expanded={escalationsOpen}
-          onToggle={() => setEscalationsOpen((v) => !v)}
+          expanded={open.escalations}
+          onToggle={() => toggle("escalations")}
           keepMounted
           panel={
             <div className="pt-5 sm:pt-6">

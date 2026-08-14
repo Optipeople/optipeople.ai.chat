@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Trash2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
-import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   DataTable,
   DataTableBody,
@@ -16,6 +17,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/components/ui/data-table";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import {
   deleteMcpConfig,
@@ -24,16 +26,19 @@ import {
   startMcpAuth,
   type McpConfigSummary,
 } from "@/admin/mcpAdminApi";
+import { Combobox } from "@/components/admin/AddMachineDialog";
 import { McpStatusBadge } from "@/components/admin/McpStatusBadge";
 
 // Status pill lives in McpStatusBadge so machine pages can render
 // the same chip without duplicating colors.
 
 function CopyButton({ value, label }: { value: string; label?: string }) {
+  const t = useTranslations("admin.mcp");
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="pill"
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(value);
@@ -43,12 +48,11 @@ function CopyButton({ value, label }: { value: string; label?: string }) {
           /* ignore — clipboard may be blocked in some browsers */
         }
       }}
-      className="inline-flex items-center gap-1 text-[12px] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-      aria-label={label ?? "Copy"}
+      aria-label={label ?? t("copy")}
     >
       <Copy className="h-3.5 w-3.5" />
-      {copied ? "Copied" : "Copy"}
-    </button>
+      {copied ? t("copied") : t("copy")}
+    </Button>
   );
 }
 
@@ -62,6 +66,8 @@ export function McpList({
   accountId,
   embedded = false,
 }: { accountId?: string; embedded?: boolean } = {}) {
+  const t = useTranslations("admin.mcp");
+  const tc = useTranslations("common");
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -91,9 +97,9 @@ export function McpList({
           setLoadError(null);
         })
         .catch((err: unknown) => {
-          setLoadError(err instanceof Error ? err.message : "Failed to load");
+          setLoadError(err instanceof Error ? err.message : t("loadFailed"));
         }),
-    [],
+    [t],
   );
 
   useEffect(() => {
@@ -107,12 +113,12 @@ export function McpList({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "Failed to load");
+        setLoadError(err instanceof Error ? err.message : t("loadFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   // Surface callback result, then strip the query params so a refresh
   // doesn't re-show the banner. Disable the set-state-in-effect rule
@@ -122,18 +128,18 @@ export function McpList({
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
     if (callbackStatus === "ok") {
-      setBanner({ kind: "ok", message: "Connected to the MCP server." });
+      setBanner({ kind: "ok", message: t("bannerConnected") });
     } else if (callbackStatus === "error") {
       setBanner({
         kind: "error",
-        message: callbackMessage || "Authorization failed.",
+        message: callbackMessage || t("bannerAuthFailed"),
       });
     }
     /* eslint-enable react-hooks/set-state-in-effect */
     if (callbackStatus) {
       router.replace(pathname);
     }
-  }, [callbackStatus, callbackMessage, router, pathname]);
+  }, [callbackStatus, callbackMessage, router, pathname, t]);
 
   // When scoped to one account, drop everything else. Mutations still
   // hit the full /admin/mcp API (the routes are account-id-keyed under
@@ -156,7 +162,7 @@ export function McpList({
         <div className="min-w-0">
           {embedded ? null : (
             <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-              MCP integration
+              {t("heading")}
             </h1>
           )}
           <p
@@ -166,9 +172,7 @@ export function McpList({
                 : "mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]"
             }
           >
-            {scoped
-              ? "OAuth credentials this account uses to call the Optipeople MCP server. The chat uses these to fetch machine data on the account's behalf."
-              : "Per-account credentials for the Optipeople MCP server. The chat uses these to fetch machine data on behalf of each account."}
+            {scoped ? t("descriptionScoped") : t("descriptionAll")}
           </p>
         </div>
         {hideAddButton ? null : (
@@ -178,7 +182,7 @@ export function McpList({
             onClick={() => setAddOpen(true)}
             className="self-start sm:self-auto"
           >
-            {scoped ? "Connect" : "Add credentials"}
+            {scoped ? t("connect") : t("addCredentials")}
           </Button>
         )}
       </div>
@@ -196,6 +200,7 @@ export function McpList({
             <button
               type="button"
               onClick={() => setBanner(null)}
+              aria-label={tc("close")}
               className="text-current opacity-60 hover:opacity-100"
             >
               ×
@@ -207,7 +212,7 @@ export function McpList({
       {scoped ? null : (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 sm:p-4">
           <div className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            OAuth redirect URI (used during dynamic client registration)
+            {t("redirectUriLabel")}
           </div>
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
             <code className="min-w-0 flex-1 break-all text-[13px] text-[var(--color-foreground)]">
@@ -216,8 +221,7 @@ export function McpList({
             {redirectUri ? <CopyButton value={redirectUri} /> : null}
           </div>
           <p className="mt-2 text-[12px] text-[var(--color-muted-foreground)]">
-            Each registration creates a new entry in the Optipeople portal&apos;s
-            Client Secrets list — no manual registration needed.
+            {t("redirectUriHint")}
           </p>
         </div>
       )}
@@ -246,18 +250,13 @@ export function McpList({
         </div>
       ) : visibleConfigs.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          {scoped ? (
-            <>
-              This account isn&apos;t connected to the MCP server yet. Click{" "}
-              <strong>Connect</strong> to register an OAuth client and run
-              consent.
-            </>
-          ) : (
-            <>
-              No accounts have MCP credentials yet. Click{" "}
-              <strong>Add credentials</strong> to wire one up.
-            </>
-          )}
+          {scoped
+            ? t.rich("emptyScoped", {
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })
+            : t.rich("emptyAll", {
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })}
         </div>
       ) : (
         <McpTable configs={visibleConfigs} onReload={reload} />
@@ -273,6 +272,7 @@ function McpTable({
   configs: McpConfigSummary[];
   onReload: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.mcp");
   return (
     <>
       {/* Mobile cards */}
@@ -285,12 +285,12 @@ function McpTable({
       <div className="hidden overflow-x-auto sm:block">
         <DataTable className="min-w-[640px]">
           <DataTableHead>
-            <DataTableHeader>Account / label</DataTableHeader>
-            <DataTableHeader>Server</DataTableHeader>
-            <DataTableHeader>Status</DataTableHeader>
-            <DataTableHeader>Token expires</DataTableHeader>
+            <DataTableHeader>{t("colAccount")}</DataTableHeader>
+            <DataTableHeader>{t("colServer")}</DataTableHeader>
+            <DataTableHeader>{t("colStatus")}</DataTableHeader>
+            <DataTableHeader>{t("colTokenExpires")}</DataTableHeader>
             <DataTableHeader align="right" className="w-px">
-              Actions
+              {t("colActions")}
             </DataTableHeader>
           </DataTableHead>
           <DataTableBody>
@@ -311,6 +311,8 @@ function McpCard({
   config: McpConfigSummary;
   onReload: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.mcp");
+  const confirm = useConfirm();
   const [connecting, setConnecting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -322,21 +324,28 @@ function McpCard({
       const url = await startMcpAuth(config.accountId);
       window.location.href = url;
     } catch (err) {
-      setRowError(err instanceof Error ? err.message : "Failed to start auth");
+      setRowError(err instanceof Error ? err.message : t("authStartFailed"));
       setConnecting(false);
     }
   }
 
   async function disconnect() {
-    if (!confirm(`Remove MCP credentials for ${config.label ?? config.accountId}?`))
-      return;
+    const ok = await confirm({
+      title: t("disconnectConfirmTitle", {
+        name: config.label ?? config.accountId,
+      }),
+      description: t("disconnectConfirmBody"),
+      confirmLabel: t("disconnectConfirmLabel"),
+      danger: true,
+    });
+    if (!ok) return;
     setRowError(null);
     setDeleting(true);
     try {
       await deleteMcpConfig(config.accountId);
       await onReload();
     } catch (err) {
-      setRowError(err instanceof Error ? err.message : "Failed to delete");
+      setRowError(err instanceof Error ? err.message : t("disconnectFailed"));
       setDeleting(false);
     }
   }
@@ -367,20 +376,20 @@ function McpCard({
         </p>
       )}
       <p className="text-[12px] text-[var(--color-muted-foreground)]">
-        Token expires: {tokenExpiry}
+        {t("tokenExpires", { date: tokenExpiry })}
       </p>
       <div className="flex items-center justify-end gap-2">
         <Button size="sm" onClick={startAuth} disabled={connecting || deleting}>
           {connecting ? (
             <Spinner className="h-3.5 w-3.5" />
           ) : config.status === "authorized" ? (
-            "Reauthorize"
+            t("reauthorize")
           ) : (
-            "Connect"
+            t("connect")
           )}
         </Button>
         <Tooltip
-          content="Disconnect"
+          content={t("disconnect")}
           side="top"
           disabled={connecting || deleting}
         >
@@ -389,7 +398,7 @@ function McpCard({
             variant="destructive"
             onClick={disconnect}
             disabled={connecting || deleting}
-            aria-label="Disconnect"
+            aria-label={t("disconnect")}
           >
             {deleting ? (
               <Spinner className="h-3.5 w-3.5" />
@@ -413,6 +422,8 @@ function McpRow({
   config: McpConfigSummary;
   onReload: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.mcp");
+  const confirm = useConfirm();
   const [connecting, setConnecting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -426,21 +437,28 @@ function McpRow({
       // callback when the admin approves.
       window.location.href = url;
     } catch (err) {
-      setRowError(err instanceof Error ? err.message : "Failed to start auth");
+      setRowError(err instanceof Error ? err.message : t("authStartFailed"));
       setConnecting(false);
     }
   }
 
   async function disconnect() {
-    if (!confirm(`Remove MCP credentials for ${config.label ?? config.accountId}?`))
-      return;
+    const ok = await confirm({
+      title: t("disconnectConfirmTitle", {
+        name: config.label ?? config.accountId,
+      }),
+      description: t("disconnectConfirmBody"),
+      confirmLabel: t("disconnectConfirmLabel"),
+      danger: true,
+    });
+    if (!ok) return;
     setRowError(null);
     setDeleting(true);
     try {
       await deleteMcpConfig(config.accountId);
       await onReload();
     } catch (err) {
-      setRowError(err instanceof Error ? err.message : "Failed to delete");
+      setRowError(err instanceof Error ? err.message : t("disconnectFailed"));
       setDeleting(false);
     }
   }
@@ -477,13 +495,13 @@ function McpRow({
             {connecting ? (
               <Spinner className="h-3.5 w-3.5" />
             ) : config.status === "authorized" ? (
-              "Reauthorize"
+              t("reauthorize")
             ) : (
-              "Connect"
+              t("connect")
             )}
           </Button>
           <Tooltip
-            content="Disconnect"
+            content={t("disconnect")}
             side="top"
             disabled={connecting || deleting}
           >
@@ -492,7 +510,7 @@ function McpRow({
               variant="destructive"
               onClick={disconnect}
               disabled={connecting || deleting}
-              aria-label="Disconnect"
+              aria-label={t("disconnect")}
             >
               {deleting ? (
                 <Spinner className="h-3.5 w-3.5" />
@@ -526,6 +544,8 @@ function AddMcpDialog({
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
+  const t = useTranslations("admin.mcp");
+  const tc = useTranslations("common");
   // Dynamic Client Registration handles client_id / client_secret for
   // us — the admin only picks which Optipeople account these
   // credentials belong to and the MCP server URL.
@@ -536,6 +556,8 @@ function AddMcpDialog({
   const [label, setLabel] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLFormElement>(null);
+  useFocusTrap(panelRef, true);
 
   // Load accounts the SuperAdmin has access to. Reuses the same
   // /api/Account/GetAll call as AddMachineDialog.
@@ -553,13 +575,14 @@ function AddMcpDialog({
       .catch((err: unknown) => {
         if (cancelled) return;
         setAccountsError(
-          err instanceof Error ? err.message : "Failed to load accounts",
+          err instanceof Error ? err.message : t("accountsLoadFailed"),
         );
+        setAccounts([]);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   // Esc to close.
   useEffect(() => {
@@ -587,7 +610,7 @@ function AddMcpDialog({
       });
       await onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to register");
+      setError(err instanceof Error ? err.message : t("registerFailed"));
       setSubmitting(false);
     }
   }
@@ -606,6 +629,7 @@ function AddMcpDialog({
       onMouseDown={onBackdropMouseDown}
     >
       <form
+        ref={panelRef}
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -613,38 +637,51 @@ function AddMcpDialog({
         className="my-auto w-full max-w-[480px] rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-6"
       >
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
-          Register MCP client
+          {t("addHeading")}
         </h2>
         <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)]">
-          Provision a fresh OAuth client at the MCP server for this account.
-          The server issues a Client ID + Secret automatically — same flow
-          ChatGPT uses. After registration, click <strong>Connect</strong> on the row to
-          run the OAuth consent step.
+          {t.rich("addDescription", {
+            strong: (chunks) => <strong>{chunks}</strong>,
+          })}
         </p>
 
         <div className="mt-4 flex flex-col gap-3">
           {lockedAccountId ? null : (
-            <AccountSelect
-              accounts={accounts}
-              error={accountsError}
-              value={accountId}
-              onChange={setAccountId}
-              existingAccountIds={existingAccountIds}
+            <Combobox
+              label={t("accountLabel")}
+              placeholder={
+                accounts === null
+                  ? t("accountsLoading")
+                  : t("accountsPlaceholder")
+              }
+              noMatchLabel={t("noMatch")}
+              clearAriaLabel={t("clearAria")}
+              loading={accounts === null}
+              loadErr={accountsError}
+              options={accounts ?? []}
+              getKey={(a) => a.id}
+              getLabel={(a) => a.name}
+              getSubLabel={(a) =>
+                existingAccountIds.has(a.id) ? t("alreadyConfigured") : null
+              }
+              isDisabledOption={(a) => existingAccountIds.has(a.id)}
+              selected={accounts?.find((a) => a.id === accountId) ?? null}
+              onSelect={(a) => setAccountId(a.id)}
               disabled={submitting}
             />
           )}
           <TextField
-            label="MCP server URL"
+            label={t("serverUrlLabel")}
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
             placeholder="https://mcp.optipeople.dk"
             disabled={submitting}
           />
           <TextField
-            label="Label (optional)"
+            label={t("labelLabel")}
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Shows up in the portal's Client Secrets list"
+            placeholder={t("labelPlaceholder")}
             disabled={submitting}
           />
         </div>
@@ -663,61 +700,13 @@ function AddMcpDialog({
             onClick={onClose}
             disabled={submitting}
           >
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button size="sm" type="submit" disabled={!canSubmit}>
-            {submitting ? <Spinner className="h-3.5 w-3.5" /> : "Register"}
+            {submitting ? <Spinner className="h-3.5 w-3.5" /> : t("register")}
           </Button>
         </div>
       </form>
-    </div>
-  );
-}
-
-function AccountSelect({
-  accounts,
-  error,
-  value,
-  onChange,
-  existingAccountIds,
-  disabled,
-}: {
-  accounts: Account[] | null;
-  error: string | null;
-  value: string;
-  onChange: (id: string) => void;
-  existingAccountIds: Set<string>;
-  disabled: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Select
-        label="Account"
-        value={value}
-        onValueChange={onChange}
-        disabled={disabled || accounts === null}
-      >
-        {accounts === null ? (
-          <option value="">Loading accounts…</option>
-        ) : (
-          <>
-            <option value="">— Select an account —</option>
-            {accounts.map((a) => (
-              <option
-                key={a.id}
-                value={a.id}
-                disabled={existingAccountIds.has(a.id)}
-              >
-                {a.name}
-                {existingAccountIds.has(a.id) ? " (already configured)" : ""}
-              </option>
-            ))}
-          </>
-        )}
-      </Select>
-      {error ? (
-        <span className="text-[12px] text-[var(--ds-red-dark)]">{error}</span>
-      ) : null}
     </div>
   );
 }

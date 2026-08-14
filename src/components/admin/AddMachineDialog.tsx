@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { getAccounts, type Account } from "@/auth/accountsApi";
@@ -37,6 +38,8 @@ export function AddMachineDialog({
   const [displayName, setDisplayName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, true);
 
   // Load accounts once.
   useEffect(() => {
@@ -144,7 +147,10 @@ export function AddMachineDialog({
         if (e.target === e.currentTarget && !submitting) onClose();
       }}
     >
-      <div className="my-auto flex w-full max-w-lg flex-col gap-4 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-xl sm:gap-5 sm:p-6">
+      <div
+        ref={panelRef}
+        className="my-auto flex w-full max-w-lg flex-col gap-4 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-xl sm:gap-5 sm:p-6"
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
@@ -249,9 +255,9 @@ export function AddMachineDialog({
 }
 
 // Generic searchable single-select. Self-contained — handles its own query
-// state, open/close, and outside-click. We use it twice in this dialog so
-// it earns the abstraction; not a general-purpose component.
-function Combobox<T>({
+// state, open/close, and outside-click. Exported for other admin dialogs
+// that need the same account/machine picker (e.g. AddMcpDialog).
+export function Combobox<T>({
   label,
   placeholder,
   loading,

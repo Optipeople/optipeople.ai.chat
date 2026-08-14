@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Field } from "./field";
 import { BoldIcon, LinkIcon, SpellCheckIcon } from "./icons";
@@ -69,6 +70,7 @@ export const TextEditor = React.forwardRef<HTMLTextAreaElement, TextEditorProps>
     },
     ref,
   ) => {
+    const t = useTranslations("textEditor");
     const reactId = React.useId();
     const fieldId = id ?? reactId;
     const isCode = toolbar === "code";
@@ -85,18 +87,18 @@ export const TextEditor = React.forwardRef<HTMLTextAreaElement, TextEditorProps>
         >
           {!isCode && (
             <div className="flex items-center gap-[8px] border-b border-[var(--ds-grey-light-03)] p-[6px]">
-              <ToolbarButton aria-label="Bold" tooltip="Bold">
+              <ToolbarButton aria-label={t("bold")} tooltip={t("bold")}>
                 <BoldIcon size={20} />
               </ToolbarButton>
               <ToolbarButton
-                aria-label="Insert link"
-                tooltip="Insert link"
+                aria-label={t("insertLink")}
+                tooltip={t("insertLink")}
                 className="flex-1 justify-start"
               >
                 <LinkIcon size={16} />
               </ToolbarButton>
               {toolbar === "spellChecker" && (
-                <ToolbarButton aria-label="Spell-check" tooltip="Spell-check">
+                <ToolbarButton aria-label={t("spellCheck")} tooltip={t("spellCheck")}>
                   <SpellCheckIcon size={22} />
                 </ToolbarButton>
               )}

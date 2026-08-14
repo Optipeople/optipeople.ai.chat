@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { XIcon } from "./icons";
 import { Tooltip } from "./tooltip";
@@ -30,6 +31,7 @@ export const PanelHeader = React.forwardRef<HTMLDivElement, PanelHeaderProps>(
     { title, onClose, actions, tone = "normal", className, ...rest },
     ref,
   ) => {
+    const t = useTranslations("common");
     return (
       <div
         ref={ref}
@@ -51,10 +53,10 @@ export const PanelHeader = React.forwardRef<HTMLDivElement, PanelHeaderProps>(
         </h3>
         {actions}
         {onClose && (
-          <Tooltip content="Close" side="bottom">
+          <Tooltip content={t("close")} side="bottom">
             <button
               type="button"
-              aria-label="Close"
+              aria-label={t("close")}
               onClick={onClose}
               className={cn(
                 "inline-flex h-[20px] w-[20px] items-center justify-center rounded-[2px]",

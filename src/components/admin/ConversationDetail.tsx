@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/markdown";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  adminErrorMessage,
   getAdminConversation,
   getAdminMachine,
   type AdminChunkRef,
@@ -32,15 +33,24 @@ const TIME = new Intl.DateTimeFormat("da-DK", {
   timeStyle: "short",
 });
 
+// Where the detail was reached from: a machine's conversation list, or
+// an account's fleet-conversations section. Decides the breadcrumb
+// trail; the drilldown body is identical (fleet rows simply have no
+// machine).
+export type ConversationDetailSource =
+  | { kind: "machine"; machineId: string }
+  | { kind: "fleet"; accountId: string };
+
 export function ConversationDetail({
-  machineId,
+  source,
   conversationId,
 }: {
-  machineId: string;
+  source: ConversationDetailSource;
   conversationId: string;
 }) {
   const t = useTranslations("admin.conversationDetail");
   const tc = useTranslations("common");
+  const tErr = useTranslations("admin.apiErrors");
   const tn = useTranslations("admin.nav.crumbs");
   const tSections = useTranslations("admin.nav.sections");
   const [data, setData] = useState<AdminConversationDetail | null>(null);
@@ -58,7 +68,7 @@ export function ConversationDetail({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : tc("unknownError"));
+        setError(adminErrorMessage(err, tErr) ?? tc("unknownError"));
         setLoading(false);
       });
     return () => {
@@ -67,38 +77,54 @@ export function ConversationDetail({
   }, [conversationId]);
 
   // Lookup just the machine display name for the breadcrumb. Best-effort:
-  // if it 404s/fails, the breadcrumb still has the link working with a
-  // fallback label, so we silently ignore errors.
+  // when the machine has no display name or the fetch fails, fall back to
+  // the id so the crumb never stays stuck on the loading ellipsis.
+  // Fleet detail pages have no machine to name — skipped entirely.
+  const machineId = source.kind === "machine" ? source.machineId : null;
   useEffect(() => {
+    if (!machineId) return;
     let cancelled = false;
     getAdminMachine(machineId)
       .then((d) => {
         if (cancelled) return;
-        setMachineName(d.displayName ?? null);
+        setMachineName(d.displayName ?? machineId);
       })
       .catch(() => {
-        // ignore — breadcrumb falls back to the loading state
+        if (cancelled) return;
+        setMachineName(machineId);
       });
     return () => {
       cancelled = true;
     };
   }, [machineId]);
 
-  const breadcrumbs: Crumb[] = [
-    { label: tSections("machines"), href: "/admin/machines" },
-    {
-      label: machineName ?? tn("loading"),
-      loading: machineName === null,
-      href: `/admin/machines/${encodeURIComponent(machineId)}`,
-    },
-    {
-      label: tn("conversations"),
-      href: `/admin/machines/${encodeURIComponent(machineId)}?section=conversations`,
-    },
-    {
-      label: conversationId.slice(0, 8),
-    },
-  ];
+  const breadcrumbs: Crumb[] =
+    source.kind === "machine"
+      ? [
+          { label: tSections("machines"), href: "/admin/machines" },
+          {
+            label: machineName ?? tn("loading"),
+            loading: machineName === null,
+            href: `/admin/machines/${encodeURIComponent(source.machineId)}`,
+          },
+          {
+            label: tn("conversations"),
+            href: `/admin/machines/${encodeURIComponent(source.machineId)}?section=conversations`,
+          },
+          {
+            label: conversationId.slice(0, 8),
+          },
+        ]
+      : [
+          { label: tSections("accounts"), href: "/admin/accounts" },
+          {
+            label: tn("fleetConversations"),
+            href: `/admin/accounts/${encodeURIComponent(source.accountId)}?section=fleetConversations`,
+          },
+          {
+            label: conversationId.slice(0, 8),
+          },
+        ];
 
   if (loading) {
     return (
@@ -125,6 +151,14 @@ export function ConversationDetail({
   const totalOut = data.messages.reduce((s, m) => s + (m.tokensOut ?? 0), 0);
   const cacheHits = data.messages.filter((m) => m.cacheHit).length;
 
+  // QR-sticker sessions carry a pseudo identity (user_name "QR operator" /
+  // machine display name, user_id "qr:<suffix>") — show a localized label
+  // instead of the raw pseudo-name.
+  const isQrSession =
+    data.entryMode === "qr" ||
+    data.userName === "QR operator" ||
+    (data.userEmail?.startsWith("qr:") ?? false);
+
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
       <Breadcrumbs items={breadcrumbs} />
@@ -137,8 +171,10 @@ export function ConversationDetail({
           <div className="flex flex-wrap gap-x-2 gap-y-0.5">
             <dt className="text-[var(--color-muted-foreground)]">{t("operator")}</dt>
             <dd className="min-w-0 break-words text-[var(--color-foreground)]">
-              {data.userName ?? data.userEmail ?? "—"}
-              {data.userName && data.userEmail && (
+              {isQrSession
+                ? t("qrOperator")
+                : (data.userName ?? data.userEmail ?? "—")}
+              {!isQrSession && data.userName && data.userEmail && (
                 <span className="ml-1 text-[var(--color-muted-foreground)]">
                   ({data.userEmail})
                 </span>
@@ -189,7 +225,12 @@ export function ConversationDetail({
               )}
               <p className="mt-1 text-[12px] text-[var(--color-muted-foreground)]">
                 {DA_DT.format(new Date(data.escalation.createdAt))}
-                {data.escalation.createdBy && t("escalationBy", { by: data.escalation.createdBy })}
+                {data.escalation.createdBy &&
+                  t("escalationBy", {
+                    by: data.escalation.createdBy.startsWith("qr:")
+                      ? t("qrOperator")
+                      : data.escalation.createdBy,
+                  })}
                 {data.escalation.shareToken && (
                   <>
                     {" · "}

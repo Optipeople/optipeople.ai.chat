@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Folder, Sparkles, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -40,6 +41,8 @@ export function AutoOrganizeDialog({
   // suggested moves checked", so we track the negative space — fewer
   // surprises when the proposal set updates.
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, true);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +157,10 @@ export function AutoOrganizeDialog({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-2xl flex-col rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-xl sm:max-h-[calc(100vh-4rem)]">
+      <div
+        ref={panelRef}
+        className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-2xl flex-col rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-xl sm:max-h-[calc(100vh-4rem)]"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--color-hairline)] px-4 py-3 sm:gap-4 sm:px-6 sm:py-5">
           <div className="min-w-0">
             <h2
@@ -300,9 +306,7 @@ export function AutoOrganizeDialog({
         <div className="flex items-center justify-between gap-3 border-t border-[var(--color-hairline)] px-6 py-4">
           <span className="text-[13px] text-[var(--color-muted-foreground)]">
             {moves.length > 0 && phase !== "loading"
-              ? selectedCount === 1
-                ? t("moveSelected", { count: selectedCount })
-                : t("movesSelected", { count: selectedCount })
+              ? t("movesSelected", { count: selectedCount })
               : " "}
           </span>
           <div className="flex gap-2">

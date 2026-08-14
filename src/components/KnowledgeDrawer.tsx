@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
@@ -20,27 +20,39 @@ import { isAdmin, useAuth } from "@/auth/AuthContext";
 import { useFileViewer } from "@/components/FileViewer";
 import { buttonClasses } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/utils";
 import type {
   OperatorDocument,
   OperatorDocumentsResponse,
 } from "@/app/api/machines/[id]/documents/route";
+import type { FleetDocumentsResponse } from "@/app/api/accounts/[id]/documents/route";
 
 // Inline left sidebar listing operator-visible documents for the
-// current machine. Sits next to the chat column (not an overlay) and
-// defaults to open. Collapses to a thin rail with an open button.
-// Rows open the original PDF / image via the FileViewer, which respects
-// both bearer and QR auth modes.
+// current machine — or, in fleet scope, for every machine on the
+// account, grouped per machine. Sits next to the chat column (not an
+// overlay) and defaults to open. Collapses to a thin rail with an open
+// button. Rows open the original PDF / image via the FileViewer, which
+// respects both bearer and QR auth modes (fleet is bearer-only).
 const MOBILE_MQ = "(max-width: 639px)";
 
-export function KnowledgeDrawer({ machineId }: { machineId: string }) {
+// Same source-union shape as ConversationsList/ConversationDetail.
+export type KnowledgeDrawerSource =
+  | { kind: "machine"; machineId: string }
+  | { kind: "fleet"; accountId: string };
+
+export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
   const t = useTranslations("knowledgeDrawer");
   const { user } = useAuth();
   // Admins (super or account-scoped) get a link to the admin upload
   // section. Operators see the same drawer minus the affordance —
   // /api/admin/ingest is server-gated, so this is a UI hint only.
-  const canUpload = isAdmin(user);
-  const adminUploadHref = `/admin/machines/${encodeURIComponent(machineId)}#upload`;
+  // Fleet scope has no single machine to upload to, so no affordance.
+  const canUpload = isAdmin(user) && source.kind === "machine";
+  const adminUploadHref =
+    source.kind === "machine"
+      ? `/admin/machines/${encodeURIComponent(source.machineId)}#upload`
+      : "";
   // Track viewport size so we can render an overlay drawer on small
   // screens and an inline sidebar on >= sm. Lazy initializers read
   // matchMedia on first client render so mobile users don't see the
@@ -64,14 +76,54 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
+  // Mobile overlay is a modal dialog: trap focus while open, close on
+  // Escape.
+  const mobilePanelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(mobilePanelRef, isMobile && open);
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isMobile, open]);
+
+  // Primitive key so load()'s identity doesn't churn when the parent
+  // rebuilds the source object every render (an object dep would make
+  // the open-triggered fetch effect loop).
+  const sourceKind = source.kind;
+  const sourceId =
+    source.kind === "machine" ? source.machineId : source.accountId;
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      if (sourceKind === "fleet") {
+        const res = await fetchWithAuth(
+          `/api/accounts/${encodeURIComponent(sourceId)}/documents`,
+        );
+        if (!res.ok) {
+          throw new Error(`Server error ${res.status}`);
+        }
+        const body = (await res.json()) as FleetDocumentsResponse;
+        // Reuse the folder-tree UI with the machine as the group: each
+        // doc's folderPath is projected to its machine name. Per-machine
+        // folder structure is deliberately collapsed in fleet view —
+        // one grouping level keeps the drawer scannable.
+        setDocs(
+          body.documents.map((d) => ({
+            ...d,
+            folderPath: d.machineName ?? d.machineId,
+          })),
+        );
+        return;
+      }
       const qrToken = getQrToken();
       const url = qrToken
-        ? `/api/machines/${encodeURIComponent(machineId)}/documents?qrToken=${encodeURIComponent(qrToken)}`
-        : `/api/machines/${encodeURIComponent(machineId)}/documents`;
+        ? `/api/machines/${encodeURIComponent(sourceId)}/documents?qrToken=${encodeURIComponent(qrToken)}`
+        : `/api/machines/${encodeURIComponent(sourceId)}/documents`;
       const res = await fetchWithAuth(url);
       if (!res.ok) {
         throw new Error(`Server error ${res.status}`);
@@ -79,15 +131,18 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
       const body = (await res.json()) as OperatorDocumentsResponse;
       setDocs(body.documents);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
+      console.error("Knowledge drawer load failed", err);
+      setError(t("loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [machineId]);
+  }, [sourceKind, sourceId, t]);
 
   // Fetch when first opened, and refetch on each reopen so newly
-  // promoted documents show up without a page reload.
+  // promoted documents show up without a page reload. The synchronous
+  // setState inside load() is the loading flag — intentional.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) void load();
   }, [open, load]);
 
@@ -182,12 +237,18 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
               aria-label={t("openAria")}
               tabIndex={open ? -1 : 0}
               className={cn(
-                "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+                "inline-flex flex-col items-center gap-2 rounded px-1 py-2 text-white/70",
                 "hover:bg-white/10 hover:text-white",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
               )}
             >
               <PanelLeftOpen className="h-5 w-5" />
+              <span
+                aria-hidden
+                className="select-none text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl]"
+              >
+                {t("railLabel")}
+              </span>
             </button>
           </Tooltip>
         </div>
@@ -221,7 +282,7 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
             </button>
           </header>
           <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
-            {t("description")}
+            {t(sourceKind === "fleet" ? "fleetDescription" : "description")}
           </p>
           {canUpload && docs && docs.length > 0 && (
             <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
@@ -254,7 +315,7 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           aria-label={open ? t("closeAria") : t("openAria")}
           aria-expanded={open}
           className={cn(
-            "inline-flex h-9 w-9 items-center justify-center rounded text-white/70",
+            "tap-target inline-flex flex-col items-center gap-2 rounded px-1 py-2 text-white/70",
             "hover:bg-white/10 hover:text-white",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
           )}
@@ -264,6 +325,12 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           ) : (
             <PanelLeftOpen className="h-5 w-5" />
           )}
+          <span
+            aria-hidden
+            className="select-none text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl]"
+          >
+            {t("railLabel")}
+          </span>
         </button>
       </Tooltip>
       <div
@@ -282,6 +349,7 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
           )}
         />
         <div
+          ref={mobilePanelRef}
           role="dialog"
           aria-label={t("drawerAria")}
           aria-modal={open}
@@ -310,7 +378,7 @@ export function KnowledgeDrawer({ machineId }: { machineId: string }) {
             </button>
           </header>
           <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
-            {t("description")}
+            {t(sourceKind === "fleet" ? "fleetDescription" : "description")}
           </p>
           {canUpload && docs && docs.length > 0 && (
             <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>

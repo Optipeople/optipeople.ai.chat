@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { CircleXIcon, SearchIcon } from "./icons";
 import { Tooltip } from "./tooltip";
@@ -37,12 +38,13 @@ export const SearchField = React.forwardRef<HTMLInputElement, SearchFieldProps>(
       value,
       defaultValue,
       className,
-      placeholder = "Search",
+      placeholder,
       onChange,
       ...rest
     },
     ref,
   ) => {
+    const t = useTranslations("common");
     const [internalValue, setInternalValue] = React.useState(defaultValue ?? "");
     const [focused, setFocused] = React.useState(false);
     const currentValue = value !== undefined ? value : internalValue;
@@ -87,7 +89,7 @@ export const SearchField = React.forwardRef<HTMLInputElement, SearchFieldProps>(
           disabled={disabled}
           value={value}
           defaultValue={defaultValue}
-          placeholder={placeholder}
+          placeholder={placeholder ?? t("search")}
           onChange={(e) => {
             if (value === undefined) setInternalValue(e.target.value);
             onChange?.(e);
@@ -112,10 +114,10 @@ export const SearchField = React.forwardRef<HTMLInputElement, SearchFieldProps>(
           {...rest}
         />
         {clearable && hasValue && !disabled && (
-          <Tooltip content="Clear search" side="bottom" className="ml-auto">
+          <Tooltip content={t("clearSearch")} side="bottom" className="ml-auto">
             <button
               type="button"
-              aria-label="Clear search"
+              aria-label={t("clearSearch")}
               onClick={handleClear}
               className="inline-flex shrink-0 items-center justify-center text-[var(--ds-grey-medium-05)] hover:text-[var(--ds-grey-dark-09)]"
             >

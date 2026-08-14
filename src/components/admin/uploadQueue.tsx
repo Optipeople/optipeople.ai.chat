@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ReactNode,
@@ -14,8 +15,10 @@ import {
   FileText,
   Folder,
   Image as ImageIcon,
+  RefreshCw,
   ScanEye,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
@@ -80,6 +83,8 @@ type QueueAPI = {
   queue: QueueItem[];
   processingDocs: AdminDocument[];
   clearFinished: () => void;
+  retryItem: (id: string) => void;
+  retryAllFailed: () => void;
 };
 
 const QueueContext = createContext<QueueAPI | null>(null);
@@ -249,12 +254,54 @@ export function UploadQueueProvider({
     update((q) => q.filter((i) => i.status !== "done"));
   }, [update]);
 
+  const retryItem = useCallback(
+    (id: string) => {
+      update((q) =>
+        q.map((i) =>
+          i.id === id && i.status === "failed"
+            ? { ...i, status: "pending" as const, progress: 0, error: undefined }
+            : i,
+        ),
+      );
+      void processNext();
+    },
+    [processNext, update],
+  );
+
+  const retryAllFailed = useCallback(() => {
+    update((q) =>
+      q.map((i) =>
+        i.status === "failed"
+          ? { ...i, status: "pending" as const, progress: 0, error: undefined }
+          : i,
+      ),
+    );
+    void processNext();
+  }, [processNext, update]);
+
+  // Warn before the tab closes while items are still pending/uploading —
+  // the in-tab queue doesn't survive a navigation.
+  const hasActive = queue.some(
+    (i) => i.status === "pending" || i.status === "uploading",
+  );
+  useEffect(() => {
+    if (!hasActive) return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasActive]);
+
   const api: QueueAPI = {
     enqueueUploads,
     enqueueReprocess,
     queue,
     processingDocs,
     clearFinished,
+    retryItem,
+    retryAllFailed,
   };
   return (
     <QueueContext.Provider value={api}>{children}</QueueContext.Provider>
@@ -262,8 +309,12 @@ export function UploadQueueProvider({
 }
 
 export function UploadQueuePanel() {
-  const { queue, processingDocs, clearFinished: onClearFinished } =
-    useUploadQueue();
+  const {
+    queue,
+    processingDocs,
+    clearFinished: onClearFinished,
+    retryAllFailed,
+  } = useUploadQueue();
   const t = useTranslations("admin.uploadQueue");
   // Drop server-processing rows for docs the in-tab queue is already
   // showing (an in-flight reprocess from this tab). Avoids duplicate
@@ -304,11 +355,18 @@ export function UploadQueuePanel() {
                   remaining: queue.length - finishedCount - failedCount,
                   total: queue.length,
                 })
-              : (finishedCount === 1
-                  ? t("doneCountOne", { done: finishedCount })
-                  : t("doneCount", { done: finishedCount })) +
+              : t("doneCount", { done: finishedCount }) +
                 (failedCount > 0 ? t("failedSuffix", { failed: failedCount }) : "")}
         </span>
+        {failedCount > 0 && (
+          <button
+            type="button"
+            onClick={retryAllFailed}
+            className="ml-3 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+          >
+            {t("retryAllFailed")}
+          </button>
+        )}
         {!pendingOrUploading && finishedCount > 0 && (
           <button
             type="button"
@@ -417,6 +475,8 @@ function formatBytes(b: number | null): string {
 
 function QueueRow({ item }: { item: QueueItem }) {
   const t = useTranslations("admin.uploadQueue");
+  const tc = useTranslations("common");
+  const { retryItem } = useUploadQueue();
   const title = item.kind === "upload" ? item.file.name : item.documentTitle;
   const size = item.kind === "upload" ? item.file.size : item.fileSize;
   const isImage = item.kind === "upload" && item.fileKind === "image";
@@ -531,6 +591,17 @@ function QueueRow({ item }: { item: QueueItem }) {
           </p>
         )}
       </div>
+      {item.status === "failed" && (
+        <Button
+          variant="ghost"
+          size="pill"
+          onClick={() => retryItem(item.id)}
+          className="shrink-0"
+        >
+          <RefreshCw className="h-3 w-3" />
+          {tc("retry")}
+        </Button>
+      )}
     </li>
   );
 }

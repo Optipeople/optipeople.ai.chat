@@ -9,14 +9,16 @@
 // portal after step 1, so anything skipped or failed can be finished in
 // the portal itself.
 
-import { useCallback, useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, RefreshCw, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { Select } from "@/components/ui/select";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Spinner } from "@/components/ui/spinner";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useAuth } from "@/auth/AuthContext";
 import { getAccounts, searchAccounts, type Account } from "@/auth/accountsApi";
 import {
@@ -33,15 +35,21 @@ import { createAdminMachine } from "@/admin/adminApi";
 
 const TOTAL_STEPS = 4;
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 type Step = 1 | 2 | 3 | 4 | "done";
 
 export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const t = useTranslations("newAccountWizard");
+  const tc = useTranslations("common");
+  const confirm = useConfirm();
   const { reloadAccounts } = useAuth();
 
   const [step, setStep] = useState<Step>(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, true);
 
   // Set by step 1; every later step creates resources inside this account.
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -54,8 +62,11 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   // Step 2 — factory.
   const [factoryName, setFactoryName] = useState("");
   const [countries, setCountries] = useState<PortalCountry[] | null>(null);
+  const [countriesError, setCountriesError] = useState<string | null>(null);
   const [countryId, setCountryId] = useState("");
   const [timeZones, setTimeZones] = useState<PortalOption[] | null>(null);
+  const [timeZonesError, setTimeZonesError] = useState<string | null>(null);
+  const [tzReload, setTzReload] = useState(0);
   const [timeZoneId, setTimeZoneId] = useState("");
 
   // Step 3 — local Opti Assist machine.
@@ -65,41 +76,55 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [roles, setRoles] = useState<PortalOption[] | null>(null);
+  const [rolesError, setRolesError] = useState<string | null>(null);
   const [roleId, setRoleId] = useState("");
 
-  // Lazy lookups per step, loaded once.
-  useEffect(() => {
-    if (step === 2 && countries === null) {
-      getCountries()
-        .then(setCountries)
-        .catch((err: unknown) => {
-          setCountries([]);
-          setError(err instanceof Error ? err.message : t("lookupFailed"));
-        });
-    }
-    if (step === 4 && roles === null) {
-      getRoles()
-        .then(setRoles)
-        .catch((err: unknown) => {
-          setRoles([]);
-          setError(err instanceof Error ? err.message : t("lookupFailed"));
-        });
-    }
-  }, [step, countries, roles, t]);
+  const loadCountries = useCallback(() => {
+    setCountriesError(null);
+    getCountries()
+      .then(setCountries)
+      .catch((err: unknown) => {
+        setCountriesError(
+          err instanceof Error ? err.message : t("lookupFailed"),
+        );
+      });
+  }, [t]);
 
-  // Timezones depend on the chosen country.
+  const loadRoles = useCallback(() => {
+    setRolesError(null);
+    getRoles()
+      .then(setRoles)
+      .catch((err: unknown) => {
+        setRolesError(err instanceof Error ? err.message : t("lookupFailed"));
+      });
+  }, [t]);
+
+  // Lazy lookups per step, loaded once. A failed lookup keeps the list
+  // null (select disabled) and shows an inline error with retry. The
+  // synchronous setState inside the loaders is their loading flag.
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (step === 2 && countries === null && !countriesError) loadCountries();
+    if (step === 4 && roles === null && !rolesError) loadRoles();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [step, countries, countriesError, roles, rolesError, loadCountries, loadRoles]);
+
+  // Timezones depend on the chosen country. tzReload bumps re-run the
+  // fetch after a failure.
   useEffect(() => {
     const country = countries?.find((c) => c.option.id === countryId);
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!country) {
-      /* eslint-disable react-hooks/set-state-in-effect */
       setTimeZones(null);
       setTimeZoneId("");
-      /* eslint-enable react-hooks/set-state-in-effect */
+      setTimeZonesError(null);
       return;
     }
     let cancelled = false;
     setTimeZones(null);
     setTimeZoneId("");
+    setTimeZonesError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
     getTimeZones(country)
       .then((rows) => {
         if (cancelled) return;
@@ -108,27 +133,52 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setTimeZones([]);
-        setError(err instanceof Error ? err.message : t("lookupFailed"));
+        setTimeZonesError(
+          err instanceof Error ? err.message : t("lookupFailed"),
+        );
       });
     return () => {
       cancelled = true;
     };
-  }, [countryId, countries, t]);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !submitting) onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, submitting]);
+  }, [countryId, countries, t, tzReload]);
 
   const finish = useCallback(async () => {
     // Surface the new account in the picker behind the wizard.
     await reloadAccounts().catch(() => undefined);
     setStep("done");
   }, [reloadAccounts]);
+
+  // Closing on steps 2–4 silently abandons an account that already
+  // exists in the portal — confirm first, and land on the done screen
+  // (not plain dismissal) so re-running step 1 isn't the obvious next
+  // move.
+  const confirmingRef = useRef(false);
+  const requestClose = useCallback(async () => {
+    if (submitting || confirmingRef.current) return;
+    if (step === 2 || step === 3 || step === 4) {
+      confirmingRef.current = true;
+      const ok = await confirm({
+        title: t("closeConfirmTitle"),
+        description: t("closeConfirmBody", { account: accountName.trim() }),
+        confirmLabel: t("closeConfirmLabel"),
+      });
+      confirmingRef.current = false;
+      if (!ok) return;
+      await finish();
+      return;
+    }
+    onClose();
+  }, [step, submitting, confirm, t, accountName, finish, onClose]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // defaultPrevented: the confirm dialog handles its own Escape —
+      // don't let that same keypress re-trigger the close flow.
+      if (e.key === "Escape" && !e.defaultPrevented) void requestClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requestClose]);
 
   async function run(action: () => Promise<void>) {
     setSubmitting(true);
@@ -221,15 +271,17 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   };
 
   const stepNumber = step === "done" ? TOTAL_STEPS : step;
+  const adminEmailValid = EMAIL_RE.test(adminEmail.trim());
+  const userEmailValid = EMAIL_RE.test(userEmail.trim());
   const canSubmitAccount =
     accountName.trim().length > 0 &&
     adminName.trim().length > 0 &&
-    adminEmail.includes("@");
+    adminEmailValid;
   const canSubmitFactory =
     factoryName.trim().length > 0 && countryId.length > 0 && timeZoneId.length > 0;
   const canSubmitMachine = machineName.trim().length > 0;
   const canSubmitUser =
-    userName.trim().length > 0 && userEmail.includes("@") && roleId.length > 0;
+    userName.trim().length > 0 && userEmailValid && roleId.length > 0;
 
   return (
     <div
@@ -238,7 +290,10 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
       aria-label={t("dialogAria")}
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-3 sm:px-4 sm:py-8"
     >
-      <div className="my-auto flex w-full max-w-lg flex-col gap-4 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-xl sm:gap-5 sm:p-6">
+      <div
+        ref={panelRef}
+        className="my-auto flex w-full max-w-lg flex-col gap-4 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 shadow-xl sm:gap-5 sm:p-6"
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h2 className="text-[17px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[18px]">
@@ -252,7 +307,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
           </div>
           <button
             type="button"
-            onClick={() => !submitting && onClose()}
+            onClick={() => void requestClose()}
             disabled={submitting}
             aria-label={t("closeAria")}
             className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
@@ -266,7 +321,7 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
             <span className="text-[12px] text-[var(--color-muted-foreground)]">
               {t("stepLabel", { step: stepNumber, total: TOTAL_STEPS })}
             </span>
-            <ProgressBar value={((stepNumber - 1) / TOTAL_STEPS) * 100} />
+            <ProgressBar value={(stepNumber / TOTAL_STEPS) * 100} />
           </div>
         )}
 
@@ -287,7 +342,16 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
             <TextField
               label={t("adminEmailLabel")}
               type="email"
-              helpText={t("adminEmailHelp")}
+              validation={
+                adminEmail.trim().length > 0 && !adminEmailValid
+                  ? "error"
+                  : "none"
+              }
+              helpText={
+                adminEmail.trim().length > 0 && !adminEmailValid
+                  ? t("emailInvalid")
+                  : t("adminEmailHelp")
+              }
               value={adminEmail}
               onChange={(e) => setAdminEmail(e.target.value)}
               disabled={submitting}
@@ -305,7 +369,11 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
             />
             <Select
               label={t("countryLabel")}
-              placeholder={countries === null ? t("loadingLookup") : undefined}
+              placeholder={
+                countries === null && !countriesError
+                  ? t("loadingLookup")
+                  : undefined
+              }
               value={countryId}
               onValueChange={setCountryId}
               disabled={submitting || countries === null}
@@ -314,10 +382,17 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
                 label: c.option.name,
               }))}
             />
+            {countriesError && (
+              <LookupError
+                message={countriesError}
+                onRetry={loadCountries}
+                retryLabel={tc("retry")}
+              />
+            )}
             <Select
               label={t("timeZoneLabel")}
               placeholder={
-                countryId && timeZones === null
+                countryId && timeZones === null && !timeZonesError
                   ? t("loadingLookup")
                   : timeZones?.length === 0
                     ? t("timeZoneEmpty")
@@ -336,6 +411,13 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
                 label: tz.name,
               }))}
             />
+            {timeZonesError && (
+              <LookupError
+                message={timeZonesError}
+                onRetry={() => setTzReload((n) => n + 1)}
+                retryLabel={tc("retry")}
+              />
+            )}
           </div>
         )}
 
@@ -362,19 +444,37 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
             <TextField
               label={t("userEmailLabel")}
               type="email"
-              helpText={t("userEmailHelp")}
+              validation={
+                userEmail.trim().length > 0 && !userEmailValid
+                  ? "error"
+                  : "none"
+              }
+              helpText={
+                userEmail.trim().length > 0 && !userEmailValid
+                  ? t("emailInvalid")
+                  : t("userEmailHelp")
+              }
               value={userEmail}
               onChange={(e) => setUserEmail(e.target.value)}
               disabled={submitting}
             />
             <Select
               label={t("roleLabel")}
-              placeholder={roles === null ? t("loadingLookup") : undefined}
+              placeholder={
+                roles === null && !rolesError ? t("loadingLookup") : undefined
+              }
               value={roleId}
               onValueChange={setRoleId}
               disabled={submitting || roles === null}
               items={(roles ?? []).map((r) => ({ value: r.id, label: r.name }))}
             />
+            {rolesError && (
+              <LookupError
+                message={rolesError}
+                onRetry={loadRoles}
+                retryLabel={tc("retry")}
+              />
+            )}
           </div>
         )}
 
@@ -436,6 +536,18 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
               <Button
                 variant="secondary"
                 size="compact"
+                onClick={() => {
+                  if (submitting) return;
+                  setError(null);
+                  setStep(2);
+                }}
+                disabled={submitting}
+              >
+                {tc("back")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="compact"
                 onClick={() => !submitting && skipTo(4)}
                 disabled={submitting}
               >
@@ -458,6 +570,18 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
 
           {step === 4 && (
             <>
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => {
+                  if (submitting) return;
+                  setError(null);
+                  setStep(3);
+                }}
+                disabled={submitting}
+              >
+                {tc("back")}
+              </Button>
               <Button
                 variant="secondary"
                 size="compact"
@@ -488,6 +612,26 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function LookupError({
+  message,
+  onRetry,
+  retryLabel,
+}: {
+  message: string;
+  onRetry: () => void;
+  retryLabel: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-[12px] text-[var(--ds-red)]">
+      <span className="min-w-0 break-words">{message}</span>
+      <Button variant="ghost" size="pill" onClick={onRetry} className="shrink-0">
+        <RefreshCw className="h-3 w-3" />
+        {retryLabel}
+      </Button>
     </div>
   );
 }

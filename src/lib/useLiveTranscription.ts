@@ -45,6 +45,10 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
   // Most recent text we pushed via onChange — used to decide whether
   // to emit again so we don't spam the parent.
   const lastEmittedRef = useRef<string>("");
+  // Set while stop() is waiting for the last utterance's `completed`
+  // event; resolved by handleEvent so we don't cut off trailing words
+  // with a fixed timer.
+  const finalizeResolveRef = useRef<(() => void) | null>(null);
 
   const composed = useCallback(() => {
     const finals = finalsRef.current.join(" ").trim();
@@ -112,6 +116,9 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
         partialRef.current = "";
         if (finalText) finalsRef.current.push(finalText);
         emit();
+        // If stop() is waiting for this utterance to finalize, let it
+        // proceed now instead of running its timeout down.
+        finalizeResolveRef.current?.();
         return;
       }
 
@@ -147,11 +154,23 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
       return;
     }
 
+    // Insecure contexts and old WebViews have no mediaDevices at all —
+    // that's "unsupported", not a denied permission.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      handleError("unsupported");
+      return;
+    }
     let micStream: MediaStream;
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      handleError("permissionDenied");
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : "";
+      handleError(
+        name === "NotAllowedError" || name === "PermissionDeniedError" ||
+          name === "SecurityError"
+          ? "permissionDenied"
+          : "unsupported",
+      );
       return;
     }
     micStreamRef.current = micStream;
@@ -209,10 +228,27 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
     if (state !== "listening" && state !== "connecting") return;
     setState("finalizing");
 
-    // Give the server VAD a brief moment to emit a final transcript for
-    // any in-flight utterance before we tear down the connection. The
-    // delta+completed pair usually arrives within ~250ms of silence.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Wait for the server VAD to emit the final transcript for any
+    // in-flight utterance before tearing down, so trailing words aren't
+    // cut off. The `completed` event resolves us early; the timeout is
+    // the fallback for a slow or missing final.
+    if (partialRef.current.trim().length > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          finalizeResolveRef.current = null;
+          resolve();
+        }, 2000);
+        finalizeResolveRef.current = () => {
+          clearTimeout(timer);
+          finalizeResolveRef.current = null;
+          resolve();
+        };
+      });
+    } else {
+      // Nothing in flight — a short grace period still catches a final
+      // that was about to land.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
 
     cleanup();
     const finalText = composed();

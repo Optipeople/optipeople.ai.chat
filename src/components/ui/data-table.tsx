@@ -1,4 +1,7 @@
+"use client";
+
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 // Admin data table — matches the Figma "Tasks Panel, List View" used
@@ -72,19 +75,58 @@ export function DataTableBody({ children }: { children: React.ReactNode }) {
 export function DataTableRow({
   children,
   onClick,
+  href,
   className,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
+  // Navigation target for row click. Prefer this over onClick for rows
+  // that open a detail page: it adds keyboard access (Tab + Enter) and
+  // restores ctrl/cmd/middle-click open-in-new-tab.
+  href?: string;
   className?: string;
 }) {
-  const interactive = Boolean(onClick);
+  const router = useRouter();
+  const interactive = Boolean(onClick || href);
+
+  const activate = (e?: { ctrlKey?: boolean; metaKey?: boolean }) => {
+    if (href) {
+      if (e?.ctrlKey || e?.metaKey) {
+        window.open(href, "_blank", "noopener");
+      } else {
+        router.push(href);
+      }
+    } else {
+      onClick?.();
+    }
+  };
+
   return (
     <tr
-      onClick={onClick}
+      onClick={interactive ? (e) => activate(e) : undefined}
+      onAuxClick={
+        href
+          ? (e) => {
+              if (e.button === 1) window.open(href, "_blank", "noopener");
+            }
+          : undefined
+      }
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                if (e.target !== e.currentTarget) return;
+                e.preventDefault();
+                activate(e);
+              }
+            }
+          : undefined
+      }
+      tabIndex={interactive ? 0 : undefined}
       className={cn(
         "group h-[36px] transition-colors",
-        interactive && "cursor-pointer hover:bg-[var(--ds-table-blue-hover)]",
+        interactive &&
+          "cursor-pointer hover:bg-[var(--ds-table-blue-hover)] focus-visible:bg-[var(--ds-table-blue-hover)] focus-visible:outline-none",
         className,
       )}
     >

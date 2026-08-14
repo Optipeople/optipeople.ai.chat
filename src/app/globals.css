@@ -100,11 +100,27 @@
 
   /* Motion */
   --ease-apple: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Inline validation / error text (auth + forms) */
+  --color-error: #b00020;
 }
 
 html,
 body {
   height: 100%;
+}
+
+/* Dynamic viewport height: follows mobile browser chrome + on-screen
+   keyboard (with viewport interactiveWidget=resizes-content) so the
+   composer never hides behind the keyboard. */
+@supports (height: 100dvh) {
+  body {
+    height: 100dvh;
+  }
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
 }
 
 button:not(:disabled),
@@ -301,6 +317,52 @@ a[data-button] {
 }
 .voice-pill-active {
   animation: voice-pill-glow 2.2s ease-out infinite;
+}
+
+/* Minimum 44px touch target on coarse pointers without changing the
+   visual size: an invisible, centered pseudo-element extends the hit
+   area. Apply to any small interactive control (icon buttons, chips,
+   tags). Safe on touch layouts where small controls are not packed
+   tighter than ~44px. */
+@media (pointer: coarse) {
+  .tap-target {
+    position: relative;
+  }
+  .tap-target::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Respect the OS "reduce motion" setting: entrance/infinite animations
+   settle to their resting state. */
+@media (prefers-reduced-motion: reduce) {
+  .msg-in,
+  .chip-in,
+  .dialog-overlay,
+  .dialog-panel,
+  .drawer-in,
+  .send-nudge,
+  .stream-caret,
+  .voice-pill-active,
+  .voice-eq.is-active > span {
+    animation: none;
+  }
+  .voice-eq.is-active > span {
+    transform: scaleY(0.7);
+  }
+  .text-shimmer {
+    animation: none;
+    background: none;
+    -webkit-background-clip: initial;
+    background-clip: initial;
+    color: var(--color-muted-foreground);
+  }
 }
 
 /* Scrollbar */

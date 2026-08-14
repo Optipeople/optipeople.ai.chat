@@ -1,8 +1,13 @@
+"use client";
+
 import Link from "next/link";
+import { useAuth } from "@/auth/AuthContext";
 import { OptipeopleLogo } from "@/components/logo";
+import { LocaleToggle } from "@/components/LocaleToggle";
 import { UserMenu } from "@/components/UserMenu";
 
 export function AppHeader() {
+  const { user } = useAuth();
   return (
     <header
       className="relative z-20 shrink-0"
@@ -16,7 +21,10 @@ export function AppHeader() {
         >
           <OptipeopleLogo className="h-5 w-auto text-white" />
         </Link>
-        <UserMenu />
+        {/* Anonymous QR operators have no UserMenu — give them the
+            language toggle directly so a Danish operator isn't locked
+            into English on a fresh phone. */}
+        {user ? <UserMenu /> : <LocaleToggle />}
       </div>
     </header>
   );

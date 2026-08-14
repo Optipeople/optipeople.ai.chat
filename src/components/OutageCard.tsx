@@ -5,7 +5,7 @@ import { AlertTriangle, ExternalLink, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type OutageInfo = {
-  kind: "outage" | "overloaded" | "rate_limit" | "error";
+  kind: "outage" | "overloaded" | "rate_limit" | "error" | "session";
   title: string;
   statusUrl?: string;
 };
@@ -14,10 +14,14 @@ export function OutageCard({
   info,
   message,
   onRetry,
+  action,
 }: {
   info: OutageInfo;
   message: string;
   onRetry?: () => void;
+  // Alternative primary action (e.g. "Log in again" on session expiry).
+  // Rendered with the same affordance as retry.
+  action?: { label: string; onClick: () => void };
 }) {
   const tChat = useTranslations("chat");
 
@@ -51,7 +55,7 @@ export function OutageCard({
             type="button"
             onClick={onRetry}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-[4px] border px-3 py-1.5 text-[13px] font-medium",
+              "tap-target inline-flex items-center gap-1.5 rounded-[4px] border px-3 py-1.5 text-[13px] font-medium",
               "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-foreground)]",
               "transition-colors hover:bg-[var(--color-muted)]",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
@@ -59,6 +63,20 @@ export function OutageCard({
           >
             <RotateCcw className="h-3.5 w-3.5" aria-hidden />
             {tChat("errorTryAgain")}
+          </button>
+        )}
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className={cn(
+              "tap-target inline-flex items-center gap-1.5 rounded-[4px] border px-3 py-1.5 text-[13px] font-medium",
+              "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-foreground)]",
+              "transition-colors hover:bg-[var(--color-muted)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+            )}
+          >
+            {action.label}
           </button>
         )}
         {info.statusUrl && (

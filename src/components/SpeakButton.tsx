@@ -90,7 +90,7 @@ export function SpeakButton({ text, className }: Props) {
         disabled={state === "loading"}
         aria-label={label}
         className={cn(
-          "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-60",
+          "tap-target inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-60",
           state === "playing" && "text-[var(--ds-blue-primary)]",
           state === "error" && "text-[var(--ds-red)]",
           className,

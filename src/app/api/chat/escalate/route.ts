@@ -194,7 +194,7 @@ export async function POST(req: Request) {
 
     try {
       conversationId = await createConversation({
-        machineId,
+        scope: { kind: "machine", machineId },
         accountId,
         userId: userIdentity.userId,
         userEmail: userIdentity.email,
@@ -254,21 +254,31 @@ export async function POST(req: Request) {
 
   // Look up machine display name + recent messages for the snapshot.
   // Tool turns are skipped — the tech wants the operator/AI dialogue,
-  // not the search internals.
-  const [{ data: machineRow }, { data: messages, error: msgErr }] =
-    await Promise.all([
-      supabase
-        .from("machine_kb")
-        .select("display_name")
-        .eq("machine_id", conversation.machine_id)
-        .maybeSingle(),
-      supabase
-        .from("messages")
-        .select("role, content, created_at")
-        .eq("conversation_id", conversationId)
-        .in("role", ["user", "assistant"])
-        .order("created_at", { ascending: true }),
-    ]);
+  // not the search internals. Fault photos the operator attached are
+  // captured too (paths only; the view signs URLs at render time).
+  const [
+    { data: machineRow },
+    { data: messages, error: msgErr },
+    { data: attachmentRows },
+  ] = await Promise.all([
+    supabase
+      .from("machine_kb")
+      .select("display_name")
+      .eq("machine_id", conversation.machine_id)
+      .maybeSingle(),
+    supabase
+      .from("messages")
+      .select("role, content, created_at")
+      .eq("conversation_id", conversationId)
+      .in("role", ["user", "assistant"])
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("conversation_attachments")
+      .select("id, storage_path, mime_type, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(12),
+  ]);
   if (msgErr) {
     console.error("escalate: messages lookup failed:", msgErr);
     return Response.json({ error: t("dbError") }, { status: 500 });
@@ -298,6 +308,17 @@ export async function POST(req: Request) {
         content: m.content,
         createdAt: m.created_at,
       })),
+    attachments: ((attachmentRows ?? []) as Array<{
+      id: string;
+      storage_path: string;
+      mime_type: string;
+      created_at: string;
+    }>).map((a) => ({
+      id: a.id,
+      storagePath: a.storage_path,
+      mimeType: a.mime_type,
+      createdAt: a.created_at,
+    })),
   };
 
   const shareToken = mintShareToken();

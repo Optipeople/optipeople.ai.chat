@@ -56,7 +56,8 @@ export type AdminEscalation = {
 
 export type AdminConversationDetail = {
   id: string;
-  machineId: string;
+  // null for fleet-scoped ("all machines") conversations.
+  machineId: string | null;
   accountId: string;
   userId: string;
   userEmail: string | null;
@@ -192,7 +193,7 @@ export async function GET(
 
   const conversation = conv as {
     id: string;
-    machine_id: string;
+    machine_id: string | null;
     account_id: string;
     user_id: string;
     user_email: string | null;

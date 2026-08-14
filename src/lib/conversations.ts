@@ -10,8 +10,15 @@ import { getSupabaseServerClient } from "./supabase";
 
 export type EntryMode = "qr" | "manual" | "deep_link" | "voice";
 
+// A conversation's scope is fixed at creation: machine-scoped rows are
+// pinned to one machine_id; fleet rows span the whole account and carry
+// machine_id null (enforced by conversations_scope_machine_ck).
+export type ConversationScope =
+  | { kind: "machine"; machineId: string }
+  | { kind: "fleet" };
+
 export async function createConversation(args: {
-  machineId: string;
+  scope: ConversationScope;
   accountId: string;
   userId: string;
   userEmail?: string | null;
@@ -22,7 +29,8 @@ export async function createConversation(args: {
   const { data, error } = await supabase
     .from("conversations")
     .insert({
-      machine_id: args.machineId,
+      scope: args.scope.kind,
+      machine_id: args.scope.kind === "machine" ? args.scope.machineId : null,
       account_id: args.accountId,
       user_id: args.userId,
       user_email: args.userEmail ?? null,
@@ -37,23 +45,30 @@ export async function createConversation(args: {
   return (data as { id: string }).id;
 }
 
-// Confirms the conversation exists and belongs to (machineId, userId).
-// Prevents one operator from appending to another's conversation by
-// guessing UUIDs. Returns null on mismatch — caller decides whether to
-// fall back to creating a new row.
+// Confirms the conversation exists, belongs to userId, and matches the
+// requested scope — machine rows must match the machine, fleet rows the
+// account. Prevents one operator from appending to another's
+// conversation by guessing UUIDs, and keeps a machine-scoped follow-up
+// from landing in a fleet row (or vice versa). Returns false on
+// mismatch — caller decides whether to fall back to creating a new row.
 export async function validateConversation(
   conversationId: string,
-  machineId: string,
   userId: string,
+  scope: ConversationScope,
+  accountId: string,
 ): Promise<boolean> {
   const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("conversations")
     .select("id")
     .eq("id", conversationId)
-    .eq("machine_id", machineId)
     .eq("user_id", userId)
-    .maybeSingle();
+    .eq("scope", scope.kind);
+  query =
+    scope.kind === "machine"
+      ? query.eq("machine_id", scope.machineId)
+      : query.eq("account_id", accountId);
+  const { data, error } = await query.maybeSingle();
   return !error && !!data;
 }
 

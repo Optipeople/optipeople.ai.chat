@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Lock, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -33,6 +34,7 @@ export function AiRulesEditor({
   accountId: string;
   embedded?: boolean;
 }) {
+  const t = useTranslations("admin.aiRules");
   const confirm = useConfirm();
   const [systemRule, setSystemRule] = useState<string>("");
   const [rules, setRules] = useState<AccountAiRule[] | null>(null);
@@ -59,12 +61,12 @@ export function AiRulesEditor({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load rules");
+        setError(err instanceof Error ? err.message : t("loadFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, [accountId]);
+  }, [accountId, t]);
 
   async function handleAdd() {
     const body = draft.trim();
@@ -76,7 +78,7 @@ export function AiRulesEditor({
       setRules((cur) => [...(cur ?? []), rule]);
       setDraft("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add rule");
+      setError(err instanceof Error ? err.message : t("addFailed"));
     } finally {
       setAdding(false);
     }
@@ -84,28 +86,34 @@ export function AiRulesEditor({
 
   async function handleSave(ruleId: string, body: string) {
     setError(null);
-    const updated = await updateAiRule(accountId, ruleId, { body });
-    setRules((cur) =>
-      (cur ?? []).map((r) => (r.id === ruleId ? updated : r)),
-    );
+    try {
+      const updated = await updateAiRule(accountId, ruleId, { body });
+      setRules((cur) =>
+        (cur ?? []).map((r) => (r.id === ruleId ? updated : r)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("saveFailed"));
+    }
   }
 
   async function handleToggle(rule: AccountAiRule) {
     setError(null);
-    const updated = await updateAiRule(accountId, rule.id, {
-      enabled: !rule.enabled,
-    });
-    setRules((cur) =>
-      (cur ?? []).map((r) => (r.id === rule.id ? updated : r)),
-    );
+    try {
+      const updated = await updateAiRule(accountId, rule.id, {
+        enabled: !rule.enabled,
+      });
+      setRules((cur) =>
+        (cur ?? []).map((r) => (r.id === rule.id ? updated : r)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("toggleFailed"));
+    }
   }
 
   async function handleDelete(rule: AccountAiRule) {
     const ok = await confirm({
-      title: "Delete rule?",
-      description:
-        "The rule will be removed from every chat in this account. This cannot be undone.",
-      confirmLabel: "Delete",
+      title: t("deleteConfirmTitle"),
+      description: t("deleteConfirmBody"),
       danger: true,
     });
     if (!ok) return;
@@ -114,7 +122,7 @@ export function AiRulesEditor({
       await deleteAiRule(accountId, rule.id);
       setRules((cur) => (cur ?? []).filter((r) => r.id !== rule.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete rule");
+      setError(err instanceof Error ? err.message : t("deleteFailed"));
     }
   }
 
@@ -136,7 +144,7 @@ export function AiRulesEditor({
       await updateAiRule(accountId, a.id, { position: b.position });
       await updateAiRule(accountId, b.id, { position: a.position });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reorder");
+      setError(err instanceof Error ? err.message : t("reorderFailed"));
       // Best effort: reload to recover canonical order.
       await reload().catch(() => {});
     }
@@ -146,17 +154,15 @@ export function AiRulesEditor({
     <div className="flex flex-col gap-5 sm:gap-6">
       {embedded ? (
         <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
-          The locked rule below is always enforced. Add additional rules
-          to encode account-specific guidance (e.g. safety reminders).
+          {t("description")}
         </p>
       ) : (
         <div className="flex flex-col gap-1">
           <h1 className="text-[20px] font-semibold tracking-tight text-[var(--color-foreground)] sm:text-[24px]">
-            AI rules — {accountName ?? accountId}
+            {t("heading", { name: accountName ?? accountId })}
           </h1>
           <p className="text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
-            The locked rule below is always enforced. Add additional rules
-            to encode account-specific guidance (e.g. safety reminders).
+            {t("description")}
           </p>
         </div>
       )}
@@ -196,16 +202,15 @@ export function AiRulesEditor({
       {/* Add new */}
       <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-4 sm:p-5">
         <h2 className="text-[15px] font-medium text-[var(--color-foreground)]">
-          Add a rule
+          {t("addHeading")}
         </h2>
         <p className="mt-0.5 text-[13px] text-[var(--color-muted-foreground)]">
-          Plain-language instruction the assistant must follow. Keep it
-          short and specific.
+          {t("addDescription")}
         </p>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value.slice(0, MAX_RULE_BODY_LENGTH))}
-          placeholder="e.g. Always remind operators to lock out the spindle before performing a tool change."
+          placeholder={t("addPlaceholder")}
           rows={3}
           disabled={adding}
           className={cn(
@@ -227,7 +232,7 @@ export function AiRulesEditor({
             {adding ? (
               <Spinner className="h-3.5 w-3.5" />
             ) : (
-              "Add rule"
+              t("addButton")
             )}
           </Button>
         </div>
@@ -243,25 +248,27 @@ function LockedRuleCard({
   body: string;
   loading: boolean;
 }) {
+  const t = useTranslations("admin.aiRules");
+  const tc = useTranslations("common");
   return (
     <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-muted)]/40 p-4 sm:p-5">
       <div className="flex items-center gap-2">
         <Lock className="h-4 w-4 text-[var(--color-muted-foreground)]" />
         <span className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">
-          Locked rule — always enforced
+          {t("lockedHeading")}
         </span>
       </div>
       <p className="mt-2 text-[14px] leading-[21px] text-[var(--color-foreground)]">
         {loading ? (
-          <span className="text-[var(--color-muted-foreground)]">Loading…</span>
+          <span className="text-[var(--color-muted-foreground)]">
+            {tc("loading")}
+          </span>
         ) : (
           body
         )}
       </p>
       <p className="mt-2 text-[11px] text-[var(--color-muted-foreground)]">
-        This rule is the same for every account and cannot be edited. It
-        keeps the assistant on topic and resists attempts to talk it out
-        of its role.
+        {t("lockedFootnote")}
       </p>
     </div>
   );
@@ -286,6 +293,8 @@ function EditableRuleCard({
   onMoveUp: () => Promise<void>;
   onMoveDown: () => Promise<void>;
 }) {
+  const t = useTranslations("admin.aiRules");
+  const tc = useTranslations("common");
   const [body, setBody] = useState(rule.body);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -345,7 +354,7 @@ function EditableRuleCard({
       <div className="flex items-start gap-2">
         <div className="mt-0.5 flex flex-col gap-1">
           <Tooltip
-            content="Move up"
+            content={t("moveUp")}
             side="right"
             disabled={index === 0 || busy}
           >
@@ -353,7 +362,7 @@ function EditableRuleCard({
               type="button"
               onClick={onMoveUp}
               disabled={index === 0 || busy}
-              aria-label="Move up"
+              aria-label={t("moveUp")}
               className={cn(
                 "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
                 "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
@@ -364,7 +373,7 @@ function EditableRuleCard({
             </button>
           </Tooltip>
           <Tooltip
-            content="Move down"
+            content={t("moveDown")}
             side="right"
             disabled={index === total - 1 || busy}
           >
@@ -372,7 +381,7 @@ function EditableRuleCard({
               type="button"
               onClick={onMoveDown}
               disabled={index === total - 1 || busy}
-              aria-label="Move down"
+              aria-label={t("moveDown")}
               className={cn(
                 "inline-flex h-6 w-6 items-center justify-center rounded text-[var(--color-muted-foreground)]",
                 "hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
@@ -403,7 +412,7 @@ function EditableRuleCard({
               checked={rule.enabled}
               onCheckedChange={handleToggle}
               disabled={busy}
-              aria-label={rule.enabled ? "Disable rule" : "Enable rule"}
+              aria-label={rule.enabled ? t("disableRule") : t("enableRule")}
             />
 
             <div className="flex items-center gap-2">
@@ -414,23 +423,23 @@ function EditableRuleCard({
                   onClick={() => setBody(rule.body)}
                   disabled={saving}
                 >
-                  Reset
+                  {t("reset")}
                 </Button>
               ) : null}
               <Button size="sm" onClick={handleSave} disabled={!canSave}>
                 {saving ? (
                   <Spinner className="h-3.5 w-3.5" />
                 ) : (
-                  "Save"
+                  tc("save")
                 )}
               </Button>
-              <Tooltip content="Delete rule" side="top" disabled={busy}>
+              <Tooltip content={t("deleteRule")} side="top" disabled={busy}>
                 <Button
                   size="sm"
                   variant="destructive"
                   onClick={handleDeleteClick}
                   disabled={busy}
-                  aria-label="Delete rule"
+                  aria-label={t("deleteRule")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>

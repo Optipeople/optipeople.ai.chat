@@ -15,7 +15,6 @@ import {
   GripVertical,
   History,
   Image as ImageIcon,
-  Info,
   MessageSquare,
   MessageSquareQuote,
   Pencil,
@@ -52,6 +51,8 @@ import { getAccounts } from "@/auth/accountsApi";
 import { getMachinesForAccount } from "@/auth/machinesApi";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Button, buttonClasses } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
+import { HelpHint } from "@/components/ui/help-hint";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import { Select } from "@/components/ui/select";
 import {
@@ -438,28 +439,35 @@ function MachineSummary({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
             {t("machineName")}
-            <span
-              title={t("machineNameTooltip")}
-              aria-label={t("machineNameSourceAria")}
-              className="inline-flex cursor-help"
-            >
-              <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
-            </span>
+            <HelpHint
+              size={16}
+              content={t("machineNameTooltip")}
+              ariaLabel={t("machineNameSourceAria")}
+            />
           </dt>
           <dd className="min-w-0 break-words text-[var(--color-foreground)]">{machineName ?? "—"}</dd>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
             {t("accountName")}
-            <span
-              title={t("accountNameTooltip")}
-              aria-label={t("machineNameSourceAria")}
-              className="inline-flex cursor-help"
-            >
-              <Info className="h-3 w-3 text-[var(--color-muted-foreground)]/60" />
-            </span>
+            <HelpHint
+              size={16}
+              content={t("accountNameTooltip")}
+              ariaLabel={t("machineNameSourceAria")}
+            />
           </dt>
-          <dd className="min-w-0 break-words text-[var(--color-foreground)]">{accountName ?? "—"}</dd>
+          <dd className="min-w-0 break-words text-[var(--color-foreground)]">
+            {accountName ? (
+              <Link
+                href={`/admin/accounts/${encodeURIComponent(machine.accountId)}`}
+                className="hover:underline"
+              >
+                {accountName}
+              </Link>
+            ) : (
+              "—"
+            )}
+          </dd>
         </div>
         <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("machineIdLabel")}</dt>
@@ -490,22 +498,22 @@ function MachineSummary({
                     {machine.mcp.label}
                   </span>
                 ) : null}
-                <a
-                  href="/admin/mcp"
+                <Link
+                  href={`/admin/accounts/${encodeURIComponent(machine.accountId)}?section=mcp`}
                   className="text-[12px] text-[var(--color-muted-foreground)] underline hover:text-[var(--color-foreground)]"
                 >
-                  Manage
-                </a>
+                  {t("mcpManage")}
+                </Link>
               </>
             ) : (
               <>
                 <McpStatusBadge status="unconfigured" />
-                <a
-                  href="/admin/mcp"
+                <Link
+                  href={`/admin/accounts/${encodeURIComponent(machine.accountId)}?section=mcp`}
                   className="text-[12px] text-[var(--color-muted-foreground)] underline hover:text-[var(--color-foreground)]"
                 >
-                  Set up
-                </a>
+                  {t("mcpSetup")}
+                </Link>
               </>
             )}
           </dd>
@@ -670,14 +678,11 @@ function MachineQrCard({
             <code className="min-w-0 flex-1 truncate rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-background)] px-3 py-1.5 text-[12px] text-[var(--color-foreground)]">
               {tokenUrl ?? ""}
             </code>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="pill"
               onClick={() => void copy()}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-[4px] border border-[var(--color-hairline)]",
-                "bg-[var(--color-surface)] px-3 py-1.5 text-[13px] text-[var(--color-foreground)]",
-                "transition-colors hover:bg-[var(--color-muted)]",
-              )}
+              className="shrink-0"
               title={t("qrCopyTitle")}
             >
               {copied ? (
@@ -691,7 +696,7 @@ function MachineQrCard({
                   {t("qrCopy")}
                 </>
               )}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -718,8 +723,8 @@ function UploadCard({
   const t = useTranslations("admin.machineDetail");
   const { enqueueUploads } = useUploadQueue();
   const [dragActive, setDragActive] = useState(false);
-  // Folder selector for *picker-based* uploads. Drag-drop uploads use
-  // the captured folder paths from the dropped tree and ignore this.
+  // Destination folder for both picker-based and drag-drop uploads.
+  // Dropped folder trees keep their relative structure inside it.
   const [pickerFolder, setPickerFolder] = useState<string>(ROOT_FOLDER_SENTINEL);
   const [newFolderInput, setNewFolderInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -746,7 +751,15 @@ function UploadCard({
 
   async function handleDrop(dt: DataTransfer) {
     const files = await filesFromDrop(dt);
-    enqueueUploads(files);
+    const base = pickerFolderPath();
+    enqueueUploads(
+      base
+        ? files.map((f) => ({
+            ...f,
+            folderPath: f.folderPath ? `${base}/${f.folderPath}` : base,
+          }))
+        : files,
+    );
   }
 
   return (
@@ -763,7 +776,7 @@ function UploadCard({
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <Select
-          label={t("folderLabel")}
+          label={t("folderLabelAll")}
           size="medium"
           value={pickerFolder}
           onValueChange={setPickerFolder}
@@ -1000,10 +1013,7 @@ function DocumentsTree({
     if (selected.size === 0) return;
     const n = selected.size;
     const ok = await confirm({
-      title:
-        n === 1
-          ? t("bulkDeleteConfirmTitleOne", { count: n })
-          : t("bulkDeleteConfirmTitle", { count: n }),
+      title: t("bulkDeleteConfirmTitle", { count: n }),
       description: t("bulkDeleteConfirmBody"),
       confirmLabel: t("bulkDeleteConfirmLabel"),
       danger: true,
@@ -1075,9 +1085,10 @@ function DocumentsTree({
         await onChanged();
       } catch (err) {
         console.error("move doc failed:", err);
+        setBulkErr(t("moveDocFailed", { title: doc.title }));
       }
     },
-    [documents, onChanged],
+    [documents, onChanged, t],
   );
 
   const isEmpty = documents.length === 0 && topFolders.length === 0;
@@ -1104,21 +1115,21 @@ function DocumentsTree({
         <div className="flex flex-wrap items-center gap-2">
           {selected.size > 0 && (
             <>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="pill"
                 onClick={() => setSelected(new Set())}
                 disabled={bulkDeleting || bulkVisibility}
-                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
               >
                 {t("clearSelection")}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="pill"
                 onClick={() =>
                   void bulkSetVisibility(bulkVisibilityAction === "show")
                 }
                 disabled={bulkDeleting || bulkVisibility}
-                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
               >
                 {bulkVisibility ? (
                   <Spinner className="h-3.5 w-3.5" />
@@ -1130,12 +1141,12 @@ function DocumentsTree({
                 {bulkVisibilityAction === "show"
                   ? t("bulkShowOperators", { count: selected.size })
                   : t("bulkHideOperators", { count: selected.size })}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghostDanger"
+                size="pill"
                 onClick={() => void bulkDelete()}
                 disabled={bulkDeleting || bulkVisibility}
-                className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--ds-red)]/30 bg-[var(--ds-red-bg)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--ds-red)] hover:bg-[var(--ds-red)]/10 disabled:opacity-50"
               >
                 {bulkDeleting ? (
                   <Spinner className="h-3.5 w-3.5" />
@@ -1143,28 +1154,28 @@ function DocumentsTree({
                   <Trash2 className="h-3.5 w-3.5" />
                 )}
                 {t("deleteN", { count: selected.size })}
-              </button>
+              </Button>
             </>
           )}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="pill"
             onClick={() => setAutoOrganizeOpen(true)}
             disabled={!canAutoOrganize}
             title={t("autoOrganizeTitle")}
-            className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
           >
             <Sparkles className="h-3.5 w-3.5 text-[var(--color-brand)]" />
             {t("autoOrganize")}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="pill"
             onClick={() => setCreating(true)}
             disabled={creating}
-            className="inline-flex items-center gap-1 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] font-medium normal-case text-[var(--color-foreground)] hover:bg-[var(--color-muted)] disabled:opacity-50"
           >
             <Folder className="h-3.5 w-3.5" />
             {t("newFolder")}
-          </button>
+          </Button>
         </div>
       </div>
       {bulkErr && (
@@ -1256,6 +1267,7 @@ function DocumentsTree({
           movingId={movingId}
           setMovingId={setMovingId}
           onChanged={onChanged}
+          onError={setBulkErr}
           selected={selected}
           onToggleSelected={toggleSelected}
         />
@@ -1386,6 +1398,7 @@ function FolderNode({
   movingId,
   setMovingId,
   onChanged,
+  onError,
   selected,
   onToggleSelected,
 }: {
@@ -1398,6 +1411,7 @@ function FolderNode({
   movingId: string | null;
   setMovingId: (id: string | null) => void;
   onChanged: () => Promise<void>;
+  onError: (message: string) => void;
   selected: Set<string>;
   onToggleSelected: (id: string) => void;
 }) {
@@ -1426,6 +1440,7 @@ function FolderNode({
       await onChanged();
     } catch (err) {
       console.error("delete folder failed:", err);
+      onError(t("deleteFolderFailed", { name: folder.name }));
       setDeletingFolder(false);
     }
   }
@@ -1515,6 +1530,7 @@ function FolderNode({
               movingId={movingId}
               setMovingId={setMovingId}
               onChanged={onChanged}
+              onError={onError}
               selected={selected}
               onToggleSelected={onToggleSelected}
             />
@@ -1783,10 +1799,17 @@ function DocumentRow({
         {err && <p className="mt-1 text-[12px] text-[var(--ds-red)]">{err}</p>}
       </div>
 
-      <div>
+      <div className="flex items-center gap-1.5">
         <Tag variant={badge.variant} size="small">
           {badge.label}
         </Tag>
+        {document.status === "failed" && document.progressLabel && (
+          <HelpHint
+            size={16}
+            content={document.progressLabel}
+            ariaLabel={t("failedReasonAria")}
+          />
+        )}
       </div>
 
       <div className="text-right tabular-nums text-[var(--color-foreground)]">
@@ -1808,45 +1831,43 @@ function DocumentRow({
       <div className="flex items-center justify-end gap-0.5">
         {document.sourceType !== "feedback" && (
           <>
-            <button
+            <IconButton
               onClick={() => void viewOriginal()}
               disabled={opening}
               title={t("openOriginalTitle")}
               aria-label={t("openOriginalAria")}
-              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {opening ? (
                 <Spinner className="h-4 w-4" />
               ) : (
                 <Eye className="h-4 w-4" />
               )}
-            </button>
-            <button
+            </IconButton>
+            <IconButton
               onClick={() => void downloadOriginal()}
               disabled={downloading}
               title={t("downloadOriginalTitle")}
               aria-label={t("downloadOriginalAria")}
-              className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-40"
             >
               {downloading ? (
                 <Spinner className="h-4 w-4" />
               ) : (
                 <Download className="h-4 w-4" />
               )}
-            </button>
+            </IconButton>
             {document.sourceType === "pdf" && (
-              <button
+              <IconButton
                 onClick={() => void reprocess()}
                 title={t("reprocessTitle")}
                 aria-label={t("reprocessAria")}
-                className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-violet-50 hover:text-violet-700"
+                className="hover:bg-violet-50 hover:text-violet-700"
               >
                 <RefreshCw className="h-4 w-4" />
-              </button>
+              </IconButton>
             )}
           </>
         )}
-        <button
+        <IconButton
           onClick={() => void remove()}
           disabled={deleting}
           title={
@@ -1855,14 +1876,14 @@ function DocumentRow({
               : t("deleteDocTitle")
           }
           aria-label={t("deleteDocAria")}
-          className="rounded p-1.5 text-[var(--color-muted-foreground)] hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)] disabled:opacity-40"
+          className="hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)]"
         >
           {deleting ? (
             <Spinner className="h-4 w-4" />
           ) : (
             <Trash2 className="h-4 w-4" />
           )}
-        </button>
+        </IconButton>
       </div>
     </div>
   );
@@ -1882,6 +1903,8 @@ function OperatorVisibleToggle({
   // and let the refetch correct it if the PATCH fails.
   const [localVisible, setLocalVisible] = useState(document.operatorVisible);
   useEffect(() => {
+    // Sync the optimistic mirror when fresh server data arrives.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalVisible(document.operatorVisible);
   }, [document.operatorVisible]);
 

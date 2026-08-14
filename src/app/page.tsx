@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Check,
   CheckCircle2,
+  Boxes,
   Copy,
   FileText,
   FolderTree,
@@ -44,7 +45,8 @@ import { useFileViewer } from "@/components/FileViewer";
 import { OutageCard, type OutageInfo } from "@/components/OutageCard";
 import { useLiveTranscription } from "@/lib/useLiveTranscription";
 import { useAuth } from "@/auth/AuthContext";
-import { fetchWithAuth } from "@/auth/authApi";
+import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
+import { IconButton } from "@/components/ui/icon-button";
 import {
   clearQrSession,
   getQrMachine,
@@ -220,10 +222,11 @@ type ChatTarget = {
 export default function Home() {
   const tQrError = useTranslations("qrError");
   const tCommon = useTranslations("common");
+  const tConsent = useTranslations("consent");
   const [qrPhase, setQrPhase] = useState<
     | { kind: "checking" }
     | { kind: "active"; target: ChatTarget }
-    | { kind: "error"; message: string }
+    | { kind: "error"; message: string; retryable: boolean }
     | { kind: "none" }
   >({ kind: "checking" });
 
@@ -268,12 +271,28 @@ export default function Home() {
         const res = await fetch(
           `/api/qr/resolve?token=${encodeURIComponent(token)}`,
         );
+        if (res.status === 404) {
+          // Genuinely invalid/revoked token — only here do we drop the
+          // cached session; a new sticker is the only way forward.
+          if (cancelled) return;
+          clearQrSession();
+          setQrPhase({
+            kind: "error",
+            message: tQrError("invalid"),
+            retryable: false,
+          });
+          return;
+        }
         if (!res.ok) {
-          throw new Error(
-            res.status === 404
-              ? tQrError("invalid")
-              : tQrError("lookupFailed", { status: res.status }),
-          );
+          // Transient server trouble — keep the token so "Try again"
+          // (and a plain reload) can succeed once the blip passes.
+          if (cancelled) return;
+          setQrPhase({
+            kind: "error",
+            message: tQrError("lookupFailed", { status: res.status }),
+            retryable: true,
+          });
+          return;
         }
         const body = (await res.json()) as {
           machineId: string;
@@ -301,10 +320,11 @@ export default function Home() {
         });
       } catch (err) {
         if (cancelled) return;
-        clearQrSession();
+        console.error("QR resolve failed", err);
         setQrPhase({
           kind: "error",
-          message: err instanceof Error ? err.message : tCommon("unknownError"),
+          message: tQrError("networkFailed"),
+          retryable: true,
         });
       }
     })();
@@ -322,7 +342,10 @@ export default function Home() {
     currentMachine,
     machines,
     machinesForbidden,
+    fleetSelected,
     consentStatus,
+    consentError,
+    reloadConsent,
     clearSelectedMachine,
   } = useAuth();
   useDeepLinkSelection();
@@ -336,7 +359,9 @@ export default function Home() {
     );
   }
   if (qrPhase.kind === "error") {
-    return <QrErrorScreen message={qrPhase.message} />;
+    return (
+      <QrErrorScreen message={qrPhase.message} retryable={qrPhase.retryable} />
+    );
   }
   if (qrPhase.kind === "active") {
     return (
@@ -358,8 +383,21 @@ export default function Home() {
   if (!user) return <LoginScreen />;
   // Block on mandatory consent before any app context loads. consentStatus
   // starts as null while the fetch is in flight — show the spinner rather
-  // than risk flashing the account picker behind the gate.
+  // than risk flashing the account picker behind the gate. A failed fetch
+  // gets a retry affordance instead of an infinite spinner.
   if (!consentStatus) {
+    if (consentError) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--color-background)] p-6 text-center">
+          <p className="text-[15px] text-[var(--color-foreground)]">
+            {tConsent("loadFailed")}
+          </p>
+          <Button variant="secondary" onClick={() => void reloadConsent()}>
+            {tCommon("retry")}
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-background)]">
         <Spinner className="h-6 w-6" />
@@ -370,7 +408,8 @@ export default function Home() {
   if (!currentAccount && !accountsForbidden) return <AccountSelectScreen />;
   // Operator-role users (accountsForbidden) have no account context and
   // therefore can't pick a machine either — skip straight to chat.
-  if (currentAccount && !currentMachine && !machinesForbidden) {
+  // "All machines" (fleet) counts as a selection, same as a machine.
+  if (currentAccount && !currentMachine && !fleetSelected && !machinesForbidden) {
     return <MachineSelectScreen />;
   }
 
@@ -382,6 +421,7 @@ export default function Home() {
       machine={
         currentMachine ? { id: currentMachine.id, name: currentMachine.name } : null
       }
+      scope={!currentMachine && fleetSelected ? "fleet" : "machine"}
       onChangeMachine={
         machines.length > 1 ? clearSelectedMachine : undefined
       }
@@ -389,16 +429,31 @@ export default function Home() {
   );
 }
 
-function QrErrorScreen({ message }: { message: string }) {
+function QrErrorScreen({
+  message,
+  retryable,
+}: {
+  message: string;
+  retryable: boolean;
+}) {
   const t = useTranslations("qrError");
+  const tCommon = useTranslations("common");
   return (
     <div className="flex h-full items-center justify-center bg-[var(--color-background)] p-6">
       <div className="max-w-md rounded-[var(--radius-lg)] border border-red-200 bg-red-50 p-6 text-center">
         <p className="text-[16px] font-medium text-red-800">{t("heading")}</p>
         <p className="mt-2 text-[14px] text-red-700">{message}</p>
-        <p className="mt-4 text-[12px] text-red-700/80">
-          {t("askAdmin")}
-        </p>
+        {retryable ? (
+          <Button
+            variant="secondary"
+            className="mt-4"
+            onClick={() => window.location.reload()}
+          >
+            {tCommon("retry")}
+          </Button>
+        ) : (
+          <p className="mt-4 text-[12px] text-red-700/80">{t("askAdmin")}</p>
+        )}
       </div>
     </div>
   );
@@ -413,6 +468,7 @@ type FeedbackState =
   | { phase: "hidden" }
   | { phase: "prompt" }
   | { phase: "answered_yes"; solution: string; submitting: boolean }
+  | { phase: "answered_no"; comment: string; submitting: boolean }
   | { phase: "submitting" }
   | { phase: "thanks"; resolved: boolean }
   | { phase: "error"; message: string };
@@ -435,6 +491,81 @@ type EscalateState =
     }
   | { phase: "error"; message: string };
 
+// The live conversation is stashed in sessionStorage (per machine) so a
+// refresh, tab discard under memory pressure, or a detour to the camera
+// app doesn't wipe the chat. Attachments and tool steps are stripped —
+// object URLs don't survive a reload anyway. Errored/empty assistant
+// bubbles are dropped so a stale outage card doesn't resurrect.
+const CHAT_STASH_PREFIX = "optiai_chat_";
+const CHAT_STASH_MAX_MESSAGES = 60;
+
+function chatStashKey(machineId: string | null | undefined): string {
+  return `${CHAT_STASH_PREFIX}${machineId ?? "none"}`;
+}
+
+function loadChatStash(
+  machineId: string | null | undefined,
+): { conversationId: string | null; messages: Message[] } | null {
+  try {
+    const raw = window.sessionStorage.getItem(chatStashKey(machineId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      conversationId?: unknown;
+      messages?: unknown;
+    };
+    if (!Array.isArray(parsed.messages)) return null;
+    const messages = (parsed.messages as Message[]).filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        typeof m.content === "string",
+    );
+    return {
+      conversationId:
+        typeof parsed.conversationId === "string" ? parsed.conversationId : null,
+      messages,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveChatStash(
+  machineId: string | null | undefined,
+  conversationId: string | null,
+  messages: Message[],
+): void {
+  try {
+    const trimmed = messages
+      .filter((m) => !(m.role === "assistant" && (m.error || !m.content)))
+      .slice(-CHAT_STASH_MAX_MESSAGES)
+      .map(({ role, content, createdAt, sources, images }) => ({
+        role,
+        content,
+        createdAt,
+        sources,
+        images,
+      }));
+    if (trimmed.length === 0) {
+      window.sessionStorage.removeItem(chatStashKey(machineId));
+      return;
+    }
+    window.sessionStorage.setItem(
+      chatStashKey(machineId),
+      JSON.stringify({ conversationId, messages: trimmed }),
+    );
+  } catch {
+    // Quota exceeded or storage unavailable — persistence is best-effort.
+  }
+}
+
+function clearChatStash(machineId: string | null | undefined): void {
+  try {
+    window.sessionStorage.removeItem(chatStashKey(machineId));
+  } catch {
+    // ignore
+  }
+}
+
 // Fisher-Yates shuffle, returns up to `n` unique items from `items`.
 // Used to pick the visible suggestion chips out of a larger candidate
 // pool, and to pick the replacement when a chip rotates.
@@ -450,21 +581,48 @@ function pickRandom<T>(items: T[], n: number): T[] {
 function ChatApp({
   account,
   machine,
+  scope = "machine",
   onChangeMachine,
 }: {
   account: { id: string; name: string } | null;
   machine: { id: string; name: string } | null;
+  // "fleet" = the account-wide "All machines" chat. machine is null;
+  // the server resolves the machine set from the account. QR and
+  // machine-picked chats stay "machine".
+  scope?: "machine" | "fleet";
   onChangeMachine?: () => void;
 }) {
   const tChat = useTranslations("chat");
+  const tEscalate = useTranslations("escalate");
+  const { logout } = useAuth();
   const locale = useLocale();
+  // Session-expired card action: logged-in operators get "Log in again"
+  // (logout → login screen; the stashed chat survives on this device).
+  // QR operators must re-scan — no in-app action can mint a new token.
+  const inQrMode = !!getQrToken();
+  const sessionAction = inQrMode
+    ? undefined
+    : { label: tChat("sessionExpiredAction"), onClick: logout };
+  const isFleet = scope === "fleet";
   // Shown when the machine's KB is empty (or the suggestions fetch fails).
   // Intentionally broad so they make sense even without manual content.
-  const FALLBACK_QUESTIONS = [
-    tChat("fallbackQuestions.q1"),
-    tChat("fallbackQuestions.q2"),
-    tChat("fallbackQuestions.q3"),
-  ];
+  // Fleet chats always use their own static starters — there is no
+  // per-machine suggestion pool to fetch when every machine is in scope.
+  const FALLBACK_QUESTIONS = isFleet
+    ? [
+        tChat("fleetQuestions.q1"),
+        tChat("fleetQuestions.q2"),
+        tChat("fleetQuestions.q3"),
+      ]
+    : [
+        tChat("fallbackQuestions.q1"),
+        tChat("fallbackQuestions.q2"),
+        tChat("fallbackQuestions.q3"),
+      ];
+  // Stash slot for refresh/tab-discard recovery. Fleet chats get their
+  // own per-account slot so they never collide with a machine chat (or
+  // with the machinesForbidden path, which stashes under "none").
+  const stashId = isFleet ? `fleet_${account?.id ?? "unknown"}` : machine?.id;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -495,6 +653,26 @@ function ChatApp({
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Touch devices get Enter = newline (soft keyboards have no Shift).
+  const coarsePointerRef = useRef(false);
+  useEffect(() => {
+    coarsePointerRef.current =
+      window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+  }, []);
+  // Measured footer height drives the scroll area's bottom padding, so
+  // stacked footer content (chips + cards + errors + attachment tray)
+  // never hides the last messages behind the panel.
+  const footerRef = useRef<HTMLElement>(null);
+  const [footerHeight, setFooterHeight] = useState(224);
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      setFooterHeight(el.offsetHeight);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const pendingRef = useRef("");
   const streamDoneRef = useRef(false);
@@ -550,13 +728,15 @@ function ChatApp({
     void liveTranscribe.stop();
   }, [liveTranscribe]);
   useEffect(() => {
-    // Switching machine = new conversation context. Drop any prior id
-    // and clear messages — operator likely wants a fresh slate. This
-    // synchronises several local state slots with the externally-owned
-    // machine selection; key-based remount would be a heavier refactor.
+    // Switching machine = new conversation context. Restore this
+    // machine's stashed conversation if the tab has one (refresh / tab
+    // discard recovery); otherwise start clean. This synchronises
+    // several local state slots with the externally-owned machine
+    // selection; key-based remount would be a heavier refactor.
+    const stash = loadChatStash(stashId);
     /* eslint-disable react-hooks/set-state-in-effect */
-    setConversationId(null);
-    setMessages([]);
+    setConversationId(stash?.conversationId ?? null);
+    setMessages(stash?.messages ?? []);
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
     setSuggestions([]);
@@ -570,7 +750,9 @@ function ChatApp({
     setIsAtBottom(true);
     setDragDepth(0);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [machine?.id]);
+    // stashId covers both axes: it changes on machine switch AND on
+    // machine ↔ fleet scope changes.
+  }, [stashId]);
 
   // Per-machine starter questions live on machine_kb keyed by locale and
   // are regenerated on KB changes (ingest / reset / delete). We fetch the
@@ -582,8 +764,12 @@ function ChatApp({
     const id = machine?.id;
     if (!id) return;
     let cancelled = false;
+    // Reset synchronously on machine/locale switch so stale chips from
+    // the previous machine never flash while the new pool loads.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setSuggestions([]);
     setVisibleSuggestions([]);
+    /* eslint-enable react-hooks/set-state-in-effect */
     (async () => {
       try {
         const res = await fetch(
@@ -605,6 +791,13 @@ function ChatApp({
       cancelled = true;
     };
   }, [machine?.id, locale]);
+
+  // Persist the conversation between renders — but never mid-stream
+  // (messages mutate every animation frame while streaming).
+  useEffect(() => {
+    if (streaming) return;
+    saveChatStash(stashId, conversationId, messages);
+  }, [messages, conversationId, streaming, stashId]);
 
   const isEmpty = messages.length === 0;
 
@@ -825,6 +1018,7 @@ function ChatApp({
     abortRef.current?.abort();
     pendingRef.current = "";
     streamDoneRef.current = false;
+    clearChatStash(stashId);
     setStreaming(false);
     setMessages([]);
     setConversationId(null);
@@ -841,8 +1035,10 @@ function ChatApp({
   async function submitFeedback(resolved: boolean, solutionText?: string) {
     if (!conversationId) return;
     setFeedback(
-      resolved && solutionText !== undefined
-        ? { phase: "answered_yes", solution: solutionText, submitting: true }
+      solutionText !== undefined
+        ? resolved
+          ? { phase: "answered_yes", solution: solutionText, submitting: true }
+          : { phase: "answered_no", comment: solutionText, submitting: true }
         : { phase: "submitting" },
     );
     try {
@@ -858,13 +1054,15 @@ function ChatApp({
         }),
       });
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Server error ${res.status}${txt ? `: ${txt}` : ""}`);
+        throw new Error(`Server error ${res.status}`);
       }
+      // The conversation is concluded — a refresh should start fresh
+      // rather than resurrect a finished chat.
+      clearChatStash(stashId);
       setFeedback({ phase: "thanks", resolved });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setFeedback({ phase: "error", message: msg });
+      console.error("Feedback submit failed", err);
+      setFeedback({ phase: "error", message: tChat("errorNetworkBody") });
     }
   }
 
@@ -872,8 +1070,12 @@ function ChatApp({
     // No conversationId yet means the operator hit "Call service"
     // before sending any message — the server will mint a conversation
     // from the note. Still require a machine so the technician knows
-    // what's being escalated.
-    if (!conversationId && !machine?.id) return;
+    // what's being escalated. Surface the block instead of silently
+    // doing nothing.
+    if (!conversationId && !machine?.id) {
+      setEscalate({ phase: "error", message: tEscalate("noMachine") });
+      return;
+    }
     setEscalate({ phase: "submitting", note });
     try {
       const res = await fetchWithAuth("/api/chat/escalate", {
@@ -920,7 +1122,13 @@ function ChatApp({
         shareUrl: data.shareUrl,
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Escalation failed", err);
+      const msg =
+        err instanceof Error &&
+        err.message &&
+        !err.message.startsWith("Server error")
+          ? err.message
+          : tChat("errorNetworkBody");
       setEscalate({ phase: "error", message: msg });
     }
   }
@@ -975,16 +1183,27 @@ function ChatApp({
         body: JSON.stringify({
           accountId: account?.id ?? null,
           machineId: machine?.id ?? null,
+          ...(isFleet ? { scope: "fleet" } : {}),
           conversationId,
-          messages: baseMessages.slice(0, -1).map((m) => ({
-            role: m.role,
-            content: m.content,
-            attachmentIds: m.attachments?.map((a) => a.id),
-          })),
+          // Error-flagged bubbles hold outage copy, not assistant prose —
+          // they must never be shipped back to the model as real turns.
+          messages: baseMessages
+            .slice(0, -1)
+            .filter((m) => !m.error)
+            .map((m) => ({
+              role: m.role,
+              content: m.content,
+              attachmentIds: m.attachments?.map((a) => a.id),
+            })),
         }),
       });
 
       if (!res.ok || !res.body) {
+        // 401/403 mid-conversation = the session or QR token died. A
+        // plain retry can never succeed — surface the dedicated card.
+        if (res.status === 401 || res.status === 403) {
+          throw new SessionExpiredError();
+        }
         throw new Error(`Server error ${res.status}`);
       }
 
@@ -1148,18 +1367,45 @@ function ChatApp({
       // errors — just stop quietly so the UI doesn't flash an outage card.
       if (controller.signal.aborted) {
         pendingRef.current = "";
+      } else if (err instanceof SessionExpiredError) {
+        // Auth is gone (expired bearer or revoked QR token). Render the
+        // dedicated card with a working recovery action instead of a
+        // retry loop that can never succeed.
+        pendingRef.current = "";
+        const inQrMode = !!getQrToken();
+        setMessages((prev) => {
+          const copy = [...prev];
+          const prevMsg = copy[copy.length - 1];
+          copy[copy.length - 1] = {
+            role: "assistant",
+            content: inQrMode
+              ? tChat("sessionExpiredBodyQr")
+              : tChat("sessionExpiredBody"),
+            createdAt: prevMsg?.createdAt ?? Date.now(),
+            error: { kind: "session", title: tChat("sessionExpiredTitle") },
+          };
+          return copy;
+        });
       } else {
         // Network-level failure (fetch threw, non-2xx, missing body). We
         // don't know whether Anthropic itself is the culprit here, so we
         // don't link to their status page — just a generic outage card.
-        const msg = err instanceof Error ? err.message : String(err);
+        // Raw error strings ("Failed to fetch", "Server error 500") are
+        // jargon to an operator; log them, show a localized sentence.
+        console.error("Chat stream failed", err);
+        const serverStatus =
+          err instanceof Error
+            ? /^Server error (\d+)/.exec(err.message)?.[1]
+            : undefined;
         pendingRef.current = "";
         setMessages((prev) => {
           const copy = [...prev];
           const prevMsg = copy[copy.length - 1];
           copy[copy.length - 1] = {
             role: "assistant",
-            content: msg,
+            content: serverStatus
+              ? tChat("errorServerBody", { status: Number(serverStatus) })
+              : tChat("errorNetworkBody"),
             createdAt: prevMsg?.createdAt ?? Date.now(),
             error: { kind: "error", title: tChat("errorConnectionTitle") },
           };
@@ -1184,6 +1430,8 @@ function ChatApp({
     // (and any in-flight feedback state) so it doesn't sit there stale.
     clearIdleTimer();
     if (feedback.phase !== "hidden") setFeedback({ phase: "hidden" });
+    // Continuing to chat after an escalation dismisses the "done" card.
+    if (escalate.phase === "done") setEscalate({ phase: "hidden" });
 
     const userAttachments: ChatAttachment[] = readyAttachments.map((p) => ({
       id: p.id!,
@@ -1269,11 +1517,14 @@ function ChatApp({
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Cmd/Ctrl+Enter always sends (even with Shift held — useful when
     // composing multiline messages). Plain Enter sends only without
-    // Shift; Shift+Enter inserts a newline as usual.
+    // Shift; Shift+Enter inserts a newline as usual. On touch devices
+    // (no Shift key on soft keyboards) plain Enter inserts a newline —
+    // the Send button is always visible there.
     const isEnter = e.key === "Enter";
     const isModifierEnter = isEnter && (e.metaKey || e.ctrlKey);
     const isPlainEnter =
       isEnter && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (isPlainEnter && coarsePointerRef.current) return;
     if (isModifierEnter || isPlainEnter) {
       e.preventDefault();
       send();
@@ -1283,8 +1534,9 @@ function ChatApp({
   const hasAssistantReply = messages.some(
     (m) => m.role === "assistant" && m.content.length > 0,
   );
-  const inputLocked =
-    streaming || feedback.phase === "thanks" || escalate.phase === "done";
+  // Escalating does NOT lock the input — "also, it's now leaking oil"
+  // after the tech was called is exactly the follow-up we want to keep.
+  const inputLocked = streaming || feedback.phase === "thanks";
   const hasReadyAttachment = pendingAttachments.some((p) => p.status === "ready");
   const isUploadingAttachment = pendingAttachments.some(
     (p) => p.status === "uploading",
@@ -1307,23 +1559,30 @@ function ChatApp({
       <AppHeader />
 
       <div className="flex min-h-0 flex-1 bg-[var(--color-brand)]">
-        {machine?.id ? <KnowledgeDrawer machineId={machine.id} /> : null}
+        {machine?.id ? (
+          <KnowledgeDrawer source={{ kind: "machine", machineId: machine.id }} />
+        ) : isFleet && account?.id ? (
+          <KnowledgeDrawer source={{ kind: "fleet", accountId: account.id }} />
+        ) : null}
         <div
           className={cn(
             "relative flex min-w-0 flex-1 flex-col bg-[var(--color-background)]",
-            machine?.id && "overflow-hidden rounded-tl-[var(--radius)]",
+            (machine?.id || isFleet) &&
+              "overflow-hidden rounded-tl-[var(--radius)]",
           )}
         >
       <div ref={scrollRef} className="scroll-area flex-1 overflow-y-auto">
-        {/* pb sized to clear the absolutely-positioned footer (24px fade
-            + solid panel containing the input bar, optional "Afslut
-            samtale" pill, and feedback card). Without enough room here,
-            content scrolls under the panel. */}
-        <div className="mx-auto max-w-3xl px-4 pt-6 pb-56 sm:px-6 sm:pt-12 sm:pb-72">
+        {/* Bottom padding tracks the measured footer height (input bar,
+            action pills, feedback/escalate cards, attachment tray can
+            all stack), so content never scrolls under the panel. */}
+        <div
+          className="mx-auto max-w-3xl px-4 pt-6 sm:px-6 sm:pt-12"
+          style={{ paddingBottom: footerHeight + 32 }}
+        >
           {isEmpty ? (
             <div className="flex flex-col gap-3 sm:gap-4">
               <p className="msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)] sm:text-[22px] sm:leading-[1.55]">
-                {tChat("emptyPrompt")}
+                {tChat(isFleet ? "fleetEmptyPrompt" : "emptyPrompt")}
               </p>
               <p
                 role="note"
@@ -1359,8 +1618,13 @@ function ChatApp({
                     message={m}
                     locale={locale}
                     isStreaming={streaming && isLast}
-                    onCallService={() =>
-                      setEscalate({ phase: "confirm", note: "" })
+                    sessionAction={sessionAction}
+                    // Escalation stays machine-scoped — see the "Call
+                    // service" button below.
+                    onCallService={
+                      isFleet
+                        ? undefined
+                        : () => setEscalate({ phase: "confirm", note: "" })
                     }
                     onRetry={!streaming && isLast && m.error ? retry : undefined}
                     onRegenerate={
@@ -1378,16 +1642,27 @@ function ChatApp({
             </div>
           )}
         </div>
+        {/* Streamed answers are invisible to screen readers otherwise —
+            announce the completed assistant reply politely. */}
+        <div aria-live="polite" className="sr-only">
+          {!streaming &&
+          messages.length > 0 &&
+          messages[messages.length - 1].role === "assistant" &&
+          !messages[messages.length - 1].error
+            ? messages[messages.length - 1].content
+            : ""}
+        </div>
         {/* "Jump to latest" pill — only visible when the operator is
             scrolled up. Sits over the bottom-anchored content area, just
-            above the composer panel. */}
+            above the composer panel (tracks its measured height). */}
         {!isAtBottom && messages.length > 0 && (
           <button
             type="button"
             onClick={jumpToLatest}
             aria-label={tChat("jumpToLatest")}
+            style={{ bottom: footerHeight + 12 }}
             className={cn(
-              "fixed bottom-[calc(env(safe-area-inset-bottom)+8.5rem)] left-1/2 z-20",
+              "tap-target absolute left-1/2 z-20",
               "-translate-x-1/2 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5",
               "border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[13px]",
               "text-[var(--color-foreground)] shadow-[var(--shadow-md)] transition-colors",
@@ -1401,7 +1676,10 @@ function ChatApp({
         )}
       </div>
 
-      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+      <footer
+        ref={footerRef}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10"
+      >
         {/* Soft fade above the solid panel — pure transparent → background.
             Sized small (24px) since the panel below now does the heavy
             lifting of hiding scroll content. */}
@@ -1436,7 +1714,7 @@ function ChatApp({
                         void send(q);
                       }}
                       disabled={streaming}
-                      className="chip-in max-w-full rounded-full whitespace-normal text-left sm:text-[14px]"
+                      className="chip-in tap-target max-w-full rounded-full whitespace-normal text-left sm:text-[14px]"
                       style={{ ["--chip-index" as string]: i }}
                     >
                       {q}
@@ -1472,13 +1750,22 @@ function ChatApp({
                     submitting: false,
                   })
                 }
-                onAnswerNo={() => submitFeedback(false)}
+                onAnswerNo={() =>
+                  setFeedback({
+                    phase: "answered_no",
+                    comment: "",
+                    submitting: false,
+                  })
+                }
                 onSubmitYes={(solution) => submitFeedback(true, solution)}
+                onSubmitNo={(comment) => submitFeedback(false, comment)}
                 onSolutionChange={(solution) =>
                   setFeedback((prev) =>
                     prev.phase === "answered_yes"
                       ? { ...prev, solution }
-                      : prev,
+                      : prev.phase === "answered_no"
+                        ? { ...prev, comment: solution }
+                        : prev,
                   )
                 }
                 onDismiss={() => setFeedback({ phase: "hidden" })}
@@ -1499,9 +1786,15 @@ function ChatApp({
             </div>
           )}
           {attachmentError && <InlineError message={attachmentError} />}
-          {(machine?.name || showActionButtons) && (
+          {isUploadingAttachment && (
+            <p className="mb-2 flex items-center gap-1.5 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
+              <Spinner className="h-3.5 w-3.5" />
+              {tChat("attachments.uploadingHint")}
+            </p>
+          )}
+          {(machine?.name || isFleet || showActionButtons) && (
             <div className="msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5">
-              {machine?.name &&
+              {(machine?.name || isFleet) &&
                 (onChangeMachine ? (
                   <button
                     type="button"
@@ -1509,24 +1802,36 @@ function ChatApp({
                     aria-label={tChat("changeMachineAria")}
                     title={tChat("changeMachineAria")}
                     className={cn(
-                      "inline-flex rounded-[3px] transition-colors",
+                      "tap-target inline-flex rounded-[3px] transition-colors",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
                     )}
                   >
                     <Tag
                       size="small"
-                      leadingIcon={<FolderTree className="h-3 w-3" />}
+                      leadingIcon={
+                        isFleet ? (
+                          <Boxes className="h-3 w-3" />
+                        ) : (
+                          <FolderTree className="h-3 w-3" />
+                        )
+                      }
                       className="cursor-pointer hover:brightness-95"
                     >
-                      {machine.name}
+                      {isFleet ? tChat("fleetTag") : machine?.name}
                     </Tag>
                   </button>
                 ) : (
                   <Tag
                     size="small"
-                    leadingIcon={<FolderTree className="h-3 w-3" />}
+                    leadingIcon={
+                      isFleet ? (
+                        <Boxes className="h-3 w-3" />
+                      ) : (
+                        <FolderTree className="h-3 w-3" />
+                      )
+                    }
                   >
-                    {machine.name}
+                    {isFleet ? tChat("fleetTag") : machine?.name}
                   </Tag>
                 ))}
               {showActionButtons && (
@@ -1537,7 +1842,7 @@ function ChatApp({
                       size="sm"
                       onClick={() => setForceShowSuggestions((v) => !v)}
                       aria-pressed={forceShowSuggestions}
-                      className="leading-[16px] sm:text-[14px]"
+                      className="tap-target leading-[16px] sm:text-[14px]"
                     >
                       <Lightbulb className="mr-1.5 h-4 w-4" />
                       {forceShowSuggestions
@@ -1545,15 +1850,20 @@ function ChatApp({
                         : tChat("showSuggestions")}
                     </Button>
                   )}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setEscalate({ phase: "confirm", note: "" })}
-                    className="leading-[16px] sm:text-[14px]"
-                  >
-                    <Wrench className="mr-1.5 h-4 w-4" />
-                    {tChat("callService")}
-                  </Button>
+                  {/* Escalation is machine-specific (the technician
+                      needs to know WHICH machine) — hidden in fleet
+                      scope until the escalate flow learns to ask. */}
+                  {!isFleet && (!!conversationId || !!machine?.id) && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setEscalate({ phase: "confirm", note: "" })}
+                      className="tap-target leading-[16px] sm:text-[14px]"
+                    >
+                      <Wrench className="mr-1.5 h-4 w-4" />
+                      {tChat("callService")}
+                    </Button>
+                  )}
                   {showConversationActions && (
                     <>
                       <Button
@@ -1562,7 +1872,7 @@ function ChatApp({
                         onClick={startNewConversation}
                         disabled={streaming}
                         title={tChat("newChatAria")}
-                        className="leading-[16px] sm:text-[14px]"
+                        className="tap-target leading-[16px] sm:text-[14px]"
                       >
                         {tChat("newChat")}
                       </Button>
@@ -1570,7 +1880,7 @@ function ChatApp({
                         variant="secondary"
                         size="sm"
                         onClick={() => setFeedback({ phase: "prompt" })}
-                        className="leading-[16px] sm:text-[14px]"
+                        className="tap-target leading-[16px] sm:text-[14px]"
                       >
                         {tChat("endConversation")}
                       </Button>
@@ -1639,6 +1949,10 @@ function ChatApp({
                   {tChat("attachments.dropHere")}
                 </div>
               )}
+              {/* Attachments are stored per machine — no machine, no
+                  upload target. Hidden (not disabled) in fleet scope so
+                  it doesn't read as broken. */}
+              {!isFleet && (
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -1653,6 +1967,7 @@ function ChatApp({
               >
                 <Plus className="h-5 w-5" />
               </button>
+              )}
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1808,6 +2123,7 @@ function MessageRow({
   message,
   locale,
   isStreaming,
+  sessionAction,
   onCallService,
   onRetry,
   onRegenerate,
@@ -1815,6 +2131,7 @@ function MessageRow({
   message: Message;
   locale: string;
   isStreaming?: boolean;
+  sessionAction?: { label: string; onClick: () => void };
   onCallService?: () => void;
   onRetry?: () => void;
   onRegenerate?: () => void;
@@ -1866,12 +2183,15 @@ function MessageRow({
     // Outage / network failure card. We render this in place of the
     // normal markdown bubble so the operator gets a clear non-prose
     // affordance ("Try again", optional status link) instead of a
-    // chat-styled error sentence they might miss.
+    // chat-styled error sentence they might miss. Session expiry gets
+    // a recovery action instead of a retry that can never succeed.
+    const isSession = message.error.kind === "session";
     return (
       <OutageCard
         info={message.error}
         message={message.content}
-        onRetry={onRetry}
+        onRetry={isSession ? undefined : onRetry}
+        action={isSession ? sessionAction : undefined}
       />
     );
   }
@@ -1903,15 +2223,13 @@ function MessageRow({
           <SpeakButton text={message.content} />
           <CopyButton text={message.content} />
           {onRegenerate && (
-            <button
-              type="button"
+            <IconButton
               onClick={onRegenerate}
               title={tChat("regenerate")}
               aria-label={tChat("regenerate")}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
             >
               <RefreshCw className="h-4 w-4" />
-            </button>
+            </IconButton>
           )}
           <MessageTimestamp
             createdAt={message.createdAt}
@@ -1991,23 +2309,18 @@ function CopyButton({ text }: { text: string }) {
   }
   const label = copied ? tChat("copied") : tChat("copy");
   return (
-    <button
-      type="button"
+    <IconButton
       onClick={() => void copy()}
       title={label}
       aria-label={label}
-      className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-        "text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
-        copied && "text-emerald-600 hover:text-emerald-600",
-      )}
+      className={cn(copied && "text-emerald-600 hover:text-emerald-600")}
     >
       {copied ? (
         <Check className="h-4 w-4" />
       ) : (
         <Copy className="h-4 w-4" />
       )}
-    </button>
+    </IconButton>
   );
 }
 
@@ -2069,10 +2382,10 @@ function AttachmentChip({
       <button
         type="button"
         onClick={onRemove}
-        aria-label={tCommon("close")}
-        className="absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+        aria-label={tCommon("remove")}
+        className="tap-target absolute right-0.5 top-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
       >
-        <X className="h-3 w-3" />
+        <X className="h-3.5 w-3.5" />
       </button>
     </div>
   );
@@ -2136,9 +2449,9 @@ function ToolStepRow({ step }: { step: ToolStep }) {
   } else if (t.has(`toolLabels.${step.name}`)) {
     label = t(`toolLabels.${step.name}` as Parameters<typeof t>[0]);
   } else if (step.source === "mcp") {
-    label = `${t("toolFetchingMachineData")} (${step.name})`;
+    label = t("toolFetchingMachineDataNamed", { name: step.name });
   } else {
-    label = `${t("toolRunning")} ${step.name}`;
+    label = t("toolRunningNamed", { name: step.name });
   }
 
   return (
@@ -2264,6 +2577,7 @@ function FeedbackCard({
   onAnswerYes,
   onAnswerNo,
   onSubmitYes,
+  onSubmitNo,
   onSolutionChange,
   onDismiss,
   onStartNew,
@@ -2272,6 +2586,7 @@ function FeedbackCard({
   onAnswerYes: () => void;
   onAnswerNo: () => void;
   onSubmitYes: (solution: string) => void;
+  onSubmitNo: (comment: string) => void;
   onSolutionChange: (solution: string) => void;
   onDismiss: () => void;
   onStartNew: () => void;
@@ -2318,7 +2633,7 @@ function FeedbackCard({
           <button
             type="button"
             onClick={onDismiss}
-            className="text-red-700/70 hover:text-red-700"
+            className="tap-target text-red-700/70 hover:text-red-700"
             aria-label={tCommon("close")}
           >
             <X className="h-4 w-4" />
@@ -2330,7 +2645,8 @@ function FeedbackCard({
 
   const submitting =
     state.phase === "submitting" ||
-    (state.phase === "answered_yes" && state.submitting);
+    (state.phase === "answered_yes" && state.submitting) ||
+    (state.phase === "answered_no" && state.submitting);
 
   return (
     <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-md)] sm:p-4">
@@ -2347,7 +2663,7 @@ function FeedbackCard({
           type="button"
           onClick={onDismiss}
           disabled={submitting}
-          className="shrink-0 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
+          className="tap-target shrink-0 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
           aria-label={tCommon("close")}
         >
           <X className="h-4 w-4" />
@@ -2374,27 +2690,43 @@ function FeedbackCard({
           )}
         </div>
       ) : state.phase === "answered_yes" ? (
-        <YesSolutionForm
-          solution={state.solution}
+        <SolutionForm
+          value={state.solution}
           submitting={submitting}
+          labelKey="solutionLabel"
+          placeholderKey="solutionPlaceholder"
           onChange={onSolutionChange}
           onSubmit={() => onSubmitYes(state.solution)}
           onSkip={() => onSubmitYes("")}
+        />
+      ) : state.phase === "answered_no" ? (
+        <SolutionForm
+          value={state.comment}
+          submitting={submitting}
+          labelKey="noCommentLabel"
+          placeholderKey="noCommentPlaceholder"
+          onChange={onSolutionChange}
+          onSubmit={() => onSubmitNo(state.comment)}
+          onSkip={() => onSubmitNo("")}
         />
       ) : null}
     </div>
   );
 }
 
-function YesSolutionForm({
-  solution,
+function SolutionForm({
+  value,
   submitting,
+  labelKey,
+  placeholderKey,
   onChange,
   onSubmit,
   onSkip,
 }: {
-  solution: string;
+  value: string;
   submitting: boolean;
+  labelKey: "solutionLabel" | "noCommentLabel";
+  placeholderKey: "solutionPlaceholder" | "noCommentPlaceholder";
   onChange: (v: string) => void;
   onSubmit: () => void;
   onSkip: () => void;
@@ -2406,15 +2738,15 @@ function YesSolutionForm({
         htmlFor="solution"
         className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]"
       >
-        {t("solutionLabel")}
+        {t(labelKey)}
       </label>
       <Textarea
         id="solution"
-        value={solution}
+        value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
         disabled={submitting}
-        placeholder={t("solutionPlaceholder")}
+        placeholder={t(placeholderKey)}
       />
       <div className="flex justify-end gap-2">
         <Button
@@ -2497,7 +2829,7 @@ function EscalateCard({
           <button
             type="button"
             onClick={onCancel}
-            className="text-red-700/70 hover:text-red-700"
+            className="tap-target text-red-700/70 hover:text-red-700"
             aria-label={t("cancel")}
           >
             <X className="h-4 w-4" />
@@ -2526,7 +2858,7 @@ function EscalateCard({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="shrink-0 text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
+          className="tap-target shrink-0 text-amber-900/60 hover:text-amber-900 disabled:opacity-50"
           aria-label={t("cancel")}
         >
           <X className="h-4 w-4" />
@@ -2594,7 +2926,7 @@ function ShareLinkRow({ url }: { url: string }) {
       <button
         type="button"
         onClick={() => void copy()}
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[13px] text-amber-900 hover:bg-amber-100"
+        className="tap-target inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius)] border border-amber-200 bg-white px-3 py-1.5 text-[13px] text-amber-900 hover:bg-amber-100"
       >
         {copied ? (
           <>

@@ -21,7 +21,13 @@ import {
   appendUserMessage,
   createConversation,
   validateConversation,
+  type ConversationScope,
 } from "@/lib/conversations";
+import {
+  getFleetMachines,
+  resolveFleetMachine,
+  type FleetMachine,
+} from "@/lib/fleet";
 import { getMcpAccessForAccount, type McpAccess } from "@/lib/mcpConfig";
 import {
   readQrTokenFromRequest,
@@ -120,6 +126,7 @@ Tool & formatting rules:
   The \`<document_id>\` is the \`document_id\` value returned by **search_kb** or **list_documents**. NEVER invent IDs and NEVER paste raw https URLs — the platform's signed URLs expire after a few minutes; only the \`opti:doc/<id>\` form is stable.
 - When a **search_kb** result has \`is_image: true\` AND an \`asset_id\`, you can **embed the figure inline** in your reply using this exact form: \`![short alt text](opti:asset/<asset_id>)\`. Place it on its own line, ideally right where you reference the figure in the prose. The operator-side renderer fetches the actual image. Same rules as for documents: only use \`asset_id\` values from tool results, never invent them, never paste raw URLs. If you embed a figure inline you can skip mentioning it again — the chip rail below still renders the same thumbnail for navigation.
 - There is also a knowledge drawer (book icon on the right edge of the screen) where the operator can browse every manual for this machine on their own. You may mention it if they ask how to access the documents in general.
+- When you conclude the operator needs a human technician (the manuals don't cover it, the fix requires service intervention, or the issue is safety-critical), offer the escalation button inline using this exact form: \`[label](opti:call-service)\` with a short action label in the operator's language (e.g. "Tilkald service" / "Call service"). It renders as a button that starts the escalation flow. Only emit it when you are genuinely recommending human help — never as decoration on ordinary uses of the word "service".
 - If the question is ambiguous, ask one clarifying question before searching or guessing.
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
 
@@ -134,6 +141,49 @@ Formatting (answers render as Markdown):
 - Never wrap the entire answer in a code block.
 - When a search result has \`is_image: true\`, it is a figure/diagram. Mention briefly in prose what the figure shows ("see the diagram of the tool-change sequence below"). The operator sees the thumbnail automatically below your reply — do NOT try to embed the image yourself.
 - The operator may attach photos to their message (HMI panel, alarm screen, damaged part, …). Read them carefully — they are first-hand evidence of what is happening at the machine. Use them to disambiguate (e.g. read the alarm code off the screen) and search the manual based on what you see. If a photo is unclear, ask the operator for a specific detail instead of guessing.
+
+LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
+`;
+
+// Fleet-scope preamble. A deliberate copy of SYSTEM_PREAMBLE with the
+// single-machine assumptions inverted (several machines in scope,
+// machine-parameterized tools, per-machine attribution) rather than a
+// shared template — SYSTEM_PREAMBLE is a byte-stable prompt-cache
+// prefix and must never change as a side effect of fleet edits.
+const FLEET_PREAMBLE = `You are Opti Assist, an assistant covering ALL machines on an industrial company's account. The user is typically a supervisor, technician, or production manager who works across several machines — not an operator standing at one.
+
+Your job: help them get fast, reliable answers across the whole fleet — find which machine a problem belongs to, compare machines, and pull answers from any machine's manuals. Use plain, everyday language. Keep technical terms, alarm codes, button names and menu items in the language they appear on the machine itself (e.g. **RESET**, **M06**, **Alarm 731**).
+
+Scope rules:
+- The fleet list in this prompt is the full set of machines in scope. When the user names a machine, match it against that list (names may be partial or misspelled — pick the obvious match).
+- When a question clearly concerns ONE machine but you cannot tell which, ask which machine they mean before answering.
+- When a question is fleet-wide ("which machines…", "compare…", "any machine…"), answer across machines and organize the answer per machine.
+- Always make clear which machine each part of your answer refers to.
+
+Tool & formatting rules:
+- Use the **search_kb** tool to find information in the manuals BEFORE answering technical questions. It searches every machine by default; pass \`machine_id\` (from the fleet list) to focus on one machine. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
+- Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the user should check or who they should contact.
+- Use the **list_documents** tool when the user asks what manuals are available, asks for a link / the PDF / the file itself, or wants to browse the knowledge base — pass \`machine_id\` for one machine or omit it for all. Each returned document is rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the user you cannot share links — you can, by calling this tool.
+- Be brief and to the point. They want the answer, not a lecture.
+- When you cite a source, refer to the document title as it appears in the search result, and name the machine it belongs to.
+- Document hits from **search_kb** and **list_documents** appear automatically as clickable chips below your reply — the user can tap them to open the PDF at the right page. The chips below are always there as a catalog; on top of that, you can **embed an inline clickable link** directly in your prose when it specifically helps the reader, using this exact form:
+  - \`[Operatørmanual](opti:doc/<document_id>)\` — opens the PDF in a new tab.
+  - \`[Operatørmanual, side 12](opti:doc/<document_id>?page=12)\` — opens at a specific page.
+  The \`<document_id>\` is the \`document_id\` value returned by **search_kb** or **list_documents**. NEVER invent IDs and NEVER paste raw https URLs — the platform's signed URLs expire after a few minutes; only the \`opti:doc/<id>\` form is stable.
+- When a **search_kb** result has \`is_image: true\` AND an \`asset_id\`, you can **embed the figure inline** in your reply using this exact form: \`![short alt text](opti:asset/<asset_id>)\`. Place it on its own line, ideally right where you reference the figure in the prose. The renderer fetches the actual image. Same rules as for documents: only use \`asset_id\` values from tool results, never invent them, never paste raw URLs. If you embed a figure inline you can skip mentioning it again — the chip rail below still renders the same thumbnail for navigation.
+- When you conclude the user needs a human technician (the manuals don't cover it, the fix requires service intervention, or the issue is safety-critical), offer the escalation button inline using this exact form: \`[label](opti:call-service)\` with a short action label in the user's language (e.g. "Tilkald service" / "Call service"). It renders as a button that starts the escalation flow. Only emit it when you are genuinely recommending human help — never as decoration on ordinary uses of the word "service".
+- For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the user to follow site safety procedures.
+
+Formatting (answers render as Markdown):
+- Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
+- Use numbered lists for step-by-step procedures, bullet lists for options or checks. When comparing machines, a short Markdown table often reads best.
+- Bold important values, part numbers, alarm codes, and button/menu names (e.g. **Alarm 731**, **RESET**, **M06**).
+- Use short headings (### Heading) only when the answer has 2+ distinct parts. Skip headings for short answers.
+- Use inline \`code\` for parameter names, file paths, and exact values.
+- Keep paragraphs to 1–3 lines. Prefer lists over prose for any multi-step content.
+- Do NOT write a *Source:* line yourself — source links are appended automatically below your answer when you have used search_kb. You may refer to a manual's title in prose if it helps, but no footer citation.
+- Never wrap the entire answer in a code block.
+- When a search result has \`is_image: true\`, it is a figure/diagram. Mention briefly in prose what the figure shows ("see the diagram of the tool-change sequence below"). The user sees the thumbnail automatically below your reply — do NOT try to embed the image yourself.
 
 LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
 `;
@@ -176,6 +226,66 @@ const LIST_DOCUMENTS_TOOL: Tool = {
 // has authorized credentials. See docs/optipeople-data-access.md.
 const TOOLS: Tool[] = [SEARCH_KB_TOOL, LIST_DOCUMENTS_TOOL];
 
+// ---------------------------------------------------------------------------
+// Fleet scope ("all machines"). Same tool names, different schemas: the
+// model must be able to address individual machines, so both tools gain
+// a machine_id parameter. The machine-scope prompt + TOOLS above must
+// stay byte-identical — they are a stable 1h prompt-cache prefix shared
+// across every conversation on a machine. docs/fleet-mode-plan.md
+// ---------------------------------------------------------------------------
+
+const FLEET_SEARCH_KB_TOOL: Tool = {
+  name: "search_kb",
+  description:
+    "Search the knowledge bases (manuals, instructions, alarm references) of the machines on this account. Searches ALL machines by default; pass machine_id to restrict to one. Returns ranked snippets with their source document, page numbers, and which machine they belong to.",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Short, specific search query. Phrase it the way it would appear in a manual (e.g. 'alarm 731 reset', 'tool change procedure'). May be in any language; the index handles cross-lingual matching.",
+      },
+      machine_id: {
+        type: "string",
+        description:
+          "Optional. Restrict the search to one machine — a machine_id from the fleet list in the system prompt. Omit to search every machine.",
+      },
+      top_k: {
+        type: "integer",
+        description: "How many results to return. Default 6, max 12.",
+        default: 6,
+      },
+    },
+    required: ["query"],
+  },
+};
+
+const FLEET_LIST_DOCUMENTS_TOOL: Tool = {
+  name: "list_documents",
+  description:
+    "List the operator-visible manuals / documents on this account. Pass machine_id to list one machine's documents; omit to list every machine's. Each returned document is automatically rendered as a clickable chip under the assistant reply that opens the original PDF in a new tab — you do not need to paste URLs yourself.",
+  input_schema: {
+    type: "object",
+    properties: {
+      machine_id: {
+        type: "string",
+        description:
+          "Optional. A machine_id from the fleet list in the system prompt. Omit to list documents for all machines.",
+      },
+    },
+  },
+};
+
+const FLEET_TOOLS: Tool[] = [FLEET_SEARCH_KB_TOOL, FLEET_LIST_DOCUMENTS_TOOL];
+
+// Which machines a tool call may touch. Machine scope is exactly one id
+// (injected server-side, the model can't address others); fleet scope is
+// the account's whole machine set, with names for chip attribution.
+type ToolScope =
+  | { kind: "machine"; machineId: string }
+  | { kind: "fleet"; machines: FleetMachine[] };
+
 // Under the current MCP connector beta (mcp-client-2025-11-20) every
 // entry in `mcp_servers` must be referenced by exactly one mcp_toolset
 // entry in `tools` — the server list alone is a validation error.
@@ -198,6 +308,10 @@ type ChatRequest = {
   messages?: ChatMessage[];
   accountId?: string | null;
   machineId?: string | null;
+  // "machine" (default) pins the chat to machineId, exactly as before.
+  // "fleet" spans every machine on the account — bearer auth only; QR
+  // sessions are machine-pinned by design and ignore this field.
+  scope?: "machine" | "fleet" | null;
   conversationId?: string | null;
   // Optional QR token. When present and no Optipeople bearer is sent,
   // the request authenticates against the machine_kb.qr_token of the
@@ -246,7 +360,9 @@ function trimHistory(messages: ChatMessage[]): ChatMessage[] {
 // stale id in the client doesn't blow up the whole turn.
 async function buildConversation(
   messages: ChatMessage[],
-  machineId: string,
+  // Machines whose attachments this conversation may reference — one id
+  // in machine scope, the account's machine set in fleet scope.
+  allowedMachineIds: string[],
 ): Promise<MessageParam[]> {
   const supabase = getSupabaseServerClient();
   const out: MessageParam[] = [];
@@ -286,7 +402,7 @@ async function buildConversation(
       console.error("attachment lookup failed:", error);
     } else {
       for (const r of (data ?? []) as AttRow[]) {
-        if (r.machine_id === machineId) rowsById.set(r.id, r);
+        if (allowedMachineIds.includes(r.machine_id)) rowsById.set(r.id, r);
       }
     }
   }
@@ -475,6 +591,71 @@ ${manifest}
 `;
 }
 
+// Fleet-scope counterpart of buildSystemPrompt. The roster carries doc
+// COUNTS only, never per-machine doc manifests — a fleet-sized manifest
+// would bloat the cached prefix and it changes on every ingest anywhere
+// in the fleet; the model calls list_documents(machine_id) when it
+// needs titles. Cache key is per account (+ roster version), 1h TTL,
+// same as machine mode.
+async function buildFleetSystemPrompt(
+  accountId: string,
+  machines: FleetMachine[],
+  hasMcp: boolean,
+): Promise<string> {
+  const adminRules = await listEnabledAccountAiRules(accountId).catch((err) => {
+    // Rules are a "soft" enhancement — if the lookup fails, the locked
+    // rule still gets rendered below, so chat keeps working.
+    console.error("buildFleetSystemPrompt: listEnabledAccountAiRules failed:", err);
+    return [] as Awaited<ReturnType<typeof listEnabledAccountAiRules>>;
+  });
+
+  const roster = machines
+    .map((m) => {
+      const parts = [
+        `- **${m.displayName ?? "(unnamed)"}** — machine_id: "${m.machineId}"`,
+      ];
+      parts.push(
+        m.portalMachineId
+          ? `portal_machine_id: "${m.portalMachineId}"`
+          : "no portal data (knowledge base only)",
+      );
+      parts.push(
+        m.docCount === 1 ? "1 document" : `${m.docCount} documents`,
+      );
+      return parts.join(", ");
+    })
+    .join("\n");
+
+  const fleetIdentity = `Machines on this account — the fleet in scope for this conversation:
+${roster}
+
+Every machine above is in scope. Use each machine's machine_id when scoping search_kb / list_documents, and its portal_machine_id (when present) for Optipeople MCP data tools.`;
+
+  // The inverse of the machine-scope guidance: account-wide MCP tools
+  // are the natural fit for fleet questions, per-machine tools take the
+  // roster's portal ids. Only emitted when the account has MCP AND at
+  // least one machine is portal-linked — otherwise the model would be
+  // told about tools it can't scope to anything.
+  const hasPortalMachines = machines.some((m) => m.portalMachineId);
+  const mcpGuidance =
+    hasMcp && hasPortalMachines
+      ? `
+
+Optipeople MCP rules (live portal data — uptime, stops, KPIs, telemetry):
+- For fleet-wide questions ("which machines had stops today", "how is production doing") use the account-wide tools (e.g. get_machines_basic_info, get_factories_data) — they return data for every machine at once.
+- For per-machine data (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_telemetry_data, get_kpi_report_by_date) pass that machine's portal_machine_id from the fleet list above as machine_id. Do NOT call get_machine_id to look ids up — the fleet list already has them.
+- Machines listed with "no portal data" have no live portal data — answer for them from their knowledge base only, and say so if the user asks for their live numbers.`
+      : "";
+
+  const rulesSection = renderRulesSection(adminRules);
+
+  return `${rulesSection}
+
+${FLEET_PREAMBLE}
+${fleetIdentity}${mcpGuidance}
+`;
+}
+
 type DocHit = {
   id: string;
   title: string;
@@ -482,6 +663,9 @@ type DocHit = {
   // the operator-facing source chip via PDF "#page=N".
   pageFrom: number | null;
   score: number;
+  // Fleet scope only: which machine the document belongs to, so the
+  // source chip can carry attribution. Omitted in machine scope.
+  machineName?: string | null;
 };
 
 // One per image-caption chunk that came back from search_kb. The client
@@ -513,9 +697,41 @@ type ToolExecResult = {
   images: ImageHit[];
 };
 
+// Machines a tool call may touch, resolved from the scope and (in fleet
+// scope) the model-supplied machine_id. Returns an error string instead
+// when the model asked for a machine outside the fleet.
+function resolveToolMachines(
+  scope: ToolScope,
+  requestedMachineId: unknown,
+):
+  | { machineIds: string[]; nameById: Map<string, string | null> }
+  | { error: string } {
+  if (scope.kind === "machine") {
+    return {
+      machineIds: [scope.machineId],
+      nameById: new Map([[scope.machineId, null]]),
+    };
+  }
+  const nameById = new Map<string, string | null>(
+    scope.machines.map((m) => [m.machineId, m.displayName]),
+  );
+  if (typeof requestedMachineId === "string" && requestedMachineId.trim()) {
+    const match = resolveFleetMachine(scope.machines, requestedMachineId.trim());
+    if (!match) {
+      return {
+        error: `Unknown machine_id "${requestedMachineId}". Valid machine_id values: ${scope.machines
+          .map((m) => `"${m.machineId}"`)
+          .join(", ")}.`,
+      };
+    }
+    return { machineIds: [match.machineId], nameById };
+  }
+  return { machineIds: scope.machines.map((m) => m.machineId), nameById };
+}
+
 async function executeSearchKb(
-  machineId: string,
-  input: { query?: unknown; top_k?: unknown },
+  scope: ToolScope,
+  input: { query?: unknown; machine_id?: unknown; top_k?: unknown },
 ): Promise<ToolExecResult> {
   if (typeof input.query !== "string" || input.query.trim().length === 0) {
     return {
@@ -525,6 +741,17 @@ async function executeSearchKb(
       images: [],
     };
   }
+  const resolved = resolveToolMachines(scope, input.machine_id);
+  if ("error" in resolved) {
+    return {
+      modelPayload: { error: resolved.error },
+      chunkIds: [],
+      documents: [],
+      images: [],
+    };
+  }
+  const { machineIds, nameById } = resolved;
+  const isFleet = scope.kind === "fleet";
   const topK = Math.min(
     Math.max(typeof input.top_k === "number" ? input.top_k : 6, 1),
     12,
@@ -532,16 +759,22 @@ async function executeSearchKb(
   const query = input.query.trim();
 
   const supabase = getSupabaseServerClient();
-  const queryEmbedding = await embedQuery(query, { machineId });
-  const { data, error } = await supabase.rpc("search_kb", {
-    p_machine_id: machineId,
+  const queryEmbedding = await embedQuery(query, {
+    machineId: machineIds.length === 1 ? machineIds[0] : null,
+  });
+  // search_kb_multi is the array generalization of search_kb (same RRF
+  // formula) and additionally returns each chunk's machine_id. Machine
+  // scope passes a one-element array — results are identical to the old
+  // single-machine function, which the voice path still uses.
+  const { data, error } = await supabase.rpc("search_kb_multi", {
+    p_machine_ids: machineIds,
     p_query_embedding: queryEmbedding,
     p_query_text: query,
     p_embedding_model: VOYAGE_MODEL,
     p_match_count: topK,
   });
   if (error) {
-    console.error("search_kb rpc error:", error);
+    console.error("search_kb_multi rpc error:", error);
     return {
       modelPayload: { error: error.message },
       chunkIds: [],
@@ -553,6 +786,7 @@ async function executeSearchKb(
   const rows = (data ?? []) as Array<{
     chunk_id: string;
     document_id: string;
+    machine_id: string;
     ordinal: number;
     page_from: number | null;
     page_to: number | null;
@@ -630,6 +864,11 @@ async function executeSearchKb(
         title: titleByDoc.get(r.document_id) ?? "(unknown)",
         pageFrom: r.page_from,
         score: r.rrf_score,
+        // Chip attribution only matters when several machines are in
+        // scope; machine scope keeps the hit shape unchanged.
+        ...(isFleet
+          ? { machineName: nameById.get(r.machine_id) ?? null }
+          : {}),
       });
     }
     const assetId = assetByChunk.get(r.chunk_id);
@@ -657,6 +896,15 @@ async function executeSearchKb(
         return {
           document_id: r.document_id,
           title: titleByDoc.get(r.document_id) ?? "(unknown)",
+          // Fleet scope: tell the model which machine the snippet came
+          // from so it can attribute its answer. Machine scope omits
+          // both keys — payload identical to before.
+          ...(isFleet
+            ? {
+                machine_id: r.machine_id,
+                machine: nameById.get(r.machine_id) ?? undefined,
+              }
+            : {}),
           page_from: r.page_from,
           text:
             r.text.length > MAX_SNIPPET_CHARS
@@ -692,15 +940,32 @@ async function executeSearchKb(
 // model has no other way to surface a manual that wasn't matched by a
 // content search.
 async function executeListDocuments(
-  machineId: string,
+  scope: ToolScope,
+  input: { machine_id?: unknown },
 ): Promise<ToolExecResult> {
+  const resolved = resolveToolMachines(scope, input.machine_id);
+  if ("error" in resolved) {
+    return {
+      modelPayload: { error: resolved.error },
+      chunkIds: [],
+      documents: [],
+      images: [],
+    };
+  }
+  const { machineIds, nameById } = resolved;
+  const isFleet = scope.kind === "fleet";
+
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kb_documents")
-    .select("id, title, summary, folder_path, source_type, page_count")
-    .eq("machine_id", machineId)
+    .select("id, machine_id, title, summary, folder_path, source_type, page_count")
+    .in("machine_id", machineIds)
     .eq("operator_visible", true)
     .eq("status", "ready")
+    // Fleet listings group per machine first so the model can relay
+    // them machine by machine; within a machine the order matches the
+    // knowledge drawer (folder, then title).
+    .order("machine_id", { ascending: true })
     .order("folder_path", { ascending: true, nullsFirst: true })
     .order("title", { ascending: true });
 
@@ -716,6 +981,7 @@ async function executeListDocuments(
 
   const rows = (data ?? []) as Array<{
     id: string;
+    machine_id: string;
     title: string;
     summary: string;
     folder_path: string | null;
@@ -732,12 +998,19 @@ async function executeListDocuments(
     title: r.title,
     pageFrom: null,
     score: SYNTHETIC_SCORE,
+    ...(isFleet ? { machineName: nameById.get(r.machine_id) ?? null } : {}),
   }));
 
   return {
     modelPayload: {
       results: rows.map((r) => ({
         document_id: r.id,
+        ...(isFleet
+          ? {
+              machine_id: r.machine_id,
+              machine: nameById.get(r.machine_id) ?? undefined,
+            }
+          : {}),
         title: r.title,
         summary:
           (r.summary ?? "").length > MAX_LIST_SUMMARY_CHARS
@@ -749,7 +1022,9 @@ async function executeListDocuments(
       })),
       note:
         rows.length === 0
-          ? "No operator-visible documents are available for this machine."
+          ? isFleet
+            ? "No operator-visible documents are available for the requested machine(s)."
+            : "No operator-visible documents are available for this machine."
           : "Each result is rendered as a clickable chip below your reply that opens the original PDF in a new tab. Reference the titles in prose if helpful; do not paste URLs.",
     },
     chunkIds: [],
@@ -761,13 +1036,13 @@ async function executeListDocuments(
 async function executeTool(
   name: string,
   input: unknown,
-  machineId: string,
+  scope: ToolScope,
 ): Promise<ToolExecResult> {
   if (name === "search_kb") {
-    return executeSearchKb(machineId, input as Record<string, unknown>);
+    return executeSearchKb(scope, input as Record<string, unknown>);
   }
   if (name === "list_documents") {
-    return executeListDocuments(machineId);
+    return executeListDocuments(scope, input as Record<string, unknown>);
   }
   return {
     modelPayload: { error: `Unknown tool: ${name}` },
@@ -817,6 +1092,11 @@ export async function POST(req: Request) {
   let resolvedAccountId = accountId;
   let resolvedMachineId = machineId;
   let entryMode: "qr" | "manual" = "manual";
+  // Fleet scope is opt-in per request and bearer-only — QR sessions are
+  // machine-pinned by design, so the flag is forced back to machine
+  // below when a QR token authenticates the request.
+  let scopeKind: "machine" | "fleet" =
+    body.scope === "fleet" ? "fleet" : "machine";
 
   if (hasBearer) {
     try {
@@ -841,9 +1121,10 @@ export async function POST(req: Request) {
     };
     // QR sessions are pinned to a single machine — ignore whatever the
     // client sent and use the machine the token resolves to. Same for
-    // accountId; never trust client-supplied IDs over the token.
+    // accountId and scope; never trust client-supplied IDs over the token.
     resolvedMachineId = qrSession.machineId;
     resolvedAccountId = qrSession.accountId;
+    scopeKind = "machine";
     entryMode = "qr";
   } else {
     return Response.json(
@@ -860,15 +1141,38 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (!resolvedMachineId) {
+  if (scopeKind === "machine" && !resolvedMachineId) {
     return Response.json(
       { error: t("missingField", { field: "machineId" }) },
       { status: 400 },
     );
   }
 
+  // Fleet scope spans every machine onboarded for the account. The set
+  // is resolved server-side from machine_kb — never from the client —
+  // and drives the prompt roster, tool dispatch, and attachment access.
+  let fleetMachines: FleetMachine[] = [];
+  if (scopeKind === "fleet") {
+    fleetMachines = await getFleetMachines(resolvedAccountId);
+    if (fleetMachines.length === 0) {
+      return Response.json({ error: t("fleetNoMachines") }, { status: 400 });
+    }
+  }
+  const toolScope: ToolScope =
+    scopeKind === "fleet"
+      ? { kind: "fleet", machines: fleetMachines }
+      : { kind: "machine", machineId: resolvedMachineId! };
+  const conversationScope: ConversationScope =
+    scopeKind === "fleet"
+      ? { kind: "fleet" }
+      : { kind: "machine", machineId: resolvedMachineId! };
+  const allowedMachineIds =
+    scopeKind === "fleet"
+      ? fleetMachines.map((m) => m.machineId)
+      : [resolvedMachineId!];
+
   console.log(
-    `chat: account=${resolvedAccountId} machine=${resolvedMachineId} user=${user.email ?? user.userId} entry=${entryMode} turns=${userMessages.length}`,
+    `chat: account=${resolvedAccountId} scope=${scopeKind} machine=${resolvedMachineId ?? "-"} user=${user.email ?? user.userId} entry=${entryMode} turns=${userMessages.length}`,
   );
 
   const anthropic = new Anthropic();
@@ -910,11 +1214,18 @@ export async function POST(req: Request) {
       }
 
       try {
-        const systemPrompt = await buildSystemPrompt(
-          resolvedMachineId,
-          resolvedAccountId,
-          !!mcpAccess,
-        );
+        const systemPrompt =
+          scopeKind === "fleet"
+            ? await buildFleetSystemPrompt(
+                resolvedAccountId,
+                fleetMachines,
+                !!mcpAccess,
+              )
+            : await buildSystemPrompt(
+                resolvedMachineId!,
+                resolvedAccountId,
+                !!mcpAccess,
+              );
 
         // Conversation lifecycle: client sends conversationId on
         // follow-ups; we validate it. Otherwise we create a fresh row
@@ -923,14 +1234,15 @@ export async function POST(req: Request) {
         if (body.conversationId) {
           const ok = await validateConversation(
             body.conversationId,
-            resolvedMachineId,
             user.userId,
+            conversationScope,
+            resolvedAccountId,
           );
           if (ok) conversationId = body.conversationId;
         }
         if (!conversationId) {
           conversationId = await createConversation({
-            machineId: resolvedMachineId,
+            scope: conversationScope,
             accountId: resolvedAccountId,
             userId: user.userId,
             userEmail: user.email,
@@ -971,7 +1283,7 @@ export async function POST(req: Request) {
               .update({ conversation_id: conversationId })
               .in("id", allAttachmentIds)
               .is("conversation_id", null)
-              .eq("machine_id", resolvedMachineId);
+              .in("machine_id", allowedMachineIds);
           });
         }
 
@@ -983,7 +1295,7 @@ export async function POST(req: Request) {
         // synchronous request lifetime.
         let conversation: MessageParam[] = await buildConversation(
           trimHistory(userMessages),
-          resolvedMachineId,
+          allowedMachineIds,
         );
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
         let lastStopReason: string | null = null;
@@ -1028,7 +1340,11 @@ export async function POST(req: Request) {
                   cache_control: { type: "ephemeral", ttl: "1h" },
                 },
               ],
-              tools: mcpAccess ? [...TOOLS, MCP_TOOLSET] : TOOLS,
+              tools: mcpAccess
+                ? [...(scopeKind === "fleet" ? FLEET_TOOLS : TOOLS), MCP_TOOLSET]
+                : scopeKind === "fleet"
+                  ? FLEET_TOOLS
+                  : TOOLS,
               messages: withCacheBreakpoint(conversation),
               ...(mcpAccess
                 ? {
@@ -1122,7 +1438,9 @@ export async function POST(req: Request) {
           // its own failures, so no safe() wrapper needed.
           await recordUsage({
             accountId: resolvedAccountId,
-            machineId: resolvedMachineId,
+            // Fleet turns aren't attributable to one machine — the
+            // account row still captures the spend.
+            machineId: resolvedMachineId ?? null,
             conversationId,
             userId: user.userId,
             provider: "anthropic",
@@ -1165,11 +1483,7 @@ export async function POST(req: Request) {
           const toolResults: ToolResultBlockParam[] = await Promise.all(
             toolUses.map(async (tu) => {
               try {
-                const exec = await executeTool(
-                  tu.name,
-                  tu.input,
-                  resolvedMachineId,
-                );
+                const exec = await executeTool(tu.name, tu.input, toolScope);
                 for (const d of exec.documents) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);
@@ -1234,6 +1548,9 @@ export async function POST(req: Request) {
                 id: d.id,
                 title: d.title,
                 pageFrom: d.pageFrom,
+                // Fleet scope: lets the chip say which machine the
+                // manual belongs to. Absent in machine scope.
+                ...(d.machineName ? { machineName: d.machineName } : {}),
               })),
             // Up to 4 figures — more than that overwhelms the chat
             // layout and the model rarely uses information from beyond

@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, Wrench } from "lucide-react";
+import { ChevronRight, ExternalLink, Wrench } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Pagination } from "@/components/ui/pagination";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
   DataTable,
@@ -17,7 +17,9 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import {
+  adminErrorMessage,
   listAdminEscalations,
+  setAdminEscalationStatus,
   type AdminEscalationListItem,
 } from "@/admin/adminApi";
 
@@ -44,9 +46,9 @@ export function EscalationsList({
   machineId: string;
   embedded?: boolean;
 }) {
-  const router = useRouter();
   const t = useTranslations("admin.escalations");
   const tc = useTranslations("common");
+  const tErr = useTranslations("admin.apiErrors");
   const CHANNEL_LABEL: Record<AdminEscalationListItem["channel"], string> = {
     sms: t("channelSms"),
     email: t("channelEmail"),
@@ -55,9 +57,10 @@ export function EscalationsList({
   };
   const [items, setItems] = useState<AdminEscalationListItem[]>([]);
   const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,18 +68,80 @@ export function EscalationsList({
       .then((res) => {
         if (cancelled) return;
         setItems(res.escalations);
-        setHasMore(res.hasMore);
+        setTotal(res.total);
         setLoading(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : tc("unknownError"));
+        setError(adminErrorMessage(err, tErr) ?? tc("unknownError"));
         setLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, [machineId, page]);
+
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  // Escalations from QR-sticker sessions store the pseudo user id
+  // ("qr:<suffix>") as created_by — show a readable label instead.
+  const operatorLabel = (createdBy: string | null) =>
+    createdBy == null ? "—" : createdBy.startsWith("qr:") ? t("qrOperator") : createdBy;
+
+  // Optimistic toggle: flip the row immediately, revert if the PATCH
+  // fails.
+  async function toggleStatus(e: AdminEscalationListItem) {
+    const next = e.status === "open" ? "handled" : "open";
+    setActionError(null);
+    setItems((prev) =>
+      prev.map((x) => (x.id === e.id ? { ...x, status: next } : x)),
+    );
+    try {
+      const updated = await setAdminEscalationStatus(e.id, next);
+      setItems((prev) =>
+        prev.map((x) =>
+          x.id === e.id
+            ? {
+                ...x,
+                status: updated.status,
+                handledAt: updated.handledAt,
+                handledBy: updated.handledBy,
+              }
+            : x,
+        ),
+      );
+    } catch (err) {
+      setItems((prev) =>
+        prev.map((x) => (x.id === e.id ? { ...x, status: e.status } : x)),
+      );
+      setActionError(adminErrorMessage(err, tErr) ?? tc("unknownError"));
+    }
+  }
+
+  function statusCell(e: AdminEscalationListItem) {
+    return (
+      <div className="flex items-center gap-2">
+        <Tag variant={e.status === "open" ? "warning" : "positive"} size="small">
+          {e.status === "open" ? t("statusOpen") : t("statusHandled")}
+        </Tag>
+        <Button
+          variant="ghost"
+          size="pill"
+          title={
+            e.status === "handled" && e.handledBy
+              ? t("handledByTitle", { by: e.handledBy })
+              : undefined
+          }
+          onClick={(ev) => {
+            ev.stopPropagation();
+            void toggleStatus(e);
+          }}
+        >
+          {e.status === "open" ? t("markHandled") : t("reopen")}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
@@ -92,6 +157,12 @@ export function EscalationsList({
           <p className="mt-1 text-[13px] text-[var(--color-muted-foreground)] sm:text-[14px]">
             {t("description")}
           </p>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-3 text-[13px] text-[var(--ds-red-dark)]">
+          {actionError}
         </div>
       )}
 
@@ -118,10 +189,18 @@ export function EscalationsList({
                 className="flex flex-col gap-2 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
-                    <Wrench className="mr-1 h-3 w-3" />
-                    {CHANNEL_LABEL[e.channel]}
-                  </Tag>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
+                      <Wrench className="mr-1 h-3 w-3" />
+                      {CHANNEL_LABEL[e.channel]}
+                    </Tag>
+                    <Tag
+                      variant={e.status === "open" ? "warning" : "positive"}
+                      size="small"
+                    >
+                      {e.status === "open" ? t("statusOpen") : t("statusHandled")}
+                    </Tag>
+                  </div>
                   <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-muted-foreground)]">
                     {DA_DT.format(new Date(e.createdAt))}
                   </span>
@@ -134,8 +213,8 @@ export function EscalationsList({
                     {e.note}
                   </p>
                 )}
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-muted-foreground)]">
-                  <span>{t("colOperator")}: {e.createdBy ?? "—"}</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[var(--color-muted-foreground)]">
+                  <span>{t("colOperator")}: {operatorLabel(e.createdBy)}</span>
                   {e.shareToken && (
                     <a
                       href={`/escalation/${e.shareToken}`}
@@ -148,6 +227,18 @@ export function EscalationsList({
                       <ExternalLink className="h-3 w-3" />
                     </a>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="pill"
+                    className="ml-auto"
+                    onClick={(ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      void toggleStatus(e);
+                    }}
+                  >
+                    {e.status === "open" ? t("markHandled") : t("reopen")}
+                  </Button>
                 </div>
               </Link>
             ))}
@@ -161,6 +252,7 @@ export function EscalationsList({
                 <DataTableHeader>{t("colRecipient")}</DataTableHeader>
                 <DataTableHeader>{t("colOperator")}</DataTableHeader>
                 <DataTableHeader>{t("colDescription")}</DataTableHeader>
+                <DataTableHeader>{t("colStatus")}</DataTableHeader>
                 <DataTableHeader>{t("colTechnicianLink")}</DataTableHeader>
                 <DataTableHeader className="w-10" />
               </DataTableHead>
@@ -168,11 +260,7 @@ export function EscalationsList({
                 {items.map((e) => (
                   <DataTableRow
                     key={e.id}
-                    onClick={() => {
-                      router.push(
-                        `/admin/machines/${machineId}/conversations/${e.conversationId}`,
-                      );
-                    }}
+                    href={`/admin/machines/${machineId}/conversations/${e.conversationId}`}
                   >
                     <DataTableCell className="tabular-nums">
                       {DA_DT.format(new Date(e.createdAt))}
@@ -184,16 +272,17 @@ export function EscalationsList({
                       </Tag>
                     </DataTableCell>
                     <DataTableCell className="font-mono text-[12px]">
-                      <span className="block max-w-[260px] truncate" title={e.target}>
+                      <span className="block max-w-[220px] truncate" title={e.target}>
                         {e.target}
                       </span>
                     </DataTableCell>
-                    <DataTableCell>{e.createdBy ?? "—"}</DataTableCell>
+                    <DataTableCell>{operatorLabel(e.createdBy)}</DataTableCell>
                     <DataTableCell className="text-[13px] text-[var(--ds-grey-medium-05)]">
-                      <span className="block max-w-[220px] truncate" title={e.note ?? undefined}>
+                      <span className="block max-w-[180px] truncate" title={e.note ?? undefined}>
                         {e.note ?? "—"}
                       </span>
                     </DataTableCell>
+                    <DataTableCell>{statusCell(e)}</DataTableCell>
                     <DataTableCell>
                       {e.shareToken ? (
                         <a
@@ -221,29 +310,16 @@ export function EscalationsList({
             </DataTable>
           </div>
 
-          {(page > 0 || hasMore) && (
-            <div className="flex items-center justify-between text-[13px] text-[var(--color-muted-foreground)]">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={page === 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                <ChevronLeft className="mr-1 h-3.5 w-3.5" />
-                {t("prev")}
-              </Button>
-              <span>{t("pageLabel", { n: page + 1 })}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!hasMore}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                {t("next")}
-                <ChevronRight className="ml-1 h-3.5 w-3.5" />
-              </Button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--color-muted-foreground)]">
+            <span>{t("totalLabel", { count: total })}</span>
+            {pageCount > 1 && (
+              <Pagination
+                page={page + 1}
+                pageCount={pageCount}
+                onChange={(p) => setPage(p - 1)}
+              />
+            )}
+          </div>
         </>
       )}
     </div>

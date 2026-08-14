@@ -34,6 +34,12 @@ export function SectionNav() {
       href: accountsHref,
       match: "/admin/accounts",
     },
+    {
+      id: "escalations",
+      label: t("escalations"),
+      href: "/admin/escalations",
+      match: "/admin/escalations",
+    },
   ];
 
   return (

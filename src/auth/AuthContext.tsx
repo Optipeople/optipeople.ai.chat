@@ -10,7 +10,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { login as apiLogin } from "./authApi";
+import { useTranslations } from "next-intl";
+import { LoginError, SessionExpiredError, login as apiLogin } from "./authApi";
+import { clearQrSession } from "./qrStorage";
 import { fetchConsentStatus, postConsent } from "./consentApi";
 import type { ConsentStatus } from "@/lib/consent";
 import { getCurrentUser } from "./currentUserApi";
@@ -31,13 +33,16 @@ import { fetchStoredLocale, persistLocale } from "@/i18n/localeApi";
 import {
   clearCurrentAccount,
   clearCurrentMachine,
+  clearFleetSelected,
   clearSession,
   getAccessToken,
   getCurrentAccount,
   getCurrentMachine,
+  getFleetSelected,
   getUserName,
   saveCurrentAccount,
   saveCurrentMachine,
+  saveFleetSelected,
   type StoredAccount,
   type StoredMachine,
 } from "./storage";
@@ -116,6 +121,10 @@ export type AuthContextValue = {
   currentMachine: StoredMachine | null;
   machinesForbidden: boolean;
   isInitializing: boolean;
+  // True while the role fetch after login/hydration is still in flight.
+  // AdminGate keeps its spinner up during this window instead of
+  // flashing "not authorized" at admins on every hard refresh.
+  isRoleLoading: boolean;
   isLoggingIn: boolean;
   isLoadingAccounts: boolean;
   isLoadingMachines: boolean;
@@ -123,8 +132,10 @@ export type AuthContextValue = {
   accountsError: string | null;
   machinesError: string | null;
   consentStatus: ConsentStatus | null;
+  consentError: boolean;
+  reloadConsent: () => Promise<void>;
   acceptConsent: (acceptAnalytics: boolean) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
   logout: () => void;
   selectAccount: (accountId: string) => void;
   clearSelectedAccount: () => void;
@@ -132,6 +143,11 @@ export type AuthContextValue = {
   selectMachine: (machineId: string) => void;
   clearSelectedMachine: () => void;
   reloadMachines: () => Promise<void>;
+  // Fleet scope ("all machines"): mutually exclusive with a selected
+  // machine. selectFleet enters it, selectMachine / clearSelectedMachine
+  // leave it. Only meaningful when the account has 2+ machines.
+  fleetSelected: boolean;
+  selectFleet: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -158,6 +174,7 @@ export function useAuth(): AuthContextValue {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const t = useTranslations();
   const [user, setUser] = useState<User | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [currentAccount, setCurrentAccount] = useState<StoredAccount | null>(
@@ -167,7 +184,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentMachine, setCurrentMachine] = useState<StoredMachine | null>(
     null,
   );
+  const [fleetSelected, setFleetSelected] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isRoleLoading, setIsRoleLoading] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
   const [isLoadingMachines, setIsLoadingMachines] = useState(false);
@@ -179,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [consentStatus, setConsentStatus] = useState<ConsentStatus | null>(
     null,
   );
+  const [consentError, setConsentError] = useState(false);
   // Mirror of user.permissionName that reloadAccounts can read without
   // waiting for a re-render. The role fetch is awaited before the
   // account fetch (see login / the hydrate effect), so by the time
@@ -193,6 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentAccount(null);
     setMachines([]);
     setCurrentMachine(null);
+    setFleetSelected(false);
     setAccountsForbidden(false);
     setMachinesForbidden(false);
     setLoginError(null);
@@ -201,15 +222,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setConsentStatus(null);
   }, []);
 
-  // Best-effort load of the consent status. A failure here leaves the
-  // status null, which the gate treats as "still loading" and shows
-  // the spinner rather than letting the user past unilaterally.
+  // Load of the consent status. A failure keeps the status null so the
+  // gate never lets the user past unilaterally — but it also sets
+  // consentError so the gate can offer a retry instead of spinning
+  // forever on flaky Wi-Fi.
   const refreshConsent = useCallback(async () => {
+    setConsentError(false);
     try {
       const status = await fetchConsentStatus();
-      if (status) setConsentStatus(status);
-    } catch {
-      // ignore — the gate will keep showing the spinner until next try
+      if (status) {
+        setConsentStatus(status);
+      } else {
+        setConsentError(true);
+      }
+    } catch (err) {
+      console.error("Consent status fetch failed", err);
+      setConsentError(true);
     }
   }, []);
 
@@ -253,15 +281,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMachinesForbidden(false);
 
       if (list.length === 1) {
+        // A one-machine account has no fleet to speak of — a stale
+        // fleet selection (machine removed since last visit) collapses
+        // to the lone machine.
         const only: StoredMachine = { id: list[0].id, name: list[0].name };
         saveCurrentMachine(only);
         setCurrentMachine(only);
+        clearFleetSelected();
+        setFleetSelected(false);
         return;
       }
 
       if (list.length === 0) {
         clearCurrentMachine();
         setCurrentMachine(null);
+        clearFleetSelected();
+        setFleetSelected(false);
         return;
       }
 
@@ -280,18 +315,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentMachine(null);
         return;
       }
-      const message =
-        err instanceof Error ? err.message : "Kunne ikke hente maskiner";
-      if (message === "Session expired") {
+      if (err instanceof SessionExpiredError) {
         logout();
         return;
       }
-      setMachinesError(message);
+      console.error("Machine list fetch failed", err);
+      setMachinesError(t("machineSelect.loadFailed"));
       setMachines([]);
     } finally {
       setIsLoadingMachines(false);
     }
-  }, [logout]);
+  }, [logout, t]);
 
   const reloadAccounts = useCallback(async () => {
     setIsLoadingAccounts(true);
@@ -362,25 +396,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentMachine(null);
         return;
       }
-      const message =
-        err instanceof Error ? err.message : "Kunne ikke hente konti";
       // Treat an expired/invalid session as a logout so the user lands back
       // on the login screen instead of being stuck on the picker.
-      if (message === "Session expired") {
+      if (err instanceof SessionExpiredError) {
         logout();
         return;
       }
-      setAccountsError(message);
+      console.error("Account list fetch failed", err);
+      setAccountsError(t("accountSelect.loadFailed"));
       setAccounts([]);
     } finally {
       setIsLoadingAccounts(false);
     }
-  }, [logout, reloadMachines]);
+  }, [logout, reloadMachines, t]);
 
   // Resolves role from /api/User/GetCurrentUser and merges it onto the
   // existing user. Best-effort — a failure here just leaves role: null,
   // it shouldn't block the rest of the auth flow.
   const refreshRole = useCallback(async () => {
+    setIsRoleLoading(true);
     try {
       const me = await getCurrentUser();
       if (me) {
@@ -400,6 +434,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch {
       // ignore — UI shows "—" rolle until the next refresh
+    } finally {
+      setIsRoleLoading(false);
     }
   }, []);
 
@@ -422,6 +458,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (storedAccount) setCurrentAccount(storedAccount);
       const storedMachine = getCurrentMachine();
       if (storedMachine) setCurrentMachine(storedMachine);
+      // Machine and fleet are mutually exclusive; a stored machine wins
+      // if both somehow survived in storage.
+      else if (getFleetSelected()) setFleetSelected(true);
       /* eslint-enable react-hooks/set-state-in-effect */
       // Role first — reloadAccounts needs it to decide whether to
       // narrow the list to onboarded accounts.
@@ -432,11 +471,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [reloadAccounts, refreshRole, refreshConsent]);
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, remember = true) => {
       setIsLoggingIn(true);
       setLoginError(null);
       try {
-        const res = await apiLogin(email, password);
+        const res = await apiLogin(email, password, remember);
+        // A leftover QR session from an earlier scan in this tab must not
+        // outrank the fresh login — it would silently degrade every call
+        // to QR scope.
+        clearQrSession();
         const resolvedEmail = res.user_name ?? email;
         setUser({
           email: resolvedEmail,
@@ -453,13 +496,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await refreshRole();
         await Promise.all([reloadAccounts(), refreshConsent()]);
       } catch (err) {
-        setLoginError(err instanceof Error ? err.message : "Login failed");
+        if (err instanceof LoginError) {
+          setLoginError(
+            t(`login.errors.${err.code}`, { status: err.status ?? 0 }),
+          );
+        } else {
+          console.error("Login failed", err);
+          setLoginError(t("login.errors.generic"));
+        }
         throw err;
       } finally {
         setIsLoggingIn(false);
       }
     },
-    [reloadAccounts, refreshRole, refreshConsent],
+    [reloadAccounts, refreshRole, refreshConsent, t],
   );
 
   const selectAccount = useCallback(
@@ -483,6 +533,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentAccount(null);
     setMachines([]);
     setCurrentMachine(null);
+    setFleetSelected(false);
     setMachinesForbidden(false);
     setMachinesError(null);
   }, []);
@@ -494,13 +545,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const sel: StoredMachine = { id: found.id, name: found.name };
       saveCurrentMachine(sel);
       setCurrentMachine(sel);
+      clearFleetSelected();
+      setFleetSelected(false);
     },
     [machines],
   );
 
+  const selectFleet = useCallback(() => {
+    saveFleetSelected();
+    setFleetSelected(true);
+    clearCurrentMachine();
+    setCurrentMachine(null);
+  }, []);
+
+  // "Back to the picker" — leaves machine AND fleet scope, since the
+  // picker is where both get chosen.
   const clearSelectedMachine = useCallback(() => {
     clearCurrentMachine();
     setCurrentMachine(null);
+    clearFleetSelected();
+    setFleetSelected(false);
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -513,6 +577,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentMachine,
       machinesForbidden,
       isInitializing,
+      isRoleLoading,
       isLoggingIn,
       isLoadingAccounts,
       isLoadingMachines,
@@ -520,6 +585,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accountsError,
       machinesError,
       consentStatus,
+      consentError,
+      reloadConsent: refreshConsent,
       acceptConsent,
       login,
       logout,
@@ -529,6 +596,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       selectMachine,
       clearSelectedMachine,
       reloadMachines,
+      fleetSelected,
+      selectFleet,
     }),
     [
       user,
@@ -539,6 +608,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentMachine,
       machinesForbidden,
       isInitializing,
+      isRoleLoading,
       isLoggingIn,
       isLoadingAccounts,
       isLoadingMachines,
@@ -546,6 +616,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accountsError,
       machinesError,
       consentStatus,
+      consentError,
+      refreshConsent,
       acceptConsent,
       login,
       logout,
@@ -555,6 +627,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       selectMachine,
       clearSelectedMachine,
       reloadMachines,
+      fleetSelected,
+      selectFleet,
     ],
   );
 

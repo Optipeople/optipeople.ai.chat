@@ -45,6 +45,16 @@ export type EscalationSnapshot = {
     content: string;
     createdAt: string;
   }>;
+  // Fault photos the operator attached during the chat. Stored as
+  // storage paths — the tech-facing view mints signed URLs at render
+  // time so the links in the frozen snapshot never go stale. Optional:
+  // rows written before this field existed simply have none.
+  attachments?: Array<{
+    id: string;
+    storagePath: string;
+    mimeType: string;
+    createdAt: string;
+  }>;
 };
 
 // Outbound payload for the 'webhook' channel. Stable, versioned shape so

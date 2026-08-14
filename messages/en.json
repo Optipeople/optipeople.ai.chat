@@ -16,7 +16,11 @@
     "unknownError": "Unknown error",
     "supportEmail": "support@optipeople.dk",
     "page": "p. {n}",
-    "openInNewTab": "Open {title} in a new tab"
+    "openInNewTab": "Open {title} in a new tab",
+    "ok": "OK",
+    "closeDialog": "Close dialog",
+    "remove": "Remove",
+    "search": "Search"
   },
   "metadata": {
     "title": "Opti Assist",
@@ -47,10 +51,14 @@
     "rememberMe": "Remember me on this computer",
     "submit": "Log in",
     "help": "Help me.",
-    "forgotPasswordPrefix": "I have ",
-    "forgotPassword": "forgotten my password",
-    "forgotPasswordSuffix": ".",
-    "termsOfService": "Terms of Service"
+    "termsOfService": "Terms of Service",
+    "forgotPasswordRich": "I have <link>forgotten my password</link>.",
+    "errors": {
+      "invalidCredentials": "Invalid email or password.",
+      "loginFailed": "Login failed ({status}). Try again in a moment.",
+      "noToken": "Login failed — no session was received. Try again.",
+      "generic": "Login failed. Check your connection and try again."
+    }
   },
   "forgotPassword": {
     "heading": "Reset your password",
@@ -83,7 +91,7 @@
   },
   "consent": {
     "heading": "Before you continue",
-    "subtitle": "OptiAssist is provided to your employer under a master agreement with Optipeople. Please confirm you've read the two short documents below.",
+    "subtitle": "Opti Assist is provided to your employer under a master agreement with Optipeople. Please confirm you've read the two short documents below.",
     "termsLabel": "I have read and accept the end-user terms of use.",
     "termsLink": "Read the terms of use",
     "privacyLabel": "I have read the privacy notice and understand how my data is processed.",
@@ -94,10 +102,11 @@
     "requiredHint": "* Required. Optipeople records your acceptance against your email for audit purposes.",
     "qrBanner": {
       "ariaLabel": "Notice about terms and privacy",
-      "title": "By using OptiAssist on this machine",
+      "title": "By using Opti Assist on this machine",
       "body": "You agree to the <terms>end-user terms of use</terms> and the <privacy>privacy notice</privacy>. Your factory has already signed the master agreement with Optipeople.",
       "acknowledge": "I understand"
-    }
+    },
+    "loadFailed": "Could not check your consent status."
   },
   "accountSelect": {
     "heading": "Choose account",
@@ -105,7 +114,8 @@
     "loading": "Loading accounts…",
     "empty": "No machines have been added to Opti Assist yet. Email {email} for help getting started.",
     "search": "Search accounts…",
-    "newAccount": "New account"
+    "newAccount": "New account",
+    "loadFailed": "Could not load your accounts. Check your connection and try again."
   },
   "newAccountWizard": {
     "dialogAria": "Create new account",
@@ -145,7 +155,11 @@
     "roleLabel": "Role",
     "createUser": "Add user",
     "doneHeading": "Account created",
-    "doneDescription": "{account} is ready. You can now select it from the account list."
+    "doneDescription": "{account} is ready. You can now select it from the account list.",
+    "emailInvalid": "Enter a valid e-mail address (e.g. name@company.com)",
+    "closeConfirmTitle": "Finish setup later?",
+    "closeConfirmBody": "The account \"{account}\" has already been created in Optipeople. The remaining steps can be finished later in the Optipeople portal — don't create the account again.",
+    "closeConfirmLabel": "Finish later"
   },
   "machineSelect": {
     "heading": "Choose machine",
@@ -156,13 +170,17 @@
     "emptyAdmin": "No machines have been added to Opti Assist for this account yet. Add the first one under {link}.",
     "emptyAdminLink": "Machine settings",
     "search": "Search machines…",
-    "switchAccount": "Switch account"
+    "switchAccount": "Switch account",
+    "loadFailed": "Could not load the machines. Check your connection and try again.",
+    "fleetEntry": "All machines",
+    "fleetEntrySub": "Chat across all {count} machines at once"
   },
   "qrError": {
     "heading": "The QR code doesn't work",
     "askAdmin": "Ask a super-admin to generate a new QR code for the machine.",
     "invalid": "The QR code is invalid or has been deactivated.",
-    "lookupFailed": "QR lookup error ({status})"
+    "lookupFailed": "QR lookup error ({status})",
+    "networkFailed": "Could not check the QR code — check your connection and try again."
   },
   "chat": {
     "emptyPrompt": "Ask about installation, maintenance, tool changes, alarms, or anything from your machine's manual.",
@@ -172,8 +190,6 @@
     "working": "Working…",
     "toolSearching": "Searching the manuals…",
     "toolListing": "Listing manuals…",
-    "toolFetchingMachineData": "Fetching machine data…",
-    "toolRunning": "Running",
     "toolLabels": {
       "get_account_information": "Fetching account information…",
       "get_factories_data": "Fetching factory data…",
@@ -198,7 +214,7 @@
       "get_total_working_hours_per_day_by_date": "Fetching daily working hours…"
     },
     "errorPrefix": "Error: {message}",
-    "errorCheckStatus": "Check Anthropic status",
+    "errorCheckStatus": "Check system status",
     "errorTryAgain": "Try again",
     "errorConnectionTitle": "Connection problem",
     "send": "Send",
@@ -233,13 +249,29 @@
       "q2": "Which documents do you have access to?",
       "q3": "Where do I find the manual?"
     },
+    "fleetTag": "All machines",
+    "fleetEmptyPrompt": "Ask across every machine on the account — compare uptime, find stops and errors, or search all the manuals at once.",
+    "fleetQuestions": {
+      "q1": "Which machines had stops today?",
+      "q2": "Compare uptime across the machines this week",
+      "q3": "Which machines do you have manuals for?"
+    },
     "attachments": {
       "addAria": "Attach image",
       "tooMany": "You can attach up to {max} images per message.",
       "unsupported": "Unsupported file. Use PNG, JPEG or WebP under 10 MB.",
       "failed": "Upload failed",
-      "dropHere": "Drop image to attach"
-    }
+      "dropHere": "Drop image to attach",
+      "uploadingHint": "Uploading photo…"
+    },
+    "sessionExpiredTitle": "You've been logged out",
+    "sessionExpiredBody": "Your session has expired. Log in again to continue — this conversation is saved on this device.",
+    "sessionExpiredBodyQr": "The QR session is no longer valid. Scan the QR sticker on the machine again to continue.",
+    "sessionExpiredAction": "Log in again",
+    "errorNetworkBody": "No connection — check your internet and try again.",
+    "errorServerBody": "The server responded with an error ({status}). Try again in a moment.",
+    "toolFetchingMachineDataNamed": "Fetching machine data ({name})",
+    "toolRunningNamed": "Running {name}"
   },
   "viewer": {
     "openInNewTab": "Open in new tab",
@@ -254,13 +286,16 @@
     "drawerAria": "Knowledge base",
     "heading": "Documents",
     "description": "Manuals and documents for this machine. Click any item to open it.",
+    "fleetDescription": "Manuals and documents for every machine on the account, grouped per machine. Click any item to open it.",
     "empty": "No documents available yet. Ask your administrator to make manuals visible here.",
     "adminEmptyTitle": "No documents yet",
     "adminEmptyBody": "Add manuals or images for this machine in the admin. They'll appear here and the assistant will use them to answer operator questions.",
     "adminUpload": "Add documents",
     "retry": "Try again",
     "missingUrl": "Missing URL in response",
-    "openFailed": "Could not open document"
+    "openFailed": "Could not open document",
+    "railLabel": "Manuals",
+    "loadFailed": "Could not load the documents. Check your connection and try again."
   },
   "feedback": {
     "prompt": "Was this helpful?",
@@ -276,7 +311,9 @@
     "solutionLabel": "What worked? (optional — will be shared with the next operator)",
     "solutionPlaceholder": "E.g. The RESET button + restart the controller after reading the alarm code.",
     "skip": "Skip",
-    "submit": "Send"
+    "submit": "Send",
+    "noCommentLabel": "What was missing? (optional)",
+    "noCommentPlaceholder": "E.g. the answer didn't match my machine or the problem."
   },
   "voice": {
     "dialogLabel": "Voice conversation with Opti Assist",
@@ -293,7 +330,10 @@
       "ending": "Ending…",
       "error": "Error — try again",
       "idle": "Inactive"
-    }
+    },
+    "errorBody": "The voice conversation could not start or lost its connection.",
+    "errorMicDenied": "Microphone access is blocked. Allow microphone access for this site in your browser settings, then try again.",
+    "retry": "Try again"
   },
   "speakButton": {
     "stop": "Stop playback",
@@ -321,13 +361,16 @@
       "email": "Email",
       "service_ticket": "Service ticket",
       "webhook": "Webhook"
-    }
+    },
+    "photos": "Photos from the operator",
+    "photoAlt": "Photo attached by the operator"
   },
   "admin": {
     "nav": {
       "sections": {
         "machines": "Machines",
-        "accounts": "Accounts"
+        "accounts": "Accounts",
+        "escalations": "Escalations"
       },
       "crumbs": {
         "machines": "Machines",
@@ -335,6 +378,7 @@
         "knowledge": "Knowledge",
         "settings": "Settings",
         "conversations": "Conversations",
+        "fleetConversations": "Fleet conversations",
         "escalations": "Escalations",
         "qr": "QR code",
         "rules": "AI rules",
@@ -354,7 +398,7 @@
     "machinesList": {
       "heading": "Machines",
       "loading": "Loading machines…",
-      "countLabel": "{count} machines with knowledge base",
+      "countLabel": "{count, plural, one {# machine with knowledge base} other {# machines with knowledge base}}",
       "searchPlaceholder": "Search by name or ID…",
       "addMachine": "Add machine",
       "emptyFirst": "Press \"Add machine\" to add your first machine.",
@@ -423,7 +467,6 @@
       "qrRevokeConfirmLabel": "Deactivate",
       "uploadHeading": "Upload files",
       "uploadDescription": "Drag any files or a whole folder here — PDFs, images (PNG/JPG/WebP) or other formats. The folder structure is preserved. Images are described with Claude vision; text files are indexed for chat; other files are stored as downloadable attachments.",
-      "folderLabel": "Folder (only for files picked via the button below)",
       "folderRoot": "(no folder)",
       "folderNew": "+ New folder…",
       "folderNewPlaceholder": "E.g. Setup/Calibration",
@@ -433,8 +476,7 @@
       "selectedCount": "{count} selected",
       "clearSelection": "Clear selection",
       "deleteN": "Delete {count}",
-      "bulkDeleteConfirmTitle": "Delete {count} documents?",
-      "bulkDeleteConfirmTitleOne": "Delete {count} document?",
+      "bulkDeleteConfirmTitle": "Delete {count, plural, one {# document} other {# documents}}?",
       "bulkDeleteConfirmBody": "The documents and all their embeddings are removed permanently. This action cannot be undone.",
       "bulkDeleteConfirmLabel": "Delete",
       "bulkDeleteFailed": "{failed} of {total} documents could not be deleted",
@@ -493,7 +535,13 @@
       "operatorVisibleHideAria": "Hide {title} from operators",
       "bulkShowOperators": "Show {count} to operators",
       "bulkHideOperators": "Hide {count} from operators",
-      "bulkVisibilityFailed": "Could not update visibility for {failed} of {total} documents"
+      "bulkVisibilityFailed": "Could not update visibility for {failed} of {total} documents",
+      "mcpManage": "Manage",
+      "mcpSetup": "Set up",
+      "folderLabelAll": "Folder (files land here; dropped folders keep their structure inside it)",
+      "failedReasonAria": "Failure reason",
+      "moveDocFailed": "Could not move \"{title}\"",
+      "deleteFolderFailed": "Could not delete the folder \"{name}\""
     },
     "machineEscalation": {
       "heading": "Service escalation",
@@ -531,7 +579,6 @@
       "cancel": "Cancel"
     },
     "conversations": {
-      "back": "Back to machine",
       "heading": "Conversations",
       "description": "Audit of all operator chats for this machine. Click a row to see the full flow and which manuals the AI consulted.",
       "empty": "No conversations yet for this machine.",
@@ -544,9 +591,17 @@
       "resolutionUnresolved": "Unresolved",
       "resolutionEscalated": "Escalated",
       "resolutionUnknown": "Unknown",
-      "prev": "Previous",
-      "next": "Next",
-      "pageLabel": "Page {n}"
+      "filterStatus": "Status",
+      "filterAll": "All",
+      "resolutionNone": "No status",
+      "filterFrom": "From",
+      "filterTo": "To",
+      "sortLabel": "Sort",
+      "sortNewest": "Newest first",
+      "sortProblems": "Problems first",
+      "totalLabel": "{count} conversations",
+      "emptyFiltered": "No conversations match the filter.",
+      "qrOperator": "QR operator"
     },
     "conversationDetail": {
       "fetchFailed": "The conversation could not be loaded",
@@ -580,10 +635,10 @@
       "noChunksMatch": "No chunks matched.",
       "chunkLabel": "chunk #{n}",
       "pageRange": "p. {from}–{to}",
-      "pageSingle": "p. {n}"
+      "pageSingle": "p. {n}",
+      "qrOperator": "QR operator"
     },
     "escalations": {
-      "back": "Back to machine",
       "heading": "Escalations",
       "description": "Audit of all service calls for this machine. Click a row to see the full conversation, or open the technician link to see the same as the recipient.",
       "empty": "No escalations yet for this machine.",
@@ -598,9 +653,14 @@
       "channelServiceTicket": "Service ticket",
       "channelWebhook": "Webhook",
       "open": "Open",
-      "prev": "Previous",
-      "next": "Next",
-      "pageLabel": "Page {n}"
+      "colStatus": "Status",
+      "statusOpen": "Open",
+      "statusHandled": "Handled",
+      "markHandled": "Mark handled",
+      "reopen": "Reopen",
+      "handledByTitle": "Handled by {by}",
+      "totalLabel": "{count} escalations",
+      "qrOperator": "QR operator"
     },
     "addMachine": {
       "dialogAria": "Add machine",
@@ -638,8 +698,7 @@
       "fromRoot": "From: root",
       "rootLabel": "root",
       "folderItemCount": "({checked} of {total})",
-      "movesSelected": "{count} moves selected",
-      "moveSelected": "{count} move selected",
+      "movesSelected": "{count, plural, one {# move selected} other {# moves selected}}",
       "cancel": "Cancel",
       "apply": "Apply",
       "applyWithCount": "Apply ({count})"
@@ -659,8 +718,7 @@
       "serverWithTab": "{server} on server, {tab} in this tab",
       "serverOnly": "{server} on server",
       "inProgress": "{remaining} of {total} in progress…",
-      "doneCount": "{done} done",
-      "doneCountOne": "{done} done",
+      "doneCount": "{done, plural, one {# done} other {# done}}",
       "failedSuffix": ", {failed} failed",
       "clearFinished": "Clear finished",
       "serverProcessing": "Processing on server (survives refresh)",
@@ -678,7 +736,182 @@
       "chunksReembedded": "{chunks} chunks from {pages} pages · re-embedded",
       "ocrTooltip": "Text extracted with Claude vision (OCR)",
       "ocrAria": "Claude vision OCR",
-      "failed": "Failed"
+      "failed": "Failed",
+      "retryAllFailed": "Retry all failed"
+    },
+    "escalationsInbox": {
+      "heading": "Escalations",
+      "description": "Service calls across all machines. The list shows open escalations by default — mark them handled when a technician has followed up.",
+      "empty": "No escalations match the filter.",
+      "filterStatus": "Status",
+      "filterOpen": "Open",
+      "filterHandled": "Handled",
+      "filterAll": "All",
+      "colCreated": "Created",
+      "colMachine": "Machine",
+      "colAccount": "Account",
+      "colChannel": "Channel",
+      "colStatus": "Status",
+      "colOperator": "Operator",
+      "colNote": "Description"
+    },
+    "apiErrors": {
+      "noAccess": "You don't have access to the admin area",
+      "fetchMachinesFailed": "Could not fetch machines ({status})",
+      "machineNotFound": "The machine does not exist",
+      "fetchMachineFailed": "Could not fetch machine ({status})",
+      "saveNameFailed": "Could not save name ({status})",
+      "createMachineFailed": "Could not create machine ({status})",
+      "deleteMachineFailed": "Could not delete machine ({status})",
+      "saveSummaryFailed": "Could not save description ({status})",
+      "updateVisibilityFailed": "Could not update visibility ({status})",
+      "moveDocumentFailed": "Could not move document ({status})",
+      "fetchFileUrlFailed": "Could not fetch file URL ({status})",
+      "createFolderFailed": "Could not create folder ({status})",
+      "deleteFolderFailed": "Could not delete folder ({status})",
+      "fetchConversationsFailed": "Could not fetch conversations ({status})",
+      "fetchEscalationsFailed": "Could not fetch escalations ({status})",
+      "updateEscalationStatusFailed": "Could not update the escalation ({status})",
+      "conversationNotFound": "The conversation does not exist",
+      "fetchConversationFailed": "Could not fetch conversation ({status})",
+      "reprocessFailed": "Reprocessing failed",
+      "deleteDocumentFailed": "Could not delete document ({status})",
+      "startUploadFailed": "Could not start upload ({status})",
+      "uploadFailed": "Upload failed",
+      "uploadFailedStatus": "Upload failed ({status})",
+      "uploadNetworkFailed": "Upload failed (network error)",
+      "fileTooLarge": "The file is too large to upload",
+      "autoOrganizeFailed": "Auto-organize failed ({status})",
+      "saveFailed": "Could not save ({status})",
+      "generateQrFailed": "Could not generate QR code ({status})",
+      "revokeQrFailed": "Could not deactivate QR code ({status})",
+      "fetchEscalationTargetFailed": "Could not fetch service target ({status})",
+      "saveEscalationTargetFailed": "Could not save target ({status})",
+      "emptyEscalationTarget": "Server returned an empty target",
+      "clearEscalationTargetFailed": "Could not remove target ({status})",
+      "fetchUsageFailed": "Could not fetch usage ({status})"
+    },
+    "aiRules": {
+      "heading": "AI rules — {name}",
+      "description": "The locked rule below is always enforced. Add additional rules to encode account-specific guidance (e.g. safety reminders).",
+      "loadFailed": "Could not load rules",
+      "addFailed": "Could not add the rule",
+      "saveFailed": "Could not save the rule",
+      "toggleFailed": "Could not update the rule",
+      "deleteFailed": "Could not delete the rule",
+      "reorderFailed": "Could not reorder the rules",
+      "deleteConfirmTitle": "Delete rule?",
+      "deleteConfirmBody": "The rule will be removed from every chat in this account. This cannot be undone.",
+      "lockedHeading": "Locked rule — always enforced",
+      "lockedFootnote": "This rule is the same for every account and cannot be edited. It keeps the assistant on topic and resists attempts to talk it out of its role.",
+      "addHeading": "Add a rule",
+      "addDescription": "Plain-language instruction the assistant must follow. Keep it short and specific.",
+      "addPlaceholder": "e.g. Always remind operators to lock out the spindle before performing a tool change.",
+      "addButton": "Add rule",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "reset": "Reset",
+      "enableRule": "Enable rule",
+      "disableRule": "Disable rule",
+      "deleteRule": "Delete rule"
+    },
+    "mcp": {
+      "heading": "MCP integration",
+      "descriptionScoped": "OAuth credentials this account uses to call the Optipeople MCP server. The chat uses these to fetch machine data on the account's behalf.",
+      "descriptionAll": "Per-account credentials for the Optipeople MCP server. The chat uses these to fetch machine data on behalf of each account.",
+      "connect": "Connect",
+      "addCredentials": "Add credentials",
+      "loadFailed": "Could not load MCP credentials",
+      "bannerConnected": "Connected to the MCP server.",
+      "bannerAuthFailed": "Authorization failed.",
+      "redirectUriLabel": "OAuth redirect URI (used during dynamic client registration)",
+      "redirectUriHint": "Each registration creates a new entry in the Optipeople portal's Client Secrets list — no manual registration needed.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "emptyScoped": "This account isn't connected to the MCP server yet. Click <strong>Connect</strong> to register an OAuth client and run consent.",
+      "emptyAll": "No accounts have MCP credentials yet. Click <strong>Add credentials</strong> to wire one up.",
+      "colAccount": "Account / label",
+      "colServer": "Server",
+      "colStatus": "Status",
+      "colTokenExpires": "Token expires",
+      "colActions": "Actions",
+      "tokenExpires": "Token expires: {date}",
+      "reauthorize": "Reauthorize",
+      "disconnect": "Disconnect",
+      "disconnectConfirmTitle": "Disconnect MCP for \"{name}\"?",
+      "disconnectConfirmBody": "The OAuth credentials are deleted, and the chat immediately loses access to live machine data for this account until an admin reconnects and runs consent again.",
+      "disconnectConfirmLabel": "Disconnect",
+      "authStartFailed": "Could not start authorization",
+      "disconnectFailed": "Could not disconnect",
+      "addHeading": "Register MCP client",
+      "addDescription": "Provision a fresh OAuth client at the MCP server for this account. The server issues a Client ID + Secret automatically — same flow ChatGPT uses. After registration, click <strong>Connect</strong> on the row to run the OAuth consent step.",
+      "accountLabel": "Account",
+      "accountsLoading": "Loading accounts…",
+      "accountsPlaceholder": "Search account…",
+      "accountsLoadFailed": "Could not fetch accounts",
+      "alreadyConfigured": "Already configured",
+      "noMatch": "No match",
+      "clearAria": "Clear selection",
+      "serverUrlLabel": "MCP server URL",
+      "labelLabel": "Label (optional)",
+      "labelPlaceholder": "Shows up in the portal's Client Secrets list",
+      "register": "Register",
+      "registerFailed": "Could not register",
+      "status": {
+        "notConnected": "Not connected",
+        "authStarted": "Auth started",
+        "connected": "Connected",
+        "tokenExpired": "Token expired",
+        "error": "Error"
+      }
+    },
+    "accountsList": {
+      "heading": "Account settings",
+      "loading": "Loading accounts…",
+      "countLabel": "{count, plural, one {# account} other {# accounts}}",
+      "countLabelFiltered": "{shown} of {total} accounts",
+      "searchPlaceholder": "Search by name or ID…",
+      "loadFailed": "Could not load accounts",
+      "emptyNone": "No accounts available.",
+      "emptySearch": "No accounts match your search.",
+      "colName": "Name",
+      "colAccountId": "Account ID",
+      "colMachines": "Machines",
+      "colTokens": "Tokens (30d)"
+    },
+    "accountSections": {
+      "rules": "AI rules",
+      "mcp": "MCP integration",
+      "usage": "Token usage",
+      "machines": "Machines",
+      "machinesEmpty": "No machines on this account yet.",
+      "machinesLoadFailed": "Could not load machines",
+      "machinesOpenList": "Open in machines list",
+      "fleetConversations": "Fleet conversations"
+    },
+    "accountUsage": {
+      "description": "AI token usage across chat, document ingestion and search for the last {days} days.",
+      "loadFailed": "Could not load usage",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "cacheTokens": "Cache tokens",
+      "cacheHelp": "Prompt-cache traffic on chat calls: tokens read from the cache (billed at a fraction of input price) and tokens written to it.",
+      "cacheValue": "{read} read / {written} written",
+      "apiCalls": "API calls",
+      "empty": "No AI usage recorded in the last {days} days.",
+      "colOperation": "Operation",
+      "colModel": "Model",
+      "colCalls": "Calls",
+      "colInput": "Input",
+      "colOutput": "Output",
+      "colCacheRead": "Cache read",
+      "opChat": "Chat",
+      "opEmbedding": "Embeddings (search & ingest)",
+      "opPdfOcr": "PDF OCR",
+      "opImageCaption": "Image captions",
+      "opFigureExtraction": "Figure extraction",
+      "opSuggestions": "Starter questions",
+      "opAutoOrganize": "Auto-organize"
     }
   },
   "server": {
@@ -689,6 +922,7 @@
     "dbError": "Database error",
     "notFound": "Not found",
     "missingField": "{field} is required",
+    "fleetNoMachines": "No machines are onboarded for this account yet",
     "aiOverloaded": "The AI is overloaded right now. Please try again in a moment.",
     "aiOverloadedTitle": "AI is overloaded",
     "aiUnavailable": "The AI service is temporarily unavailable. Please try again.",
@@ -745,7 +979,7 @@
       "stuck": "Processing was interrupted (server restart or timeout). Try again."
     },
     "voiceErrors": {
-      "permissionDenied": "Microphone access was denied",
+      "permissionDenied": "Microphone access was denied. Allow microphone access for this site in your browser settings and try again.",
       "unsupported": "Microphone not supported in this browser",
       "emptyRecording": "Recording was empty",
       "noSpeech": "No speech detected",
@@ -773,6 +1007,20 @@
     "errorTitle": "Could not call service",
     "copy": "Copy",
     "copied": "Copied",
-    "startNew": "Start new chat"
+    "startNew": "Start new chat",
+    "noMachine": "No machine is selected — write a message about the problem first, then call for service."
+  },
+  "textEditor": {
+    "bold": "Bold",
+    "insertLink": "Insert link",
+    "spellCheck": "Spell-check"
+  },
+  "errors": {
+    "title": "Something went wrong",
+    "description": "An unexpected error occurred. Try again — if it keeps happening, contact support@optipeople.dk.",
+    "retry": "Try again",
+    "backToChat": "Back to the chat",
+    "notFoundTitle": "Page not found",
+    "notFoundDescription": "The page you're looking for doesn't exist or has been moved."
   }
 }

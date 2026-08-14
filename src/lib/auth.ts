@@ -296,10 +296,12 @@ export async function assertDocumentAccess(
 
 // Same shape as assertDocumentAccess for the conversations table. Used
 // by /api/admin/conversations/[id].
+// machineId is null for fleet-scoped conversations — access is decided
+// by account either way.
 export async function assertConversationAccess(
   admin: Admin,
   conversationId: string,
-): Promise<{ machineId: string; accountId: string }> {
+): Promise<{ machineId: string | null; accountId: string }> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("conversations")
@@ -314,7 +316,7 @@ export async function assertConversationAccess(
   if (!data) {
     throw new AuthError(404, "Conversation not found");
   }
-  const row = data as { machine_id: string; account_id: string };
+  const row = data as { machine_id: string | null; account_id: string };
   assertAccountAccess(admin, row.account_id);
   return { machineId: row.machine_id, accountId: row.account_id };
 }

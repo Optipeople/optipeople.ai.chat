@@ -36,6 +36,8 @@ export function UserMenu() {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<"language" | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) {
@@ -46,11 +48,37 @@ export function UserMenu() {
       setExpanded(null);
       return;
     }
+    // Move focus into the menu so keyboard users aren't stranded on the
+    // trigger with an open popover they can't reach.
+    menuRef.current
+      ?.querySelector<HTMLElement>('[role^="menuitem"]')
+      ?.focus();
     function onDocClick(e: MouseEvent) {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ??
+          [],
+      );
+      if (items.length === 0) return;
+      e.preventDefault();
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "ArrowDown"
+          ? items[(idx + 1) % items.length]
+          : e.key === "ArrowUp"
+            ? items[(idx - 1 + items.length) % items.length]
+            : e.key === "Home"
+              ? items[0]
+              : items[items.length - 1];
+      next.focus();
     }
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
@@ -76,6 +104,7 @@ export function UserMenu() {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
@@ -114,6 +143,7 @@ export function UserMenu() {
 
       {open && (
         <div
+          ref={menuRef}
           role="menu"
           className={cn(
             "absolute right-0 top-[calc(100%+8px)] z-30 w-[min(calc(100vw-1.5rem),18rem)] overflow-hidden sm:w-64",

@@ -9,7 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { Button } from "@/components/ui/button";
 
 type ConfirmOptions = {
@@ -39,8 +41,11 @@ export function useConfirm(): (opts: ConfirmOptions) => Promise<boolean> {
 }
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const t = useTranslations("common");
   const [pending, setPending] = useState<Pending | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, Boolean(pending));
 
   const confirm = useCallback(
     (opts: ConfirmOptions) =>
@@ -61,12 +66,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     if (!pending) return;
 
     function onKey(e: KeyboardEvent) {
+      // Escape always cancels. Enter is deliberately NOT a global confirm
+      // shortcut: focus starts on Cancel, and a reflexive Enter must never
+      // trigger a destructive action. The focused button handles Enter.
       if (e.key === "Escape") {
         e.preventDefault();
         close(false);
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        close(true);
       }
     }
     document.addEventListener("keydown", onKey);
@@ -80,6 +85,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       {pending && (
         <div
+          ref={dialogRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
@@ -87,7 +93,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         >
           <button
             type="button"
-            aria-label="Luk dialog"
+            aria-label={t("closeDialog")}
             onClick={() => close(false)}
             className="dialog-overlay absolute inset-0 bg-black/40 backdrop-blur-[2px]"
           />
@@ -115,14 +121,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 variant="secondary"
                 onClick={() => close(false)}
               >
-                {pending.opts.cancelLabel ?? "Annullér"}
+                {pending.opts.cancelLabel ?? t("cancel")}
               </Button>
               <Button
                 variant={pending.opts.danger ? "destructive" : "primary"}
                 onClick={() => close(true)}
               >
                 {pending.opts.confirmLabel ??
-                  (pending.opts.danger ? "Slet" : "OK")}
+                  (pending.opts.danger ? t("delete") : t("ok"))}
               </Button>
             </div>
           </div>

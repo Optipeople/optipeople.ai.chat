@@ -8,5 +8,10 @@ export default async function AdminConversationPage({
   params: Promise<{ id: string; convId: string }>;
 }) {
   const { id, convId } = await params;
-  return <ConversationDetail machineId={id} conversationId={convId} />;
+  return (
+    <ConversationDetail
+      source={{ kind: "machine", machineId: id }}
+      conversationId={convId}
+    />
+  );
 }

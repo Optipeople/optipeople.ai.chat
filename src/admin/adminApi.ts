@@ -35,8 +35,14 @@ import type {
   AdminUsageOverviewResponse,
   AdminUsageOverviewRow,
 } from "@/app/api/admin/usage/route";
+import type {
+  AdminEscalationInboxItem,
+  AdminEscalationInboxResponse,
+} from "@/app/api/admin/escalations/route";
+import type { AdminEscalationStatusResponse } from "@/app/api/admin/escalations/[id]/route";
 
 export type {
+  AdminEscalationInboxItem,
   AdminAccountUsageResponse,
   AdminUsageOverviewRow,
   AdminUsageRow,
@@ -57,13 +63,71 @@ export type {
   StandardFolder,
 };
 
+// Every fetch helper here throws AdminApiError. `key` is a messages key
+// under admin.apiErrors so components can render a localized message:
+//
+//   const tErr = useTranslations("admin.apiErrors");
+//   setError(adminErrorMessage(err, tErr) ?? tc("unknownError"));
+//
+// `message` carries the server-provided error when the response body had
+// one (API routes localize those per request locale already), otherwise
+// the legacy Danish fallback — so callers that still render err.message
+// keep working unchanged until they migrate to adminErrorMessage.
+export class AdminApiError extends Error {
+  readonly key: string;
+  readonly params: Record<string, string | number>;
+  readonly hasServerMessage: boolean;
+
+  constructor(
+    key: string,
+    params: Record<string, string | number>,
+    serverMessage: string | null,
+    fallback: string,
+  ) {
+    super(serverMessage ?? fallback);
+    this.name = "AdminApiError";
+    this.key = key;
+    this.params = params;
+    this.hasServerMessage = serverMessage != null;
+  }
+}
+
+function apiError(
+  key: string,
+  fallback: string,
+  opts: { status?: number; serverMessage?: string | null } = {},
+): AdminApiError {
+  return new AdminApiError(
+    key,
+    opts.status != null ? { status: opts.status } : {},
+    opts.serverMessage ?? null,
+    fallback,
+  );
+}
+
+// Translate an error thrown by this module. Prefers the server's own
+// (already localized) message, then the admin.apiErrors key, then the
+// plain Error message. Returns null for non-Error throwables so callers
+// can supply their own generic fallback.
+export function adminErrorMessage(
+  err: unknown,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string | null {
+  if (err instanceof AdminApiError) {
+    return err.hasServerMessage ? err.message : t(err.key, err.params);
+  }
+  return err instanceof Error ? err.message : null;
+}
+
 export async function getAdminMachines(): Promise<AdminMachine[]> {
   const res = await fetchWithAuth("/api/admin/machines");
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Du har ikke adgang til admin");
+    throw apiError("noAccess", "Du har ikke adgang til admin");
   }
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente maskiner (${res.status})`);
+    throw apiError("fetchMachinesFailed", `Kunne ikke hente maskiner (${res.status})`, {
+      status: res.status,
+    });
   }
   const body = (await res.json()) as { machines?: AdminMachine[] };
   return body.machines ?? [];
@@ -72,10 +136,12 @@ export async function getAdminMachines(): Promise<AdminMachine[]> {
 export async function getAdminMachine(id: string): Promise<AdminMachineDetail> {
   const res = await fetchWithAuth(`/api/admin/machines/${id}`);
   if (res.status === 404) {
-    throw new Error("Maskinen findes ikke");
+    throw apiError("machineNotFound", "Maskinen findes ikke");
   }
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente maskine (${res.status})`);
+    throw apiError("fetchMachineFailed", `Kunne ikke hente maskine (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as AdminMachineDetail;
 }
@@ -90,7 +156,9 @@ export async function updateAdminMachineName(
     body: JSON.stringify({ displayName }),
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke gemme navn (${res.status})`);
+    throw apiError("saveNameFailed", `Kunne ikke gemme navn (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -109,7 +177,10 @@ export async function createAdminMachine(input: {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke oprette maskine (${res.status})`);
+    throw apiError("createMachineFailed", `Kunne ikke oprette maskine (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
   const out = (await res.json()) as { machine: AdminMachine };
   return out.machine;
@@ -121,7 +192,10 @@ export async function deleteAdminMachine(id: string): Promise<void> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke slette maskine (${res.status})`);
+    throw apiError("deleteMachineFailed", `Kunne ikke slette maskine (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
 }
 
@@ -135,7 +209,9 @@ export async function updateAdminDocumentSummary(
     body: JSON.stringify({ summary }),
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke gemme beskrivelse (${res.status})`);
+    throw apiError("saveSummaryFailed", `Kunne ikke gemme beskrivelse (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -149,7 +225,9 @@ export async function updateAdminDocumentOperatorVisible(
     body: JSON.stringify({ operatorVisible }),
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke opdatere synlighed (${res.status})`);
+    throw apiError("updateVisibilityFailed", `Kunne ikke opdatere synlighed (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -163,7 +241,9 @@ export async function updateAdminDocumentFolder(
     body: JSON.stringify({ folderPath }),
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke flytte dokument (${res.status})`);
+    throw apiError("moveDocumentFailed", `Kunne ikke flytte dokument (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -174,7 +254,9 @@ export async function getAdminDocumentSignedUrl(
   const qs = opts.download ? "?download=1" : "";
   const res = await fetchWithAuth(`/api/admin/documents/${id}/url${qs}`);
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente fil-URL (${res.status})`);
+    throw apiError("fetchFileUrlFailed", `Kunne ikke hente fil-URL (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as { url: string; fileName: string };
 }
@@ -193,7 +275,10 @@ export async function createAdminFolder(
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke oprette mappe (${res.status})`);
+    throw apiError("createFolderFailed", `Kunne ikke oprette mappe (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
 }
 
@@ -211,30 +296,105 @@ export async function deleteAdminFolder(
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke slette mappe (${res.status})`);
+    throw apiError("deleteFolderFailed", `Kunne ikke slette mappe (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
 }
 
+export type AdminConversationResolutionFilter =
+  | "all"
+  | "resolved"
+  | "unresolved"
+  | "escalated"
+  | "none";
+
+export type AdminConversationSort = "newest" | "problems";
+
+export type AdminConversationsQuery = {
+  page?: number;
+  perPage?: number;
+  resolution?: AdminConversationResolutionFilter;
+  // Inclusive date bounds on started_at, as YYYY-MM-DD.
+  from?: string;
+  to?: string;
+  sort?: AdminConversationSort;
+};
+
 export async function listAdminConversations(
   machineId: string,
-  page = 0,
-  perPage = 25,
+  query: AdminConversationsQuery = {},
 ): Promise<{
   conversations: AdminConversationListItem[];
   page: number;
   perPage: number;
+  total: number;
   hasMore: boolean;
 }> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 0),
+    perPage: String(query.perPage ?? 25),
+  });
+  if (query.resolution && query.resolution !== "all") {
+    params.set("resolution", query.resolution);
+  }
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
+  if (query.sort) params.set("sort", query.sort);
   const res = await fetchWithAuth(
-    `/api/admin/machines/${machineId}/conversations?page=${page}&perPage=${perPage}`,
+    `/api/admin/machines/${machineId}/conversations?${params.toString()}`,
   );
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente samtaler (${res.status})`);
+    throw apiError("fetchConversationsFailed", `Kunne ikke hente samtaler (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as {
     conversations: AdminConversationListItem[];
     page: number;
     perPage: number;
+    total: number;
+    hasMore: boolean;
+  };
+}
+
+// Fleet ("all machines") conversations for an account — scope='fleet'
+// rows, which carry no machine_id and are invisible to the per-machine
+// list above. Same query params and response shape.
+export async function listAdminFleetConversations(
+  accountId: string,
+  query: AdminConversationsQuery = {},
+): Promise<{
+  conversations: AdminConversationListItem[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+}> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 0),
+    perPage: String(query.perPage ?? 25),
+  });
+  if (query.resolution && query.resolution !== "all") {
+    params.set("resolution", query.resolution);
+  }
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
+  if (query.sort) params.set("sort", query.sort);
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/fleet-conversations?${params.toString()}`,
+  );
+  if (!res.ok) {
+    throw apiError("fetchConversationsFailed", `Kunne ikke hente samtaler (${res.status})`, {
+      status: res.status,
+    });
+  }
+  return (await res.json()) as {
+    conversations: AdminConversationListItem[];
+    page: number;
+    perPage: number;
+    total: number;
     hasMore: boolean;
   };
 }
@@ -247,29 +407,79 @@ export async function listAdminEscalations(
   escalations: AdminEscalationListItem[];
   page: number;
   perPage: number;
+  total: number;
   hasMore: boolean;
 }> {
   const res = await fetchWithAuth(
     `/api/admin/machines/${machineId}/escalations?page=${page}&perPage=${perPage}`,
   );
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente eskaleringer (${res.status})`);
+    throw apiError("fetchEscalationsFailed", `Kunne ikke hente eskaleringer (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as {
     escalations: AdminEscalationListItem[];
     page: number;
     perPage: number;
+    total: number;
     hasMore: boolean;
   };
+}
+
+export type AdminEscalationStatusFilter = "open" | "handled" | "all";
+
+export async function listAdminEscalationInbox(query: {
+  page?: number;
+  perPage?: number;
+  status?: AdminEscalationStatusFilter;
+} = {}): Promise<AdminEscalationInboxResponse> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 0),
+    perPage: String(query.perPage ?? 25),
+  });
+  if (query.status && query.status !== "all") params.set("status", query.status);
+  const res = await fetchWithAuth(`/api/admin/escalations?${params.toString()}`);
+  if (!res.ok) {
+    throw apiError("fetchEscalationsFailed", `Kunne ikke hente eskaleringer (${res.status})`, {
+      status: res.status,
+    });
+  }
+  return (await res.json()) as AdminEscalationInboxResponse;
+}
+
+export async function setAdminEscalationStatus(
+  id: string,
+  status: "open" | "handled",
+): Promise<AdminEscalationStatusResponse["escalation"]> {
+  const res = await fetchWithAuth(`/api/admin/escalations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw apiError(
+      "updateEscalationStatusFailed",
+      `Kunne ikke opdatere eskaleringen (${res.status})`,
+      { status: res.status, serverMessage: body.error },
+    );
+  }
+  const out = (await res.json()) as AdminEscalationStatusResponse;
+  return out.escalation;
 }
 
 export async function getAdminConversation(
   id: string,
 ): Promise<AdminConversationDetail> {
   const res = await fetchWithAuth(`/api/admin/conversations/${id}`);
-  if (res.status === 404) throw new Error("Samtalen findes ikke");
+  if (res.status === 404) {
+    throw apiError("conversationNotFound", "Samtalen findes ikke");
+  }
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente samtale (${res.status})`);
+    throw apiError("fetchConversationFailed", `Kunne ikke hente samtale (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as AdminConversationDetail;
 }
@@ -298,6 +508,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 async function postJsonUntilDone<T>(
   url: string,
   makeBody: (resume: boolean) => Record<string, unknown>,
+  errorKey: string,
   errorLabel: string,
 ): Promise<T> {
   // Runaway guard: each continuation represents ~3.5 min of server-side
@@ -329,7 +540,10 @@ async function postJsonUntilDone<T>(
         await sleep(5_000);
         continue;
       }
-      throw new Error(body.error ?? `${errorLabel} (${res.status})`);
+      throw apiError(errorKey, `${errorLabel} (${res.status})`, {
+        status: res.status,
+        serverMessage: body.error,
+      });
     }
     failures = 0;
     const body = (await res.json()) as { done?: boolean } & T;
@@ -339,7 +553,7 @@ async function postJsonUntilDone<T>(
     }
     return body as T;
   }
-  throw new Error(errorLabel);
+  throw new AdminApiError(errorKey, {}, null, errorLabel);
 }
 
 export async function reprocessAdminDocument(
@@ -349,6 +563,7 @@ export async function reprocessAdminDocument(
   return postJsonUntilDone<ReprocessResult>(
     `/api/admin/documents/${id}/reprocess`,
     (resume) => ({ force, resume }),
+    "reprocessFailed",
     "Reprocess fejlede",
   );
 }
@@ -358,7 +573,9 @@ export async function deleteAdminDocument(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke slette dokument (${res.status})`);
+    throw apiError("deleteDocumentFailed", `Kunne ikke slette dokument (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -488,7 +705,10 @@ async function directUpload<T>(args: {
   });
   if (!signRes.ok) {
     const body = (await signRes.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke starte upload (${signRes.status})`);
+    throw apiError("startUploadFailed", `Kunne ikke starte upload (${signRes.status})`, {
+      status: signRes.status,
+      serverMessage: body.error,
+    });
   }
   const sign = (await signRes.json()) as SignUploadResponse;
 
@@ -518,6 +738,7 @@ async function directUpload<T>(args: {
       summary: args.summary,
       folderPath: args.folderPath,
     }),
+    "uploadFailed",
     "Upload failed",
   );
 }
@@ -549,12 +770,17 @@ function putToSignedUrl(args: {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else if (xhr.status === 413) {
-        reject(new Error("Filen er for stor til at uploade"));
+        reject(apiError("fileTooLarge", "Filen er for stor til at uploade"));
       } else {
-        reject(new Error(`Upload failed (${xhr.status})`));
+        reject(
+          apiError("uploadFailedStatus", `Upload failed (${xhr.status})`, {
+            status: xhr.status,
+          }),
+        );
       }
     };
-    xhr.onerror = () => reject(new Error("Upload failed (network)"));
+    xhr.onerror = () =>
+      reject(apiError("uploadNetworkFailed", "Upload failed (network)"));
     xhr.send(form);
   });
 }
@@ -572,7 +798,10 @@ export async function previewAutoOrganize(
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Auto-organisering fejlede (${res.status})`);
+    throw apiError("autoOrganizeFailed", `Auto-organisering fejlede (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
   return (await res.json()) as AutoOrganizePreviewResponse;
 }
@@ -591,7 +820,10 @@ export async function applyAutoOrganize(
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke gemme (${res.status})`);
+    throw apiError("saveFailed", `Kunne ikke gemme (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
   return (await res.json()) as AutoOrganizeApplyResponse;
 }
@@ -603,7 +835,9 @@ export async function generateAdminMachineQr(
     method: "POST",
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke generere QR-kode (${res.status})`);
+    throw apiError("generateQrFailed", `Kunne ikke generere QR-kode (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as AdminQrTokenResponse;
 }
@@ -613,7 +847,9 @@ export async function revokeAdminMachineQr(machineId: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) {
-    throw new Error(`Kunne ikke inaktivere QR-kode (${res.status})`);
+    throw apiError("revokeQrFailed", `Kunne ikke inaktivere QR-kode (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -624,7 +860,11 @@ export async function getAdminEscalationTarget(
     `/api/admin/accounts/${encodeURIComponent(accountId)}/escalation`,
   );
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente service-target (${res.status})`);
+    throw apiError(
+      "fetchEscalationTargetFailed",
+      `Kunne ikke hente service-target (${res.status})`,
+      { status: res.status },
+    );
   }
   const body = (await res.json()) as AdminEscalationTargetResponse;
   return body.target;
@@ -648,10 +888,15 @@ export async function saveAdminEscalationTarget(
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Kunne ikke gemme target (${res.status})`);
+    throw apiError("saveEscalationTargetFailed", `Kunne ikke gemme target (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
   }
   const out = (await res.json()) as AdminEscalationTargetResponse;
-  if (!out.target) throw new Error("Server returnerede tom target");
+  if (!out.target) {
+    throw apiError("emptyEscalationTarget", "Server returnerede tom target");
+  }
   return out.target;
 }
 
@@ -663,7 +908,9 @@ export async function clearAdminEscalationTarget(
     { method: "DELETE" },
   );
   if (!res.ok) {
-    throw new Error(`Kunne ikke fjerne target (${res.status})`);
+    throw apiError("clearEscalationTargetFailed", `Kunne ikke fjerne target (${res.status})`, {
+      status: res.status,
+    });
   }
 }
 
@@ -675,7 +922,9 @@ export async function getAdminAccountUsage(
     `/api/admin/accounts/${encodeURIComponent(accountId)}/usage?days=${days}`,
   );
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente forbrug (${res.status})`);
+    throw apiError("fetchUsageFailed", `Kunne ikke hente forbrug (${res.status})`, {
+      status: res.status,
+    });
   }
   return (await res.json()) as AdminAccountUsageResponse;
 }
@@ -685,7 +934,9 @@ export async function getAdminUsageOverview(
 ): Promise<AdminUsageOverviewRow[]> {
   const res = await fetchWithAuth(`/api/admin/usage?days=${days}`);
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente forbrug (${res.status})`);
+    throw apiError("fetchUsageFailed", `Kunne ikke hente forbrug (${res.status})`, {
+      status: res.status,
+    });
   }
   const body = (await res.json()) as AdminUsageOverviewResponse;
   return body.accounts;

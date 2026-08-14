@@ -87,7 +87,7 @@ export function ConsentScreen() {
           </div>
 
           {error && (
-            <p className="mt-4 text-[14px] text-[#b00020]">{error}</p>
+            <p className="mt-4 text-[14px] text-[var(--color-error)]">{error}</p>
           )}
 
           <div className="mt-6 flex items-center justify-end gap-3">

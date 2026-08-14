@@ -46,6 +46,8 @@ export function QrPrintView({ machineId }: { machineId: string }) {
       : "";
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- revoking the
+       object URL is the external-system sync this effect exists for */
     if (!url) {
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
@@ -55,6 +57,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     }
     let cancelled = false;
     setPreviewError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
     renderQrStickerPngUrl({ machineName, qrUrl: url })
       .then((objectUrl) => {
         if (cancelled) {

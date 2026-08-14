@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, ChevronLeft, Search, X } from "lucide-react";
+import { Boxes, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ export function MachineSelectScreen() {
     isLoadingMachines,
     machinesError,
     selectMachine,
+    selectFleet,
     reloadMachines,
     clearSelectedAccount,
   } = useAuth();
@@ -66,7 +67,7 @@ export function MachineSelectScreen() {
 
           {machinesError && (
             <div className="mb-4 rounded-[4px] border border-[var(--ds-grey-light-02)] bg-[var(--color-muted)] p-4">
-              <p className="mb-3 text-[14px] text-[#b00020]">{machinesError}</p>
+              <p className="mb-3 text-[14px] text-[var(--color-error)]">{machinesError}</p>
               <Button
                 type="button"
                 onClick={() => void reloadMachines()}
@@ -112,6 +113,37 @@ export function MachineSelectScreen() {
 
           {machines.length > 0 && (
             <>
+              {/* Fleet scope: chat across every machine at once. Sits
+                  above the search box (it must not be filtered away) and
+                  reuses the machine-row anatomy so it reads as a peer
+                  choice, not a different control. Only offered when
+                  there is actually a fleet to span. */}
+              {machines.length > 1 && (
+                <button
+                  type="button"
+                  onClick={selectFleet}
+                  className={cn(
+                    "group mb-3 flex w-full items-center justify-between gap-3 rounded-[4px] px-4 py-3 text-left",
+                    "border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)]",
+                    "transition-[border-color,box-shadow] duration-150 ease-out",
+                    "hover:border-[var(--ds-grey-light-03)] hover:shadow-[var(--ds-shadow-button)]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
+                  )}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Boxes className="h-5 w-5 shrink-0 text-[var(--color-muted-foreground)]" />
+                    <div className="min-w-0">
+                      <p className="truncate text-[16px] font-medium text-[var(--color-foreground)]">
+                        {t("fleetEntry")}
+                      </p>
+                      <p className="truncate text-[13px] text-[var(--color-muted-foreground)]">
+                        {t("fleetEntrySub", { count: machines.length })}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-[var(--color-muted-foreground)] transition-transform group-hover:translate-x-0.5" />
+                </button>
+              )}
               <div
                 className={cn(
                   "mb-3 flex items-center gap-2 rounded-[4px] px-3",

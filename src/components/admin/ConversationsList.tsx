@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
+import { Pagination } from "@/components/ui/pagination";
+import { Select } from "@/components/ui/select";
+import { TextField } from "@/components/ui/text-field";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
   DataTable,
@@ -17,9 +18,20 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import {
+  adminErrorMessage,
   listAdminConversations,
+  listAdminFleetConversations,
   type AdminConversationListItem,
+  type AdminConversationResolutionFilter,
+  type AdminConversationSort,
 } from "@/admin/adminApi";
+
+// What the list shows: one machine's conversations, or an account's
+// fleet ("all machines") conversations — same columns, filters, and
+// response shape; only the endpoint and the detail link differ.
+export type ConversationsSource =
+  | { kind: "machine"; machineId: string }
+  | { kind: "fleet"; accountId: string };
 
 const DA_DT = new Intl.DateTimeFormat("da-DK", {
   dateStyle: "short",
@@ -46,42 +58,91 @@ function resolutionBadge(
   }
 }
 
+// QR-sticker sessions carry a pseudo identity (user_name "QR operator" /
+// machine display name, user_id "qr:<suffix>") — show a localized label
+// instead of leaking the raw pseudo-name into the audit views.
+function isQrConversation(c: {
+  entryMode: string | null;
+  userName: string | null;
+  userEmail: string | null;
+}): boolean {
+  return (
+    c.entryMode === "qr" ||
+    c.userName === "QR operator" ||
+    (c.userEmail?.startsWith("qr:") ?? false)
+  );
+}
+
 // `embedded` skips the page-level heading + description for use inside
 // a section panel (the section header provides the title).
 export function ConversationsList({
-  machineId,
+  source,
   embedded = false,
 }: {
-  machineId: string;
+  source: ConversationsSource;
   embedded?: boolean;
 }) {
-  const router = useRouter();
   const t = useTranslations("admin.conversations");
   const tc = useTranslations("common");
+  const tErr = useTranslations("admin.apiErrors");
   const [items, setItems] = useState<AdminConversationListItem[]>([]);
   const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resolution, setResolution] =
+    useState<AdminConversationResolutionFilter>("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [sort, setSort] = useState<AdminConversationSort>("problems");
+
+  const sourceKey =
+    source.kind === "machine" ? source.machineId : source.accountId;
 
   useEffect(() => {
     let cancelled = false;
-    listAdminConversations(machineId, page, PER_PAGE)
+    const query = {
+      page,
+      perPage: PER_PAGE,
+      resolution,
+      from: from || undefined,
+      to: to || undefined,
+      sort,
+    };
+    (source.kind === "machine"
+      ? listAdminConversations(source.machineId, query)
+      : listAdminFleetConversations(source.accountId, query)
+    )
       .then((res) => {
         if (cancelled) return;
         setItems(res.conversations);
-        setHasMore(res.hasMore);
+        setTotal(res.total);
         setLoading(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : tc("unknownError"));
+        setError(adminErrorMessage(err, tErr) ?? tc("unknownError"));
         setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [machineId, page]);
+    // sourceKey stands in for the source object (rebuilt every render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.kind, sourceKey, page, resolution, from, to, sort]);
+
+  const detailHref = (conversationId: string) =>
+    source.kind === "machine"
+      ? `/admin/machines/${source.machineId}/conversations/${conversationId}`
+      : `/admin/accounts/${encodeURIComponent(source.accountId)}/conversations/${conversationId}`;
+
+  const filtered = resolution !== "all" || from !== "" || to !== "";
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  const operatorName = (c: AdminConversationListItem) =>
+    isQrConversation(c) ? t("qrOperator") : (c.userName ?? c.userEmail ?? "—");
+  const operatorEmail = (c: AdminConversationListItem) =>
+    !isQrConversation(c) && c.userName && c.userEmail ? c.userEmail : null;
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
@@ -100,6 +161,62 @@ export function ConversationsList({
         </div>
       )}
 
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4">
+        <div className="min-w-[150px]">
+          <Select
+            label={t("filterStatus")}
+            value={resolution}
+            onValueChange={(v) => {
+              setResolution(v as AdminConversationResolutionFilter);
+              setPage(0);
+            }}
+          >
+            <option value="all">{t("filterAll")}</option>
+            <option value="resolved">{t("resolutionResolved")}</option>
+            <option value="unresolved">{t("resolutionUnresolved")}</option>
+            <option value="escalated">{t("resolutionEscalated")}</option>
+            <option value="none">{t("resolutionNone")}</option>
+          </Select>
+        </div>
+        <div className="min-w-[150px]">
+          <TextField
+            label={t("filterFrom")}
+            type="date"
+            value={from}
+            max={to || undefined}
+            onChange={(e) => {
+              setFrom(e.target.value);
+              setPage(0);
+            }}
+          />
+        </div>
+        <div className="min-w-[150px]">
+          <TextField
+            label={t("filterTo")}
+            type="date"
+            value={to}
+            min={from || undefined}
+            onChange={(e) => {
+              setTo(e.target.value);
+              setPage(0);
+            }}
+          />
+        </div>
+        <div className="min-w-[170px]">
+          <Select
+            label={t("sortLabel")}
+            value={sort}
+            onValueChange={(v) => {
+              setSort(v as AdminConversationSort);
+              setPage(0);
+            }}
+          >
+            <option value="problems">{t("sortProblems")}</option>
+            <option value="newest">{t("sortNewest")}</option>
+          </Select>
+        </div>
+      </div>
+
       {error ? (
         <div className="rounded-[4px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] p-6 text-[14px] text-[var(--ds-red-dark)]">
           {error}
@@ -110,7 +227,7 @@ export function ConversationsList({
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
-          {t("empty")}
+          {filtered ? t("emptyFiltered") : t("empty")}
         </div>
       ) : (
         <>
@@ -121,13 +238,13 @@ export function ConversationsList({
               return (
                 <Link
                   key={c.id}
-                  href={`/admin/machines/${machineId}/conversations/${c.id}`}
+                  href={detailHref(c.id)}
                   className="flex items-start gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-[14px] font-medium text-[var(--color-foreground)]">
-                        {c.userName ?? c.userEmail ?? "—"}
+                        {operatorName(c)}
                       </p>
                       {badge && (
                         <Tag variant={badge.variant} size="small">
@@ -135,9 +252,9 @@ export function ConversationsList({
                         </Tag>
                       )}
                     </div>
-                    {c.userName && c.userEmail && (
+                    {operatorEmail(c) && (
                       <p className="truncate text-[12px] text-[var(--color-muted-foreground)]">
-                        {c.userEmail}
+                        {operatorEmail(c)}
                       </p>
                     )}
                     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-muted-foreground)]">
@@ -167,22 +284,16 @@ export function ConversationsList({
                   return (
                     <DataTableRow
                       key={c.id}
-                      onClick={() => {
-                        router.push(
-                          `/admin/machines/${machineId}/conversations/${c.id}`,
-                        );
-                      }}
+                      href={detailHref(c.id)}
                     >
                       <DataTableCell className="tabular-nums">
                         {DA_DT.format(new Date(c.startedAt))}
                       </DataTableCell>
                       <DataTableCell className="group-hover:underline">
-                        <div className="font-medium">
-                          {c.userName ?? c.userEmail ?? "—"}
-                        </div>
-                        {c.userName && c.userEmail && (
+                        <div className="font-medium">{operatorName(c)}</div>
+                        {operatorEmail(c) && (
                           <div className="text-[12px] text-[var(--ds-grey-medium-05)]">
-                            {c.userEmail}
+                            {operatorEmail(c)}
                           </div>
                         )}
                       </DataTableCell>
@@ -215,29 +326,16 @@ export function ConversationsList({
             </DataTable>
           </div>
 
-          {(page > 0 || hasMore) && (
-            <div className="flex items-center justify-between text-[13px] text-[var(--color-muted-foreground)]">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={page === 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                <ChevronLeft className="mr-1 h-3.5 w-3.5" />
-                {t("prev")}
-              </Button>
-              <span>{t("pageLabel", { n: page + 1 })}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!hasMore}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                {t("next")}
-                <ChevronRight className="ml-1 h-3.5 w-3.5" />
-              </Button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-[var(--color-muted-foreground)]">
+            <span>{t("totalLabel", { count: total })}</span>
+            {pageCount > 1 && (
+              <Pagination
+                page={page + 1}
+                pageCount={pageCount}
+                onChange={(p) => setPage(p - 1)}
+              />
+            )}
+          </div>
         </>
       )}
     </div>

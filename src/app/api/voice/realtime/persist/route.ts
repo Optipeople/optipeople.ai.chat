@@ -84,7 +84,7 @@ export async function POST(req: Request) {
   }
 
   const conversationId = await createConversation({
-    machineId: resolvedMachineId,
+    scope: { kind: "machine", machineId: resolvedMachineId },
     accountId: resolvedAccountId,
     userId: user.userId,
     userEmail: user.email,

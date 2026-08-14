@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import {
   CircleCheckIcon,
@@ -63,6 +64,7 @@ export const Tag = React.forwardRef<HTMLSpanElement, TagProps>(
     },
     ref,
   ) => {
+    const t = useTranslations("common");
     const v = VARIANT_STYLES[variant];
     const isStatus = variant !== "default";
 
@@ -86,10 +88,10 @@ export const Tag = React.forwardRef<HTMLSpanElement, TagProps>(
         {showIcon && isStatus && size === "medium" && v.icon}
         <span className="whitespace-nowrap">{children}</span>
         {onRemove && (
-          <Tooltip content="Remove" side="top" className="ml-[2px]">
+          <Tooltip content={t("remove")} side="top" className="ml-[2px]">
             <button
               type="button"
-              aria-label="Remove"
+              aria-label={t("remove")}
               onClick={onRemove}
               className="inline-flex h-[12px] w-[12px] items-center justify-center text-[var(--ds-grey-medium-06)] hover:text-[var(--ds-grey-dark-09)]"
             >

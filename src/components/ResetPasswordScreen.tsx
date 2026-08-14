@@ -50,7 +50,8 @@ export function ResetPasswordScreen() {
       await setNewPassword({ token, email, newPassword: password });
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("genericError"));
+      console.error("Password reset failed", err);
+      setError(t("genericError"));
     } finally {
       setSubmitting(false);
     }
@@ -99,7 +100,7 @@ export function ResetPasswordScreen() {
           </>
         ) : linkInvalid ? (
           <>
-            <p className="pb-3 text-[14px] leading-[21px] text-[#b00020]">
+            <p className="pb-3 text-[14px] leading-[21px] text-[var(--color-error)]">
               {t("linkInvalid")}
             </p>
             <p className="pb-3 text-[14px] leading-[21px] text-black/70">
@@ -135,7 +136,7 @@ export function ResetPasswordScreen() {
                 className={cn(
                   "h-11 w-full bg-white px-[10px] py-[6px] text-[16px] leading-[21px] text-[#212529] sm:h-[30px] sm:px-[7px] sm:text-[14px]",
                   "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
-                  "placeholder:text-[#b9b8b7]",
+                  "placeholder:text-[var(--ds-grey-medium-05)]",
                   "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",
                   "disabled:opacity-60",
                 )}
@@ -152,7 +153,7 @@ export function ResetPasswordScreen() {
                 className={cn(
                   "h-11 w-full bg-white px-[10px] py-[6px] text-[16px] leading-[21px] text-[#212529] sm:h-[30px] sm:px-[7px] sm:text-[14px]",
                   "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
-                  "placeholder:text-[#b9b8b7]",
+                  "placeholder:text-[var(--ds-grey-medium-05)]",
                   "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_#134343]",
                   "disabled:opacity-60",
                 )}
@@ -160,7 +161,7 @@ export function ResetPasswordScreen() {
             </div>
 
             {error && (
-              <p className="mt-3 text-[13px] leading-[18px] text-[#b00020]">
+              <p className="mt-3 text-[13px] leading-[18px] text-[var(--color-error)]">
                 {error}
               </p>
             )}

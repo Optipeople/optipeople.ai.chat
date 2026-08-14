@@ -56,7 +56,7 @@ export function LocaleToggle({
             onClick={() => void switchTo(l)}
             aria-pressed={active}
             className={cn(
-              "px-3 py-[5px] text-[12px] font-semibold uppercase tracking-wide leading-[14px]",
+              "tap-target px-3 py-[5px] text-[12px] font-semibold uppercase tracking-wide leading-[14px]",
               "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]",
               onLight
                 ? active

@@ -3,17 +3,19 @@
 // Kept visually identical across surfaces so the admin doesn't
 // double-check which page says what.
 
+import { useTranslations } from "next-intl";
 import type { McpStatus } from "@/admin/mcpAdminApi";
 
-const STATUS_LABEL: Record<McpStatus, string> = {
-  unconfigured: "Not connected",
-  pending_auth: "Auth started",
-  authorized: "Connected",
-  expired: "Token expired",
-  error: "Error",
+const STATUS_KEY: Record<McpStatus, string> = {
+  unconfigured: "notConnected",
+  pending_auth: "authStarted",
+  authorized: "connected",
+  expired: "tokenExpired",
+  error: "error",
 };
 
 export function McpStatusBadge({ status }: { status: McpStatus }) {
+  const t = useTranslations("admin.mcp.status");
   const bg =
     status === "authorized"
       ? "bg-[var(--ds-tag-green-light)] text-[var(--ds-green-dark)] border-[var(--ds-tag-green-dark)]"
@@ -26,7 +28,7 @@ export function McpStatusBadge({ status }: { status: McpStatus }) {
     <span
       className={`inline-flex items-center rounded-[2px] border px-2 py-0.5 text-[12px] font-medium ${bg}`}
     >
-      {STATUS_LABEL[status]}
+      {t(STATUS_KEY[status])}
     </span>
   );
 }

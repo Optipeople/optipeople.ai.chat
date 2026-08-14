@@ -34,9 +34,10 @@ function flattenChildren(node: ReactNode): string {
   return "";
 }
 
-// Sentinel href emitted by `remarkServiceButton`. When the link renderer
-// sees it, the anchor becomes an inline pill button that calls the same
-// handler as the bottom "Tilkald service" button.
+// Sentinel href the model emits as `[label](opti:call-service)` when it
+// recommends human help. The link renderer turns the anchor into an
+// inline pill button that calls the same handler as the bottom
+// "Tilkald service" button.
 const CALL_SERVICE_HREF = "opti:call-service";
 
 // Sentinel schemes the model can emit to embed a clickable PDF link
@@ -195,56 +196,6 @@ function InlineAssetImage({
   );
 }
 
-// Walks the mdast tree and replaces standalone "service" / "Service" words
-// inside plain text with a synthetic `link` node pointing to
-// CALL_SERVICE_HREF. Skips text inside existing links and code so we don't
-// double-wrap. Word-boundary matching avoids catching compounds like
-// "serviceaftale".
-function remarkServiceButton() {
-  const SKIP = new Set(["code", "inlineCode", "link", "linkReference"]);
-  type Node = { type: string; value?: string; children?: Node[] };
-  const transform = (node: Node) => {
-    if (!node.children) return;
-    const out: Node[] = [];
-    for (const child of node.children) {
-      if (SKIP.has(child.type)) {
-        out.push(child);
-        continue;
-      }
-      if (child.type !== "text" || typeof child.value !== "string") {
-        transform(child);
-        out.push(child);
-        continue;
-      }
-      const value = child.value;
-      const regex = /\bservice\b/gi;
-      let last = 0;
-      let matched = false;
-      let m: RegExpExecArray | null;
-      while ((m = regex.exec(value)) !== null) {
-        matched = true;
-        if (m.index > last) {
-          out.push({ type: "text", value: value.slice(last, m.index) });
-        }
-        out.push({
-          type: "link",
-          // mdast link carries `url` at runtime
-          ...({ url: CALL_SERVICE_HREF } as object),
-          children: [{ type: "text", value: m[0] }],
-        });
-        last = m.index + m[0].length;
-      }
-      if (!matched) {
-        out.push(child);
-      } else if (last < value.length) {
-        out.push({ type: "text", value: value.slice(last) });
-      }
-    }
-    node.children = out;
-  };
-  return (tree: Node) => transform(tree);
-}
-
 const baseComponents: Components = {
   p: ({ className, ...props }) => (
     <p
@@ -360,8 +311,8 @@ const baseComponents: Components = {
     if (assetRef) {
       return <InlineAssetImage assetId={assetRef.id} alt={alt ?? ""} />;
     }
-    // eslint-disable-next-line @next/next/no-img-element
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         className={cn("my-3 h-auto max-w-full rounded-[6px]", className)}
         src={typeof src === "string" ? src : undefined}
@@ -550,10 +501,10 @@ export function Markdown({
     return result;
   }, [onCallService, withHeadingIds]);
 
-  const plugins = useMemo(
-    () => (onCallService ? [remarkGfm, remarkServiceButton] : [remarkGfm]),
-    [onCallService],
-  );
+  // The escalation pill only renders where the model explicitly emits
+  // the `opti:call-service` link — blanket-matching the word "service"
+  // in prose turned phrases like "service manual" into buttons.
+  const plugins = useMemo(() => [remarkGfm], []);
 
   return (
     <div

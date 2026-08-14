@@ -1,11 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, MessageSquare } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronRight,
+  MessageSquare,
+} from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
@@ -26,10 +32,43 @@ import {
 } from "@/auth/factoriesApi";
 import { AddMachineDialog } from "@/components/admin/AddMachineDialog";
 
+type MachineSortKey = "name" | "documents";
+
+function SortButton({
+  active,
+  dir,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  dir: 1 | -1;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-green-80)]"
+    >
+      {children}
+      {active ? (
+        dir === 1 ? (
+          <ArrowUp aria-hidden className="h-3.5 w-3.5" />
+        ) : (
+          <ArrowDown aria-hidden className="h-3.5 w-3.5" />
+        )
+      ) : (
+        <ArrowUpDown aria-hidden className="h-3.5 w-3.5 opacity-40" />
+      )}
+    </button>
+  );
+}
+
 export function MachinesList() {
-  const router = useRouter();
   const t = useTranslations("admin.machinesList");
   const tc = useTranslations("common");
+  const searchParams = useSearchParams();
   const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [accountNames, setAccountNames] = useState<Map<string, string>>(
     () => new Map(),
@@ -38,8 +77,16 @@ export function MachinesList() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
-  const [accountFilter, setAccountFilter] = useState<string>("");
+  // Deep links (e.g. the account hub's "Machines" section) can pre-filter
+  // the list with ?account=<id>.
+  const [accountFilter, setAccountFilter] = useState<string>(
+    () => searchParams?.get("account") ?? "",
+  );
   const [factoryFilter, setFactoryFilter] = useState<string>("");
+  const [sort, setSort] = useState<{ key: MachineSortKey; dir: 1 | -1 }>({
+    key: "name",
+    dir: 1,
+  });
   const [factories, setFactories] = useState<FactoryLite[]>([]);
   const [machineToFactory, setMachineToFactory] = useState<MachineFactoryMap>(
     () => new Map(),
@@ -110,6 +157,8 @@ export function MachinesList() {
     const f = factories.find((x) => x.id === factoryFilter);
     if (!f) return;
     if (accountFilter && f.accountId !== accountFilter) {
+      // Cross-filter dependency: this effect IS the synchronisation.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFactoryFilter("");
     }
   }, [accountFilter, factoryFilter, factories]);
@@ -128,7 +177,7 @@ export function MachinesList() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return machines.filter((m) => {
+    const rows = machines.filter((m) => {
       if (accountFilter && m.accountId !== accountFilter) return false;
       if (factoryFilter) {
         const f = machineToFactory.get(m.machineId);
@@ -147,6 +196,14 @@ export function MachinesList() {
         m.machineId.toLowerCase().includes(q)
       );
     });
+    rows.sort((a, b) => {
+      const cmp =
+        sort.key === "name"
+          ? (a.displayName ?? "").localeCompare(b.displayName ?? "")
+          : a.documentCount - b.documentCount;
+      return cmp * sort.dir;
+    });
+    return rows;
   }, [
     machines,
     query,
@@ -154,7 +211,16 @@ export function MachinesList() {
     accountFilter,
     factoryFilter,
     machineToFactory,
+    sort,
   ]);
+
+  function toggleSort(key: MachineSortKey) {
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === 1 ? -1 : 1 }
+        : { key, dir: key === "name" ? 1 : -1 },
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
@@ -243,13 +309,14 @@ export function MachinesList() {
             {filtered.map((m) => (
               <div
                 key={m.machineId}
-                onClick={() => router.push(`/admin/machines/${m.machineId}`)}
-                className={cn(
-                  "group flex cursor-pointer items-center gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3",
-                  "transition-colors active:bg-[var(--color-muted)]/60",
-                )}
+                className="group flex items-center gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
               >
-                <div className="min-w-0 flex-1">
+                {/* The chat shortcut is its own <a>, so the card body is
+                    the link — nesting anchors is invalid HTML. */}
+                <Link
+                  href={`/admin/machines/${m.machineId}`}
+                  className="min-w-0 flex-1"
+                >
                   <p className="truncate text-[15px] font-medium text-[var(--color-foreground)]">
                     {m.displayName ?? t("noName")}
                   </p>
@@ -262,10 +329,9 @@ export function MachinesList() {
                       {m.documentCount}
                     </span>
                   </p>
-                </div>
+                </Link>
                 <a
                   href={`/?account=${encodeURIComponent(m.accountId)}&machine=${encodeURIComponent(m.machineId)}`}
-                  onClick={(e) => e.stopPropagation()}
                   title={t("openChatTitle")}
                   aria-label={t("openChatAria")}
                   className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]"
@@ -281,10 +347,26 @@ export function MachinesList() {
           <div className="hidden sm:block">
             <DataTable>
               <DataTableHead>
-                <DataTableHeader>{t("colName")}</DataTableHeader>
+                <DataTableHeader>
+                  <SortButton
+                    active={sort.key === "name"}
+                    dir={sort.dir}
+                    onClick={() => toggleSort("name")}
+                  >
+                    {t("colName")}
+                  </SortButton>
+                </DataTableHeader>
                 <DataTableHeader>{t("colAccount")}</DataTableHeader>
                 <DataTableHeader>{t("colFactory")}</DataTableHeader>
-                <DataTableHeader align="right">{t("colDocuments")}</DataTableHeader>
+                <DataTableHeader align="right">
+                  <SortButton
+                    active={sort.key === "documents"}
+                    dir={sort.dir}
+                    onClick={() => toggleSort("documents")}
+                  >
+                    {t("colDocuments")}
+                  </SortButton>
+                </DataTableHeader>
                 <DataTableHeader className="w-10" />
                 <DataTableHeader className="w-10" />
               </DataTableHead>
@@ -295,7 +377,7 @@ export function MachinesList() {
                   return (
                     <DataTableRow
                       key={m.machineId}
-                      onClick={() => router.push(`/admin/machines/${m.machineId}`)}
+                      href={`/admin/machines/${m.machineId}`}
                     >
                       <DataTableCell className="group-hover:underline">
                         {m.displayName ?? t("noName")}

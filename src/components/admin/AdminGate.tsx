@@ -11,10 +11,12 @@ import { isAdmin, useAuth } from "@/auth/AuthContext";
 // this component is just UX so non-admins don't see a flicker of empty
 // admin chrome before the API 403s.
 export function AdminGate({ children }: { children: ReactNode }) {
-  const { user, isInitializing } = useAuth();
+  const { user, isInitializing, isRoleLoading } = useAuth();
   const t = useTranslations("admin.gate");
 
-  if (isInitializing) {
+  // Wait for the role fetch too — otherwise every hard refresh flashes
+  // "not authorized" at admins until GetCurrentUser resolves.
+  if (isInitializing || (user && !user.permissionName && isRoleLoading)) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <Spinner className="h-6 w-6" />

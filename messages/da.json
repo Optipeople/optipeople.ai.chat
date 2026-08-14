@@ -2,7 +2,7 @@
   "common": {
     "loading": "Indlæser…",
     "save": "Gem",
-    "cancel": "Annuller",
+    "cancel": "Annullér",
     "close": "Luk",
     "delete": "Slet",
     "edit": "Rediger",
@@ -16,7 +16,11 @@
     "unknownError": "Ukendt fejl",
     "supportEmail": "support@optipeople.dk",
     "page": "s. {n}",
-    "openInNewTab": "Åbn {title} i ny fane"
+    "openInNewTab": "Åbn {title} i ny fane",
+    "ok": "OK",
+    "closeDialog": "Luk dialog",
+    "remove": "Fjern",
+    "search": "Søg"
   },
   "metadata": {
     "title": "Opti Assist",
@@ -47,10 +51,14 @@
     "rememberMe": "Husk mig på denne computer",
     "submit": "Log ind",
     "help": "Hjælp mig.",
-    "forgotPasswordPrefix": "Jeg har ",
-    "forgotPassword": "glemt min adgangskode",
-    "forgotPasswordSuffix": ".",
-    "termsOfService": "Terms of Service"
+    "termsOfService": "Servicevilkår",
+    "forgotPasswordRich": "Jeg har <link>glemt min adgangskode</link>.",
+    "errors": {
+      "invalidCredentials": "Forkert e-mail eller adgangskode.",
+      "loginFailed": "Login mislykkedes ({status}). Prøv igen om lidt.",
+      "noToken": "Login mislykkedes — der blev ikke modtaget en session. Prøv igen.",
+      "generic": "Login mislykkedes. Tjek din forbindelse og prøv igen."
+    }
   },
   "forgotPassword": {
     "heading": "Nulstil din adgangskode",
@@ -83,7 +91,7 @@
   },
   "consent": {
     "heading": "Inden du fortsætter",
-    "subtitle": "OptiAssist leveres til din arbejdsgiver under en hovedaftale med Optipeople. Bekræft venligst, at du har læst de to korte dokumenter herunder.",
+    "subtitle": "Opti Assist leveres til din arbejdsgiver under en hovedaftale med Optipeople. Bekræft venligst, at du har læst de to korte dokumenter nedenfor, før du fortsætter.",
     "termsLabel": "Jeg har læst og accepterer brugervilkårene.",
     "termsLink": "Læs brugervilkårene",
     "privacyLabel": "Jeg har læst privatlivspolitikken og forstår, hvordan mine oplysninger behandles.",
@@ -94,10 +102,11 @@
     "requiredHint": "* Påkrævet. Optipeople registrerer din accept mod din e-mail med henblik på audit.",
     "qrBanner": {
       "ariaLabel": "Information om vilkår og privatliv",
-      "title": "Ved brug af OptiAssist på denne maskine",
+      "title": "Ved brug af Opti Assist på denne maskine",
       "body": "Du accepterer <terms>brugervilkårene</terms> og <privacy>privatlivspolitikken</privacy>. Din virksomhed har allerede underskrevet hovedaftalen med Optipeople.",
       "acknowledge": "Forstået"
-    }
+    },
+    "loadFailed": "Kunne ikke hente samtykkestatus."
   },
   "accountSelect": {
     "heading": "Vælg konto",
@@ -105,7 +114,8 @@
     "loading": "Indlæser konti…",
     "empty": "Der er endnu ikke tilføjet maskiner i Opti Assist. Skriv til {email} for hjælp med at komme i gang.",
     "search": "Søg efter konti…",
-    "newAccount": "Ny konto"
+    "newAccount": "Ny konto",
+    "loadFailed": "Kunne ikke hente dine konti. Tjek din forbindelse og prøv igen."
   },
   "newAccountWizard": {
     "dialogAria": "Opret ny konto",
@@ -121,7 +131,7 @@
     "step1Description": "Kontoen oprettes i Optipeople sammen med dens første administrator, som modtager en invitationsmail.",
     "accountNameLabel": "Kontonavn",
     "adminNameLabel": "Administratorens navn",
-    "adminEmailLabel": "Administratorens email",
+    "adminEmailLabel": "Administratorens e-mail",
     "adminEmailHelp": "Modtager invitationsmailen",
     "createAccount": "Opret konto",
     "accountCreatedButUnresolved": "Kontoen blev oprettet i Optipeople, men dens id kunne ikke findes, så de resterende trin kan ikke køres her. Færdiggør opsætningen i Optipeople-portalen.",
@@ -145,7 +155,11 @@
     "roleLabel": "Rolle",
     "createUser": "Tilføj bruger",
     "doneHeading": "Kontoen er oprettet",
-    "doneDescription": "{account} er klar. Du kan nu vælge den på kontolisten."
+    "doneDescription": "{account} er klar. Du kan nu vælge den på kontolisten.",
+    "emailInvalid": "Angiv en gyldig e-mailadresse (fx navn@firma.dk)",
+    "closeConfirmTitle": "Afslut opsætningen senere?",
+    "closeConfirmBody": "Kontoen \"{account}\" er allerede oprettet i Optipeople. De resterende trin kan færdiggøres senere i Optipeople-portalen — opret ikke kontoen igen.",
+    "closeConfirmLabel": "Afslut senere"
   },
   "machineSelect": {
     "heading": "Vælg maskine",
@@ -156,13 +170,17 @@
     "emptyAdmin": "Der er endnu ingen maskiner tilføjet i Opti Assist på denne konto. Tilføj den første under {link}.",
     "emptyAdminLink": "Maskinindstillinger",
     "search": "Søg efter maskiner…",
-    "switchAccount": "Skift konto"
+    "switchAccount": "Skift konto",
+    "loadFailed": "Kunne ikke hente maskinerne. Tjek din forbindelse og prøv igen.",
+    "fleetEntry": "Alle maskiner",
+    "fleetEntrySub": "Chat på tværs af alle {count} maskiner på én gang"
   },
   "qrError": {
     "heading": "QR-koden virker ikke",
     "askAdmin": "Bed en super-admin om at generere en ny QR-kode for maskinen.",
     "invalid": "QR-koden er ugyldig eller er blevet inaktiveret.",
-    "lookupFailed": "Fejl ved QR-opslag ({status})"
+    "lookupFailed": "Fejl ved QR-opslag ({status})",
+    "networkFailed": "Kunne ikke tjekke QR-koden — tjek din forbindelse og prøv igen."
   },
   "chat": {
     "emptyPrompt": "Spørg om installation, vedligeholdelse, værktøjsskift, alarmer eller hvad som helst i din maskines manual.",
@@ -172,8 +190,6 @@
     "working": "Arbejder…",
     "toolSearching": "Søger i manualerne…",
     "toolListing": "Henter manualoversigt…",
-    "toolFetchingMachineData": "Henter maskindata…",
-    "toolRunning": "Kører",
     "toolLabels": {
       "get_account_information": "Henter kontooplysninger…",
       "get_factories_data": "Henter fabriksdata…",
@@ -198,7 +214,7 @@
       "get_total_working_hours_per_day_by_date": "Henter arbejdstimer pr. dag…"
     },
     "errorPrefix": "Fejl: {message}",
-    "errorCheckStatus": "Tjek Anthropic-status",
+    "errorCheckStatus": "Se systemstatus",
     "errorTryAgain": "Prøv igen",
     "errorConnectionTitle": "Forbindelsesfejl",
     "send": "Send",
@@ -233,13 +249,29 @@
       "q2": "Hvilke dokumenter har du adgang til?",
       "q3": "Hvor finder jeg manualen?"
     },
+    "fleetTag": "Alle maskiner",
+    "fleetEmptyPrompt": "Spørg på tværs af alle kontoens maskiner — sammenlign oppetid, find stop og fejl, eller søg i alle manualerne på én gang.",
+    "fleetQuestions": {
+      "q1": "Hvilke maskiner havde stop i dag?",
+      "q2": "Sammenlign oppetid på tværs af maskinerne denne uge",
+      "q3": "Hvilke maskiner har du manualer til?"
+    },
     "attachments": {
       "addAria": "Vedhæft billede",
       "tooMany": "Du kan vedhæfte op til {max} billeder pr. besked.",
       "unsupported": "Filtypen understøttes ikke. Brug PNG, JPEG eller WebP under 10 MB.",
       "failed": "Upload mislykkedes",
-      "dropHere": "Slip billede for at vedhæfte"
-    }
+      "dropHere": "Slip billede for at vedhæfte",
+      "uploadingHint": "Uploader foto…"
+    },
+    "sessionExpiredTitle": "Du er blevet logget ud",
+    "sessionExpiredBody": "Din session er udløbet. Log ind igen for at fortsætte — samtalen er gemt på denne enhed.",
+    "sessionExpiredBodyQr": "QR-sessionen er ikke længere gyldig. Scan QR-mærkatet på maskinen igen for at fortsætte.",
+    "sessionExpiredAction": "Log ind igen",
+    "errorNetworkBody": "Ingen forbindelse — tjek dit internet og prøv igen.",
+    "errorServerBody": "Serveren svarede med en fejl ({status}). Prøv igen om lidt.",
+    "toolFetchingMachineDataNamed": "Henter maskindata ({name})",
+    "toolRunningNamed": "Kører {name}"
   },
   "viewer": {
     "openInNewTab": "Åbn i ny fane",
@@ -254,13 +286,16 @@
     "drawerAria": "Vidensbase",
     "heading": "Dokumenter",
     "description": "Manualer og dokumenter for denne maskine. Klik på et element for at åbne det.",
+    "fleetDescription": "Manualer og dokumenter for alle kontoens maskiner, grupperet pr. maskine. Klik på et element for at åbne det.",
     "empty": "Ingen dokumenter er tilgængelige endnu. Bed din administrator om at gøre manualer synlige her.",
     "adminEmptyTitle": "Ingen dokumenter endnu",
     "adminEmptyBody": "Tilføj manualer eller billeder for denne maskine i admin. De vises her, og assistenten bruger dem til at besvare operatørernes spørgsmål.",
     "adminUpload": "Tilføj dokumenter",
     "retry": "Prøv igen",
     "missingUrl": "Manglende URL i svaret",
-    "openFailed": "Kunne ikke åbne dokument"
+    "openFailed": "Kunne ikke åbne dokument",
+    "railLabel": "Manualer",
+    "loadFailed": "Kunne ikke hente dokumenterne. Tjek din forbindelse og prøv igen."
   },
   "feedback": {
     "prompt": "Var dette nyttigt?",
@@ -276,11 +311,13 @@
     "solutionLabel": "Hvad virkede? (valgfrit — bliver delt med næste operatør)",
     "solutionPlaceholder": "F.eks. RESET-knappen + genstart styringen efter alarm-koden var læst.",
     "skip": "Spring over",
-    "submit": "Send"
+    "submit": "Send",
+    "noCommentLabel": "Hvad manglede? (valgfrit)",
+    "noCommentPlaceholder": "F.eks. at svaret ikke passede til min maskine eller problemet."
   },
   "voice": {
-    "dialogLabel": "Stemme-samtale med Opti Assist",
-    "heading": "Stemme-samtale",
+    "dialogLabel": "Talesamtale med Opti Assist",
+    "heading": "Talesamtale",
     "end": "Afslut",
     "muteOn": "Slå mikrofon til",
     "muteOff": "Slå mikrofon fra",
@@ -293,7 +330,10 @@
       "ending": "Afslutter…",
       "error": "Fejl — prøv igen",
       "idle": "Inaktiv"
-    }
+    },
+    "errorBody": "Talesamtalen kunne ikke starte eller mistede forbindelsen.",
+    "errorMicDenied": "Adgang til mikrofonen er blokeret. Tillad mikrofonadgang for dette websted i browserens indstillinger, og prøv igen.",
+    "retry": "Prøv igen"
   },
   "speakButton": {
     "stop": "Stop oplæsning",
@@ -321,13 +361,16 @@
       "email": "E-mail",
       "service_ticket": "Service-ticket",
       "webhook": "Webhook"
-    }
+    },
+    "photos": "Fotos fra operatøren",
+    "photoAlt": "Foto vedhæftet af operatøren"
   },
   "admin": {
     "nav": {
       "sections": {
         "machines": "Maskiner",
-        "accounts": "Konti"
+        "accounts": "Konti",
+        "escalations": "Eskaleringer"
       },
       "crumbs": {
         "machines": "Maskiner",
@@ -335,6 +378,7 @@
         "knowledge": "Viden",
         "settings": "Indstillinger",
         "conversations": "Samtaler",
+        "fleetConversations": "Fleet-samtaler",
         "escalations": "Eskaleringer",
         "qr": "QR-kode",
         "rules": "AI-regler",
@@ -354,7 +398,7 @@
     "machinesList": {
       "heading": "Maskiner",
       "loading": "Henter maskiner…",
-      "countLabel": "{count} maskiner med vidensbase",
+      "countLabel": "{count, plural, one {# maskine med vidensbase} other {# maskiner med vidensbase}}",
       "searchPlaceholder": "Søg navn eller ID…",
       "addMachine": "Tilføj maskine",
       "emptyFirst": "Tryk \"Tilføj maskine\" for at tilføje din første maskine.",
@@ -383,7 +427,7 @@
       "machineNameSourceAria": "Kilde: Optipeople-platformen",
       "accountName": "Kontonavn",
       "accountNameTooltip": "Hentet fra Optipeople-platformen (det navn kontoen er registreret med dér).",
-      "machineIdLabel": "Machine ID",
+      "machineIdLabel": "Maskine-ID",
       "accountIdLabel": "Konto ID",
       "documentsLabel": "Dokumenter",
       "updatedLabel": "Opdateret",
@@ -423,7 +467,6 @@
       "qrRevokeConfirmLabel": "Deaktiver",
       "uploadHeading": "Upload filer",
       "uploadDescription": "Træk vilkårlige filer eller en hel mappe hertil — PDF'er, billeder (PNG/JPG/WebP) eller andre formater. Mappestrukturen bevares. Billeder beskrives med Claude vision; tekstfiler indekseres til chatten; andre filer gemmes som filer, der kan downloades.",
-      "folderLabel": "Mappe (kun for filer valgt via knap nedenfor)",
       "folderRoot": "(uden mappe)",
       "folderNew": "+ Ny mappe…",
       "folderNewPlaceholder": "F.eks. Setup/Kalibrering",
@@ -433,8 +476,7 @@
       "selectedCount": "{count} valgt",
       "clearSelection": "Ryd valg",
       "deleteN": "Slet {count}",
-      "bulkDeleteConfirmTitle": "Slet {count} dokumenter?",
-      "bulkDeleteConfirmTitleOne": "Slet {count} dokument?",
+      "bulkDeleteConfirmTitle": "Slet {count, plural, one {# dokument} other {# dokumenter}}?",
       "bulkDeleteConfirmBody": "Dokumenterne og alle deres embeddings fjernes permanent. Handlingen kan ikke fortrydes.",
       "bulkDeleteConfirmLabel": "Slet",
       "bulkDeleteFailed": "{failed} af {total} dokumenter kunne ikke slettes",
@@ -493,7 +535,13 @@
       "operatorVisibleHideAria": "Skjul {title} for operatører",
       "bulkShowOperators": "Vis {count} for operatører",
       "bulkHideOperators": "Skjul {count} for operatører",
-      "bulkVisibilityFailed": "Kunne ikke opdatere synlighed for {failed} af {total} dokumenter"
+      "bulkVisibilityFailed": "Kunne ikke opdatere synlighed for {failed} af {total} dokumenter",
+      "mcpManage": "Administrér",
+      "mcpSetup": "Opsæt",
+      "folderLabelAll": "Mappe (filer lander her; trukne mapper beholder deres struktur i den)",
+      "failedReasonAria": "Fejlårsag",
+      "moveDocFailed": "Kunne ikke flytte \"{title}\"",
+      "deleteFolderFailed": "Kunne ikke slette mappen \"{name}\""
     },
     "machineEscalation": {
       "heading": "Service-eskalering",
@@ -508,10 +556,10 @@
       "configure": "Konfigurér",
       "remove": "Fjern",
       "fetchFailed": "Kunne ikke hente",
-      "targetRequired": "Target må ikke være tom",
+      "targetRequired": "Modtager må ikke være tom",
       "genericError": "Fejl",
       "removeConfirmTitle": "Fjern service-target?",
-      "removeConfirmBody": "Operatører kan ikke længere bruge 'Tilkald service'-knappen før der konfigureres en ny target. Tidligere escalations påvirkes ikke.",
+      "removeConfirmBody": "Operatører kan ikke længere bruge 'Tilkald service'-knappen før der konfigureres en ny modtager. Tidligere eskaleringer påvirkes ikke.",
       "removeConfirmLabel": "Fjern",
       "channelLabel": "Kanal",
       "channels": {
@@ -531,7 +579,6 @@
       "cancel": "Annullér"
     },
     "conversations": {
-      "back": "Tilbage til maskine",
       "heading": "Samtaler",
       "description": "Audit af alle operatør-chats for denne maskine. Klik på en række for at se hele forløbet og hvilke manualer AI'en konsulterede.",
       "empty": "Ingen samtaler endnu for denne maskine.",
@@ -544,9 +591,17 @@
       "resolutionUnresolved": "Uløst",
       "resolutionEscalated": "Eskaleret",
       "resolutionUnknown": "Ukendt",
-      "prev": "Forrige",
-      "next": "Næste",
-      "pageLabel": "Side {n}"
+      "filterStatus": "Status",
+      "filterAll": "Alle",
+      "resolutionNone": "Ingen status",
+      "filterFrom": "Fra",
+      "filterTo": "Til",
+      "sortLabel": "Sortering",
+      "sortNewest": "Nyeste først",
+      "sortProblems": "Problemer først",
+      "totalLabel": "{count} samtaler",
+      "emptyFiltered": "Ingen samtaler matcher filteret.",
+      "qrOperator": "QR-operatør"
     },
     "conversationDetail": {
       "fetchFailed": "Samtalen kunne ikke hentes",
@@ -568,7 +623,7 @@
       "operatorMarkedResolved": "Operatør markerede samtalen som løst",
       "operatorMarkedUnresolved": "Operatør markerede samtalen som uløst",
       "whatWorked": "Hvad virkede:",
-      "promotedToKb": " · forfremmet til KB",
+      "promotedToKb": " — promoveret til KB",
       "operatorRole": "Operatør",
       "tokensInOutShort": "· {tokensIn} → {tokensOut} tokens",
       "cacheHit": " · cache hit",
@@ -580,10 +635,10 @@
       "noChunksMatch": "Ingen chunks fandt match.",
       "chunkLabel": "chunk #{n}",
       "pageRange": "s. {from}–{to}",
-      "pageSingle": "s. {n}"
+      "pageSingle": "s. {n}",
+      "qrOperator": "QR-operatør"
     },
     "escalations": {
-      "back": "Tilbage til maskine",
       "heading": "Eskaleringer",
       "description": "Audit af alle service-tilkald for denne maskine. Klik på en række for at se den fulde samtale, eller åbn tekniker-linket for at se det samme som modtageren.",
       "empty": "Ingen eskaleringer endnu for denne maskine.",
@@ -598,9 +653,14 @@
       "channelServiceTicket": "Service-ticket",
       "channelWebhook": "Webhook",
       "open": "Åbn",
-      "prev": "Forrige",
-      "next": "Næste",
-      "pageLabel": "Side {n}"
+      "colStatus": "Status",
+      "statusOpen": "Åben",
+      "statusHandled": "Håndteret",
+      "markHandled": "Markér som håndteret",
+      "reopen": "Genåbn",
+      "handledByTitle": "Håndteret af {by}",
+      "totalLabel": "{count} eskaleringer",
+      "qrOperator": "QR-operatør"
     },
     "addMachine": {
       "dialogAria": "Tilføj maskine",
@@ -638,8 +698,7 @@
       "fromRoot": "Fra: rod",
       "rootLabel": "rod",
       "folderItemCount": "({checked} af {total})",
-      "movesSelected": "{count} flytninger valgt",
-      "moveSelected": "{count} flytning valgt",
+      "movesSelected": "{count, plural, one {# flytning valgt} other {# flytninger valgt}}",
       "cancel": "Annullér",
       "apply": "Anvend",
       "applyWithCount": "Anvend ({count})"
@@ -659,8 +718,7 @@
       "serverWithTab": "{server} på server, {tab} i denne fane",
       "serverOnly": "{server} på server",
       "inProgress": "{remaining} af {total} i gang…",
-      "doneCount": "{done} færdige",
-      "doneCountOne": "{done} færdig",
+      "doneCount": "{done, plural, one {# færdig} other {# færdige}}",
       "failedSuffix": ", {failed} fejlet",
       "clearFinished": "Ryd færdige",
       "serverProcessing": "Behandler på server (overlever refresh)",
@@ -673,12 +731,187 @@
       "describingImage": "Beskriver & embedder…",
       "processingEmbedding": "Behandler & embedder…",
       "chunksFromPages": "{chunks} chunks fra {pages} sider",
-      "fileChunks": "Gemt · {chunks} tekst-chunks embedded",
+      "fileChunks": "Gemt — {chunks} tekst-chunks indlejret",
       "fileStoredOnly": "Gemt (binær — ikke søgbar)",
-      "chunksReembedded": "{chunks} chunks fra {pages} sider · re-embedded",
+      "chunksReembedded": "{chunks} chunks fra {pages} sider — genindlejret",
       "ocrTooltip": "Tekst udvundet med Claude vision (OCR)",
       "ocrAria": "Claude vision OCR",
-      "failed": "Fejlede"
+      "failed": "Fejlede",
+      "retryAllFailed": "Prøv alle fejlede igen"
+    },
+    "escalationsInbox": {
+      "heading": "Eskaleringer",
+      "description": "Service-tilkald på tværs af alle maskiner. Listen viser åbne eskaleringer som standard — markér dem som håndteret, når en tekniker har fulgt op.",
+      "empty": "Ingen eskaleringer matcher filteret.",
+      "filterStatus": "Status",
+      "filterOpen": "Åbne",
+      "filterHandled": "Håndterede",
+      "filterAll": "Alle",
+      "colCreated": "Oprettet",
+      "colMachine": "Maskine",
+      "colAccount": "Konto",
+      "colChannel": "Kanal",
+      "colStatus": "Status",
+      "colOperator": "Operatør",
+      "colNote": "Beskrivelse"
+    },
+    "apiErrors": {
+      "noAccess": "Du har ikke adgang til admin",
+      "fetchMachinesFailed": "Kunne ikke hente maskiner ({status})",
+      "machineNotFound": "Maskinen findes ikke",
+      "fetchMachineFailed": "Kunne ikke hente maskine ({status})",
+      "saveNameFailed": "Kunne ikke gemme navn ({status})",
+      "createMachineFailed": "Kunne ikke oprette maskine ({status})",
+      "deleteMachineFailed": "Kunne ikke slette maskine ({status})",
+      "saveSummaryFailed": "Kunne ikke gemme beskrivelse ({status})",
+      "updateVisibilityFailed": "Kunne ikke opdatere synlighed ({status})",
+      "moveDocumentFailed": "Kunne ikke flytte dokument ({status})",
+      "fetchFileUrlFailed": "Kunne ikke hente fil-URL ({status})",
+      "createFolderFailed": "Kunne ikke oprette mappe ({status})",
+      "deleteFolderFailed": "Kunne ikke slette mappe ({status})",
+      "fetchConversationsFailed": "Kunne ikke hente samtaler ({status})",
+      "fetchEscalationsFailed": "Kunne ikke hente eskaleringer ({status})",
+      "updateEscalationStatusFailed": "Kunne ikke opdatere eskaleringen ({status})",
+      "conversationNotFound": "Samtalen findes ikke",
+      "fetchConversationFailed": "Kunne ikke hente samtale ({status})",
+      "reprocessFailed": "Reprocess fejlede",
+      "deleteDocumentFailed": "Kunne ikke slette dokument ({status})",
+      "startUploadFailed": "Kunne ikke starte upload ({status})",
+      "uploadFailed": "Upload fejlede",
+      "uploadFailedStatus": "Upload fejlede ({status})",
+      "uploadNetworkFailed": "Upload fejlede (netværksfejl)",
+      "fileTooLarge": "Filen er for stor til at uploade",
+      "autoOrganizeFailed": "Auto-organisering fejlede ({status})",
+      "saveFailed": "Kunne ikke gemme ({status})",
+      "generateQrFailed": "Kunne ikke generere QR-kode ({status})",
+      "revokeQrFailed": "Kunne ikke inaktivere QR-kode ({status})",
+      "fetchEscalationTargetFailed": "Kunne ikke hente service-target ({status})",
+      "saveEscalationTargetFailed": "Kunne ikke gemme target ({status})",
+      "emptyEscalationTarget": "Serveren returnerede et tomt target",
+      "clearEscalationTargetFailed": "Kunne ikke fjerne target ({status})",
+      "fetchUsageFailed": "Kunne ikke hente forbrug ({status})"
+    },
+    "aiRules": {
+      "heading": "AI-regler — {name}",
+      "description": "Den låste regel nedenfor håndhæves altid. Tilføj ekstra regler med kontospecifik vejledning (fx sikkerhedspåmindelser).",
+      "loadFailed": "Kunne ikke hente regler",
+      "addFailed": "Kunne ikke tilføje reglen",
+      "saveFailed": "Kunne ikke gemme reglen",
+      "toggleFailed": "Kunne ikke opdatere reglen",
+      "deleteFailed": "Kunne ikke slette reglen",
+      "reorderFailed": "Kunne ikke ændre rækkefølgen",
+      "deleteConfirmTitle": "Slet reglen?",
+      "deleteConfirmBody": "Reglen fjernes fra alle chats på denne konto. Dette kan ikke fortrydes.",
+      "lockedHeading": "Låst regel — håndhæves altid",
+      "lockedFootnote": "Denne regel er ens for alle konti og kan ikke redigeres. Den holder assistenten på emnet og modstår forsøg på at tale den fra sin rolle.",
+      "addHeading": "Tilføj en regel",
+      "addDescription": "Instruktion i almindeligt sprog, som assistenten skal følge. Hold den kort og præcis.",
+      "addPlaceholder": "Fx: Mind altid operatøren om at låse spindlen, før der skiftes værktøj.",
+      "addButton": "Tilføj regel",
+      "moveUp": "Flyt op",
+      "moveDown": "Flyt ned",
+      "reset": "Nulstil",
+      "enableRule": "Aktivér reglen",
+      "disableRule": "Deaktivér reglen",
+      "deleteRule": "Slet regel"
+    },
+    "mcp": {
+      "heading": "MCP-integration",
+      "descriptionScoped": "OAuth-adgangen denne konto bruger til Optipeoples MCP-server. Chatten bruger den til at hente maskindata på kontoens vegne.",
+      "descriptionAll": "Adgang pr. konto til Optipeoples MCP-server. Chatten bruger den til at hente maskindata på hver kontos vegne.",
+      "connect": "Forbind",
+      "addCredentials": "Tilføj forbindelse",
+      "loadFailed": "Kunne ikke hente MCP-forbindelser",
+      "bannerConnected": "Forbundet til MCP-serveren.",
+      "bannerAuthFailed": "Godkendelsen mislykkedes.",
+      "redirectUriLabel": "OAuth redirect-URI (bruges ved dynamisk klientregistrering)",
+      "redirectUriHint": "Hver registrering opretter en ny post i Optipeople-portalens Client Secrets-liste — ingen manuel registrering nødvendig.",
+      "copy": "Kopiér",
+      "copied": "Kopieret",
+      "emptyScoped": "Denne konto er ikke forbundet til MCP-serveren endnu. Klik på <strong>Forbind</strong> for at registrere en OAuth-klient og gennemføre samtykke.",
+      "emptyAll": "Ingen konti har MCP-forbindelse endnu. Klik på <strong>Tilføj forbindelse</strong> for at sætte en op.",
+      "colAccount": "Konto / etiket",
+      "colServer": "Server",
+      "colStatus": "Status",
+      "colTokenExpires": "Token udløber",
+      "colActions": "Handlinger",
+      "tokenExpires": "Token udløber: {date}",
+      "reauthorize": "Godkend igen",
+      "disconnect": "Afbryd forbindelsen",
+      "disconnectConfirmTitle": "Afbryd MCP for \"{name}\"?",
+      "disconnectConfirmBody": "OAuth-adgangen slettes, og chatten mister straks adgang til live maskindata for denne konto, indtil en administrator forbinder og gennemfører samtykke igen.",
+      "disconnectConfirmLabel": "Afbryd",
+      "authStartFailed": "Kunne ikke starte godkendelsen",
+      "disconnectFailed": "Kunne ikke afbryde forbindelsen",
+      "addHeading": "Registrér MCP-klient",
+      "addDescription": "Opret en ny OAuth-klient på MCP-serveren for denne konto. Serveren udsteder automatisk Client ID + Secret — samme flow som ChatGPT bruger. Klik derefter på <strong>Forbind</strong> på rækken for at gennemføre OAuth-samtykket.",
+      "accountLabel": "Konto",
+      "accountsLoading": "Henter konti…",
+      "accountsPlaceholder": "Søg konto…",
+      "accountsLoadFailed": "Kunne ikke hente konti",
+      "alreadyConfigured": "Allerede sat op",
+      "noMatch": "Ingen match",
+      "clearAria": "Ryd valg",
+      "serverUrlLabel": "MCP-server-URL",
+      "labelLabel": "Etiket (valgfri)",
+      "labelPlaceholder": "Vises i portalens Client Secrets-liste",
+      "register": "Registrér",
+      "registerFailed": "Kunne ikke registrere",
+      "status": {
+        "notConnected": "Ikke forbundet",
+        "authStarted": "Godkendelse startet",
+        "connected": "Forbundet",
+        "tokenExpired": "Token udløbet",
+        "error": "Fejl"
+      }
+    },
+    "accountsList": {
+      "heading": "Kontoindstillinger",
+      "loading": "Henter konti…",
+      "countLabel": "{count, plural, one {# konto} other {# konti}}",
+      "countLabelFiltered": "{shown} af {total} konti",
+      "searchPlaceholder": "Søg navn eller ID…",
+      "loadFailed": "Kunne ikke hente konti",
+      "emptyNone": "Ingen konti tilgængelige.",
+      "emptySearch": "Ingen konti matcher din søgning.",
+      "colName": "Navn",
+      "colAccountId": "Konto-ID",
+      "colMachines": "Maskiner",
+      "colTokens": "Tokens (30 dage)"
+    },
+    "accountSections": {
+      "rules": "AI-regler",
+      "mcp": "MCP-integration",
+      "usage": "Tokenforbrug",
+      "machines": "Maskiner",
+      "machinesEmpty": "Ingen maskiner på denne konto endnu.",
+      "machinesLoadFailed": "Kunne ikke hente maskiner",
+      "machinesOpenList": "Åbn i maskinlisten",
+      "fleetConversations": "Fleet-samtaler"
+    },
+    "accountUsage": {
+      "description": "AI-tokenforbrug på tværs af chat, dokumentbehandling og søgning de seneste {days} dage.",
+      "loadFailed": "Kunne ikke hente forbrug",
+      "inputTokens": "Input-tokens",
+      "outputTokens": "Output-tokens",
+      "cacheTokens": "Cache-tokens",
+      "cacheHelp": "Prompt-cache-trafik på chatkald: tokens læst fra cachen (afregnes til en brøkdel af input-prisen) og tokens skrevet til den.",
+      "cacheValue": "{read} læst / {written} skrevet",
+      "apiCalls": "API-kald",
+      "empty": "Intet AI-forbrug registreret de seneste {days} dage.",
+      "colOperation": "Handling",
+      "colModel": "Model",
+      "colCalls": "Kald",
+      "colInput": "Input",
+      "colOutput": "Output",
+      "colCacheRead": "Cache læst",
+      "opChat": "Chat",
+      "opEmbedding": "Embeddings (søgning & indeksering)",
+      "opPdfOcr": "PDF-OCR",
+      "opImageCaption": "Billedbeskrivelser",
+      "opFigureExtraction": "Figurudtræk",
+      "opSuggestions": "Startspørgsmål",
+      "opAutoOrganize": "Auto-organisering"
     }
   },
   "server": {
@@ -689,6 +922,7 @@
     "dbError": "Databasefejl",
     "notFound": "Ikke fundet",
     "missingField": "{field} er påkrævet",
+    "fleetNoMachines": "Der er endnu ikke tilføjet maskiner på denne konto",
     "aiOverloaded": "AI'en er overbelastet lige nu. Prøv igen om et øjeblik.",
     "aiOverloadedTitle": "AI'en er overbelastet",
     "aiUnavailable": "AI-tjenesten er midlertidigt utilgængelig. Prøv igen.",
@@ -745,7 +979,7 @@
       "stuck": "Behandlingen blev afbrudt (server-genstart eller timeout). Prøv igen."
     },
     "voiceErrors": {
-      "permissionDenied": "Adgang til mikrofon blev nægtet",
+      "permissionDenied": "Adgang til mikrofonen blev afvist. Tillad mikrofonadgang for dette websted i browserens indstillinger, og prøv igen.",
       "unsupported": "Mikrofon ikke understøttet i denne browser",
       "emptyRecording": "Optagelsen var tom",
       "noSpeech": "Ingen tale registreret",
@@ -773,6 +1007,20 @@
     "errorTitle": "Kunne ikke tilkalde service",
     "copy": "Kopiér",
     "copied": "Kopieret",
-    "startNew": "Start ny chat"
+    "startNew": "Start ny chat",
+    "noMachine": "Der er ikke valgt en maskine — skriv først en besked om problemet, og tilkald derefter service."
+  },
+  "textEditor": {
+    "bold": "Fed",
+    "insertLink": "Indsæt link",
+    "spellCheck": "Stavekontrol"
+  },
+  "errors": {
+    "title": "Noget gik galt",
+    "description": "Der opstod en uventet fejl. Prøv igen — kontakt support@optipeople.dk hvis det bliver ved.",
+    "retry": "Prøv igen",
+    "backToChat": "Tilbage til chatten",
+    "notFoundTitle": "Siden blev ikke fundet",
+    "notFoundDescription": "Siden du leder efter findes ikke eller er blevet flyttet."
   }
 }

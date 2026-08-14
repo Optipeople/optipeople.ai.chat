@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { AudioLines, Mic, MicOff } from "lucide-react";
+import { AlertTriangle, AudioLines, Mic, MicOff } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import {
   useRealtimeVoice,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/useRealtimeVoice";
 import { Button } from "@/components/ui/button";
 import { SourceChips } from "@/components/SourceChips";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -23,11 +24,15 @@ type Props = {
 // state is naturally scoped to a single conversation.
 export function VoiceConversation({ machineId, accountId, onClose }: Props) {
   const t = useTranslations("voice");
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const { state, transcript, muted, start, stop, toggleMute } =
     useRealtimeVoice({
       machineId,
       accountId,
-      onError: (msg) => console.error("Voice conversation error:", msg),
+      onError: (msg) => {
+        console.error("Voice conversation error:", msg);
+        setErrorDetail(msg);
+      },
     });
 
   // Auto-start the session on mount. The hook guards against
@@ -39,10 +44,31 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
     void start();
   }, [start]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") void handleEnd();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleEnd() {
     await stop();
     onClose();
   }
+
+  function retry() {
+    setErrorDetail(null);
+    void start();
+  }
+
+  // The mic-permission failure gets an actionable hint; anything else
+  // shows the generic body. Raw hook messages stay in the console.
+  const isMicDenied =
+    !!errorDetail && /permission|notallowed|denied/i.test(errorDetail);
 
   // Auto-scroll the transcript pane to the latest turn so the operator
   // can glance at what the model just said while it's still speaking.
@@ -68,7 +94,9 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
+      aria-modal="true"
       aria-label={t("dialogLabel")}
       className="fixed inset-0 z-50 flex flex-col bg-[var(--color-background)]"
     >
@@ -91,6 +119,22 @@ export function VoiceConversation({ machineId, accountId, onClose }: Props) {
           {transcript.map((turn) => (
             <TranscriptBubble key={turn.id} turn={turn} />
           ))}
+          {state === "error" && (
+            <div className="flex flex-col items-center gap-3 rounded-[6px] border border-[var(--color-amber)]/40 bg-[var(--color-amber-soft)] p-4 text-center">
+              <AlertTriangle
+                className="h-5 w-5 text-[var(--color-amber)]"
+                aria-hidden
+              />
+              <p className="text-[14px] text-[var(--color-foreground)]">
+                {isMicDenied ? t("errorMicDenied") : t("errorBody")}
+              </p>
+              {!isMicDenied && (
+                <Button variant="secondary" size="sm" onClick={retry}>
+                  {t("retry")}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

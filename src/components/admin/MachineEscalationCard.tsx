@@ -17,6 +17,7 @@ import { TextField } from "@/components/ui/text-field";
 import { Select } from "@/components/ui/select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
+  adminErrorMessage,
   clearAdminEscalationTarget,
   getAdminEscalationTarget,
   saveAdminEscalationTarget,
@@ -43,6 +44,7 @@ export function MachineEscalationCard({
   accountId: string;
 }) {
   const t = useTranslations("admin.machineEscalation");
+  const tErr = useTranslations("admin.apiErrors");
   const CHANNEL_LABEL: Record<Channel, string> = {
     sms: t("channels.sms"),
     email: t("channels.email"),
@@ -81,7 +83,7 @@ export function MachineEscalationCard({
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setErr(e instanceof Error ? e.message : t("fetchFailed"));
+        setErr(adminErrorMessage(e, tErr) ?? t("fetchFailed"));
         setLoading(false);
       });
     return () => {
@@ -141,7 +143,7 @@ export function MachineEscalationCard({
       setTarget(saved);
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("genericError"));
+      setErr(adminErrorMessage(e, tErr) ?? t("genericError"));
     } finally {
       setSaving(false);
     }
@@ -163,7 +165,7 @@ export function MachineEscalationCard({
       setTarget(null);
       setEditing(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("genericError"));
+      setErr(adminErrorMessage(e, tErr) ?? t("genericError"));
     } finally {
       setRemoving(false);
     }

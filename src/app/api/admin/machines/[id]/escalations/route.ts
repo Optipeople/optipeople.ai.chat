@@ -1,10 +1,10 @@
 // GET /api/admin/machines/[id]/escalations
 //   ?page=N&perPage=M  (defaults: page=0, perPage=25)
 //
-// Paginated list of escalations originating from any conversation tied
-// to this machine. Joined to conversations to scope by machine_id;
-// escalations.machine_id isn't a column (the row references conversation
-// only) so the filter goes through a sub-select.
+// Paginated list (with exact total) of escalations originating from any
+// conversation tied to this machine. Joined to conversations to scope by
+// machine_id; escalations.machine_id isn't a column (the row references
+// conversation only) so the filter goes through a sub-select.
 
 import { getTranslations } from "next-intl/server";
 import {
@@ -27,6 +27,9 @@ export type AdminEscalationListItem = {
   createdAt: string;
   expiresAt: string | null;
   shareToken: string | null;
+  status: "open" | "handled";
+  handledAt: string | null;
+  handledBy: string | null;
 };
 
 const DEFAULT_PER_PAGE = 25;
@@ -57,14 +60,15 @@ export async function GET(
   // PostgREST inner join syntax: `conversations!inner(machine_id)` filters
   // escalations down to those whose linked conversation matches the
   // machine. The .eq("conversations.machine_id", id) is the actual filter.
-  const { data: rows, error } = await supabase
+  const { data: rows, count, error } = await supabase
     .from("escalations")
     .select(
-      "id, conversation_id, channel, target, note, created_by, created_at, expires_at, share_token, conversations!inner(machine_id)",
+      "id, conversation_id, channel, target, note, created_by, created_at, expires_at, share_token, status, handled_at, handled_by, conversations!inner(machine_id)",
+      { count: "exact" },
     )
     .eq("conversations.machine_id", id)
     .order("created_at", { ascending: false })
-    .range(offset, offset + perPage);
+    .range(offset, offset + perPage - 1);
 
   if (error) {
     console.error("admin escalations list failed:", error);
@@ -72,7 +76,7 @@ export async function GET(
     return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
-  const slice = (rows ?? []).slice(0, perPage) as Array<{
+  const slice = (rows ?? []) as unknown as Array<{
     id: string;
     conversation_id: string;
     channel: AdminEscalationListItem["channel"];
@@ -82,8 +86,11 @@ export async function GET(
     created_at: string;
     expires_at: string | null;
     share_token: string | null;
+    status: "open" | "handled";
+    handled_at: string | null;
+    handled_by: string | null;
   }>;
-  const hasMore = (rows?.length ?? 0) > perPage;
+  const total = count ?? slice.length;
 
   const items: AdminEscalationListItem[] = slice.map((r) => ({
     id: r.id,
@@ -95,7 +102,16 @@ export async function GET(
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     shareToken: r.share_token,
+    status: r.status,
+    handledAt: r.handled_at,
+    handledBy: r.handled_by,
   }));
 
-  return Response.json({ escalations: items, page, perPage, hasMore });
+  return Response.json({
+    escalations: items,
+    page,
+    perPage,
+    total,
+    hasMore: offset + items.length < total,
+  });
 }

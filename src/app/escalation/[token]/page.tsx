@@ -56,6 +56,33 @@ async function loadEscalation(token: string): Promise<EscalationRow | "expired" 
   return row;
 }
 
+// Fault photos are stored in the snapshot as storage paths; sign them
+// fresh on every render so the frozen snapshot never carries stale URLs.
+async function signAttachmentUrls(
+  snapshot: EscalationSnapshot,
+): Promise<Array<{ id: string; url: string }>> {
+  const attachments = snapshot.attachments ?? [];
+  if (attachments.length === 0) return [];
+  try {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase.storage
+      .from("chat-attachments")
+      .createSignedUrls(
+        attachments.map((a) => a.storagePath),
+        60 * 60,
+      );
+    if (error || !data) return [];
+    return data
+      .map((entry, i) =>
+        entry.signedUrl ? { id: attachments[i].id, url: entry.signedUrl } : null,
+      )
+      .filter((x): x is { id: string; url: string } => x !== null);
+  } catch (err) {
+    console.error("escalation page: attachment signing failed:", err);
+    return [];
+  }
+}
+
 export default async function EscalationPage({
   params,
 }: {
@@ -71,6 +98,7 @@ export default async function EscalationPage({
   if (!result.context_blob) notFound();
 
   const snapshot = result.context_blob;
+  const photos = await signAttachmentUrls(snapshot);
   const t = await getTranslations("escalationPage");
   const locale = await getLocale();
   const tag = localeTag(locale);
@@ -154,6 +182,32 @@ export default async function EscalationPage({
             </div>
           </dl>
         </section>
+
+        {photos.length > 0 && (
+          <section className="mt-6 flex flex-col gap-3">
+            <h2 className="text-[14px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+              {t("photos")}
+            </h2>
+            <div className="flex flex-wrap gap-3">
+              {photos.map((p) => (
+                <a
+                  key={p.id}
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block h-28 w-28 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--color-brand)]/40 sm:h-36 sm:w-36"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.url}
+                    alt={t("photoAlt")}
+                    className="h-full w-full object-cover"
+                  />
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mt-6 flex flex-col gap-4">
           <h2 className="text-[14px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">

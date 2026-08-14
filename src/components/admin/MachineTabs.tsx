@@ -22,10 +22,13 @@ export function MachineTabs({ machineId }: { machineId: string }) {
     getAdminMachine(machineId)
       .then((d) => {
         if (cancelled) return;
-        setMachineName(d.displayName ?? null);
+        setMachineName(d.displayName ?? machineId);
       })
       .catch(() => {
-        // ignore — breadcrumb falls back to the machine ID
+        if (cancelled) return;
+        // Breadcrumb falls back to the machine ID instead of sitting on
+        // the italic "loading" label forever.
+        setMachineName(machineId);
       });
     return () => {
       cancelled = true;
