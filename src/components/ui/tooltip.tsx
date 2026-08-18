@@ -62,7 +62,7 @@ export function Tooltip({
             ? "bg-[var(--ds-grey-dark-08)] text-[var(--ds-grey-light-01)]"
             : "bg-[var(--ds-grey-light-02)] text-[var(--ds-grey-dark-09)]",
           multiline
-            ? "max-w-[200px] whitespace-normal [word-break:break-word]"
+            ? "w-max max-w-[200px] whitespace-normal [word-break:break-word]"
             : "whitespace-nowrap",
           sideClasses[side],
         )}
