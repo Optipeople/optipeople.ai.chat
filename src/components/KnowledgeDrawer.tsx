@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
-  BookOpen,
   ChevronRight,
   FileText,
   Folder,
@@ -17,6 +16,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
 import { isAdmin, useAuth } from "@/auth/AuthContext";
+import { ConversationList } from "@/components/ConversationList";
 import { useFileViewer } from "@/components/FileViewer";
 import { buttonClasses } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -28,12 +28,19 @@ import type {
 } from "@/app/api/machines/[id]/documents/route";
 import type { FleetDocumentsResponse } from "@/app/api/accounts/[id]/documents/route";
 
-// Inline left sidebar listing operator-visible documents for the
-// current machine — or, in fleet scope, for every machine on the
-// account, grouped per machine. Sits next to the chat column (not an
-// overlay) and defaults to open. Collapses to a thin rail with an open
-// button. Rows open the original PDF / image via the FileViewer, which
-// respects both bearer and QR auth modes (fleet is bearer-only).
+// Inline left sidebar next to the chat column (not an overlay), with
+// two tabs:
+//
+//   Documents     — operator-visible manuals for the current machine,
+//                   or every machine on the account in fleet scope.
+//                   Rows open the original PDF / image via the
+//                   FileViewer, which respects both bearer and QR auth
+//                   modes (fleet is bearer-only).
+//   Conversations — the operator's own chat history for the same
+//                   target. Selecting one reopens it in the chat.
+//
+// Defaults to open on desktop and collapses to a thin rail; on mobile
+// it's a rail plus a modal overlay.
 const MOBILE_MQ = "(max-width: 639px)";
 
 // Same source-union shape as ConversationsList/ConversationDetail.
@@ -41,8 +48,26 @@ export type KnowledgeDrawerSource =
   | { kind: "machine"; machineId: string }
   | { kind: "fleet"; accountId: string };
 
-export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
+type DrawerTab = "documents" | "conversations";
+
+export function KnowledgeDrawer({
+  source,
+  activeConversationId = null,
+  loadingConversationId = null,
+  onSelectConversation,
+}: {
+  source: KnowledgeDrawerSource;
+  // Conversation currently open in the chat — highlighted in the list.
+  activeConversationId?: string | null;
+  // Conversation whose transcript the chat is fetching right now.
+  loadingConversationId?: string | null;
+  // Omitted when the host has no way to reopen a conversation, in which
+  // case the Conversations tab is not offered at all.
+  onSelectConversation?: (id: string) => void;
+}) {
   const t = useTranslations("knowledgeDrawer");
+  const [tab, setTab] = useState<DrawerTab>("documents");
+  const showConversations = !!onSelectConversation;
   const { user } = useAuth();
   // Admins (super or account-scoped) get a link to the admin upload
   // section. Operators see the same drawer minus the affordance —
@@ -140,11 +165,56 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
 
   // Fetch when first opened, and refetch on each reopen so newly
   // promoted documents show up without a page reload. The synchronous
-  // setState inside load() is the loading flag — intentional.
+  // setState inside load() is the loading flag — intentional. The
+  // Conversations tab fetches its own list on mount.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (open) void load();
-  }, [open, load]);
+    if (open && tab === "documents") void load();
+  }, [open, tab, load]);
+
+  // Underline tab strip. Sits on the header's hairline (-mb-px) so the
+  // active tab's rule reads as a continuation of it. Sized down from
+  // the old h2 so both labels plus the collapse button fit the 288px
+  // panel in every locale.
+  const tabStrip = (
+    <div
+      role="tablist"
+      aria-label={t("drawerAria")}
+      className="flex min-w-0 items-end gap-3"
+    >
+      {(showConversations
+        ? (["documents", "conversations"] as const)
+        : (["documents"] as const)
+      ).map((id) => {
+        const selected = tab === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`kb-tab-${id}`}
+            aria-selected={selected}
+            aria-controls={`kb-panel-${id}`}
+            tabIndex={open ? 0 : -1}
+            onClick={() => setTab(id)}
+            className={cn(
+              "-mb-px shrink-0 border-b-2 pb-2 text-[15px] font-semibold tracking-tight",
+              "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+              selected
+                ? "border-white text-white"
+                : "border-transparent text-white/60 hover:text-white/90",
+            )}
+          >
+            {t(id === "documents" ? "tabs.documents" : "tabs.conversations")}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const activeTabLabel = t(
+    tab === "documents" ? "tabs.documents" : "tabs.conversations",
+  );
 
   const uploadButton = canUpload ? (
     <Link
@@ -204,6 +274,49 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
     </>
   );
 
+  // Everything under the header, shared by the desktop panel and the
+  // mobile overlay (only one of the two is mounted at a time). The tab
+  // panels are mounted only while the drawer is open so a collapsed
+  // rail never fetches.
+  const panelBody = (
+    <>
+      <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
+        {tab === "documents"
+          ? t(sourceKind === "fleet" ? "fleetDescription" : "description")
+          : t(
+              sourceKind === "fleet"
+                ? "conversationsFleetDescription"
+                : "conversationsDescription",
+            )}
+      </p>
+      {tab === "documents" && canUpload && docs && docs.length > 0 && (
+        <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
+      )}
+      <div
+        role="tabpanel"
+        id={`kb-panel-${tab}`}
+        aria-labelledby={`kb-tab-${tab}`}
+        className="flex-1 overflow-y-auto pb-3 pt-6"
+      >
+        {tab === "documents"
+          ? docList
+          : open && (
+              <ConversationList
+                source={source}
+                activeConversationId={activeConversationId}
+                loadingConversationId={loadingConversationId}
+                onSelect={(id) => {
+                  onSelectConversation?.(id);
+                  // The overlay covers the chat on mobile — get out of
+                  // the way so the reopened thread is actually visible.
+                  if (isMobile) setOpen(false);
+                }}
+              />
+            )}
+      </div>
+    </>
+  );
+
   // Desktop (>= sm): single inline aside that animates its width
   // between the 40px rail and the 288/320px panel. Two layered layouts
   // cross-fade — the rail open button (top-left) when collapsed, and
@@ -247,7 +360,7 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
                 aria-hidden
                 className="select-none text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl]"
               >
-                {t("railLabel")}
+                {activeTabLabel}
               </span>
             </button>
           </Tooltip>
@@ -264,30 +377,19 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
           )}
           aria-hidden={!open}
         >
-          <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 pt-5 pb-3 sm:px-6">
-            <div className="flex min-w-0 items-center gap-2">
-              <BookOpen className="h-5 w-5 shrink-0 text-white" />
-              <h2 className="truncate text-[17px] font-semibold tracking-tight text-white">
-                {t("heading")}
-              </h2>
-            </div>
+          <header className="flex items-end justify-between gap-2 border-b border-white/10 px-4 pt-5 sm:px-6">
+            {tabStrip}
             <button
               type="button"
               onClick={() => setOpen(false)}
               aria-label={t("closeAria")}
               tabIndex={open ? 0 : -1}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
+              className="mb-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
             >
               <PanelLeftClose className="h-5 w-5" />
             </button>
           </header>
-          <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
-            {t(sourceKind === "fleet" ? "fleetDescription" : "description")}
-          </p>
-          {canUpload && docs && docs.length > 0 && (
-            <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
-          )}
-          <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
+          {panelBody}
         </div>
       </aside>
     );
@@ -329,7 +431,7 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
             aria-hidden
             className="select-none text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl]"
           >
-            {t("railLabel")}
+            {activeTabLabel}
           </span>
         </button>
       </Tooltip>
@@ -361,29 +463,18 @@ export function KnowledgeDrawer({ source }: { source: KnowledgeDrawerSource }) {
             open ? "translate-x-0" : "-translate-x-full",
           )}
         >
-          <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 pt-5 pb-3 sm:px-6">
-            <div className="flex min-w-0 items-center gap-2">
-              <BookOpen className="h-5 w-5 shrink-0 text-white" />
-              <h2 className="truncate text-[17px] font-semibold tracking-tight text-white">
-                {t("heading")}
-              </h2>
-            </div>
+          <header className="flex items-end justify-between gap-2 border-b border-white/10 px-4 pt-5 sm:px-6">
+            {tabStrip}
             <button
               type="button"
               onClick={() => setOpen(false)}
               aria-label={t("closeAria")}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
+              className="mb-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
             >
               <PanelLeftClose className="h-5 w-5" />
             </button>
           </header>
-          <p className="px-4 pt-3 text-[14px] leading-[1.5] text-white/70 sm:px-6">
-            {t(sourceKind === "fleet" ? "fleetDescription" : "description")}
-          </p>
-          {canUpload && docs && docs.length > 0 && (
-            <div className="px-4 pt-4 sm:px-6">{uploadButton}</div>
-          )}
-          <div className="flex-1 overflow-y-auto pb-3 pt-6">{docList}</div>
+          {panelBody}
         </div>
       </div>
     </aside>

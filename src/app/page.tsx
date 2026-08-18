@@ -38,6 +38,7 @@ import { AccountSelectScreen } from "@/components/AccountSelectScreen";
 import { MachineSelectScreen } from "@/components/MachineSelectScreen";
 import { QrConsentBanner } from "@/components/QrConsentBanner";
 import { KnowledgeDrawer } from "@/components/KnowledgeDrawer";
+import type { OperatorConversationResponse } from "@/app/api/conversations/[id]/route";
 import { SpeakButton } from "@/components/SpeakButton";
 import { VoiceConversation } from "@/components/VoiceConversation";
 import { SourceChips, type SourceRef } from "@/components/SourceChips";
@@ -640,6 +641,13 @@ function ChatApp({
   const [visibleSuggestions, setVisibleSuggestions] = useState<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  // Set while a conversation picked from the drawer's history tab is
+  // being fetched, so its row can show a spinner; historyError surfaces
+  // a failed fetch above the composer.
+  const [loadingConversationId, setLoadingConversationId] = useState<
+    string | null
+  >(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   // True when the operator is within ~120px of the bottom — auto-scroll
   // only kicks in then, so reading sources mid-stream doesn't fight us.
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -746,6 +754,8 @@ function ChatApp({
       return [];
     });
     setAttachmentError(null);
+    setHistoryError(null);
+    setLoadingConversationId(null);
     setForceShowSuggestions(false);
     setIsAtBottom(true);
     setDragDepth(0);
@@ -1014,6 +1024,61 @@ function ChatApp({
     clearIdleTimer,
   ]);
 
+  // Reopen a conversation picked from the drawer's history tab. The
+  // transcript replaces the current thread and conversationId is
+  // adopted, so the next send appends to the same row rather than
+  // starting a new one — the server re-checks ownership and scope on
+  // every turn, so a stale id just falls back to a fresh conversation.
+  //
+  // Photos aren't replayed: attachments are stored per conversation,
+  // not per message, so there's no way to put each one back on the turn
+  // it belonged to. Photo-only turns come back as a text placeholder.
+  async function openConversation(id: string) {
+    if (id === conversationId) return;
+    abortRef.current?.abort();
+    pendingRef.current = "";
+    streamDoneRef.current = false;
+    clearIdleTimer();
+    setLoadingConversationId(id);
+    setHistoryError(null);
+    try {
+      const qrToken = getQrToken();
+      const url = qrToken
+        ? `/api/conversations/${encodeURIComponent(id)}?qrToken=${encodeURIComponent(qrToken)}`
+        : `/api/conversations/${encodeURIComponent(id)}`;
+      const res = await fetchWithAuth(url);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const body = (await res.json()) as OperatorConversationResponse;
+      const restored: Message[] = body.messages.map((m) => ({
+        role: m.role,
+        content: m.photoOnly ? tChat("restoredPhoto") : m.content,
+        createdAt: new Date(m.createdAt).getTime(),
+        ...(m.sources ? { sources: m.sources } : {}),
+        ...(m.images ? { images: m.images } : {}),
+      }));
+      setStreaming(false);
+      setMessages(restored);
+      setConversationId(body.id);
+      setFeedback({ phase: "hidden" });
+      setEscalate({ phase: "hidden" });
+      setInput("");
+      setIsAtBottom(true);
+      setForceShowSuggestions(false);
+      setDragDepth(0);
+      setAttachmentError(null);
+      setVoiceError(null);
+      setPendingAttachments((prev) => {
+        for (const pending of prev) URL.revokeObjectURL(pending.previewUrl);
+        return [];
+      });
+    } catch (err) {
+      console.error("Open conversation failed", err);
+      setHistoryError(tChat("historyLoadFailed"));
+    } finally {
+      setLoadingConversationId(null);
+    }
+  }
+
   function startNewConversation() {
     abortRef.current?.abort();
     pendingRef.current = "";
@@ -1030,6 +1095,7 @@ function ChatApp({
     setDragDepth(0);
     setAttachmentError(null);
     setVoiceError(null);
+    setHistoryError(null);
   }
 
   async function submitFeedback(resolved: boolean, solutionText?: string) {
@@ -1560,9 +1626,19 @@ function ChatApp({
 
       <div className="flex min-h-0 flex-1 bg-[var(--color-brand)]">
         {machine?.id ? (
-          <KnowledgeDrawer source={{ kind: "machine", machineId: machine.id }} />
+          <KnowledgeDrawer
+            source={{ kind: "machine", machineId: machine.id }}
+            activeConversationId={conversationId}
+            loadingConversationId={loadingConversationId}
+            onSelectConversation={(id) => void openConversation(id)}
+          />
         ) : isFleet && account?.id ? (
-          <KnowledgeDrawer source={{ kind: "fleet", accountId: account.id }} />
+          <KnowledgeDrawer
+            source={{ kind: "fleet", accountId: account.id }}
+            activeConversationId={conversationId}
+            loadingConversationId={loadingConversationId}
+            onSelectConversation={(id) => void openConversation(id)}
+          />
         ) : null}
         <div
           className={cn(
@@ -1774,6 +1850,7 @@ function ChatApp({
             </div>
           )}
           {voiceError && <InlineError message={voiceError} />}
+          {historyError && <InlineError message={historyError} />}
           {pendingAttachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {pendingAttachments.map((p) => (

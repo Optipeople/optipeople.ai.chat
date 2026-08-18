@@ -271,7 +271,9 @@
     "errorNetworkBody": "Ingen forbindelse — tjek dit internet og prøv igen.",
     "errorServerBody": "Serveren svarede med en fejl ({status}). Prøv igen om lidt.",
     "toolFetchingMachineDataNamed": "Henter maskindata ({name})",
-    "toolRunningNamed": "Kører {name}"
+    "toolRunningNamed": "Kører {name}",
+    "restoredPhoto": "[Foto]",
+    "historyLoadFailed": "Kunne ikke åbne den samtale. Tjek din forbindelse, og prøv igen."
   },
   "viewer": {
     "openInNewTab": "Åbn i ny fane",
@@ -280,11 +282,10 @@
     "cannotPreview": "Denne filtype kan ikke vises her."
   },
   "knowledgeDrawer": {
-    "openAria": "Åbn vidensbase",
-    "openTitle": "Gennemse manualer",
+    "openAria": "Åbn sidepanel",
+    "openTitle": "Manualer og samtalehistorik",
     "closeAria": "Luk",
-    "drawerAria": "Vidensbase",
-    "heading": "Dokumenter",
+    "drawerAria": "Manualer og samtalehistorik",
     "description": "Manualer og dokumenter for denne maskine. Klik på et element for at åbne det.",
     "fleetDescription": "Manualer og dokumenter for alle kontoens maskiner, grupperet pr. maskine. Klik på et element for at åbne det.",
     "empty": "Ingen dokumenter er tilgængelige endnu. Bed din administrator om at gøre manualer synlige her.",
@@ -294,8 +295,18 @@
     "retry": "Prøv igen",
     "missingUrl": "Manglende URL i svaret",
     "openFailed": "Kunne ikke åbne dokument",
-    "railLabel": "Manualer",
-    "loadFailed": "Kunne ikke hente dokumenterne. Tjek din forbindelse og prøv igen."
+    "loadFailed": "Kunne ikke hente dokumenterne. Tjek din forbindelse og prøv igen.",
+    "tabs": {
+      "documents": "Dokumenter",
+      "conversations": "Samtaler"
+    },
+    "conversationsDescription": "Dine tidligere samtaler om denne maskine. Åbn en for at læse den eller fortsætte, hvor du slap.",
+    "conversationsFleetDescription": "Dine tidligere samtaler på tværs af alle maskiner. Åbn en for at læse den eller fortsætte, hvor du slap.",
+    "conversationsEmpty": "Ingen tidligere samtaler endnu. De samtaler, du har her, vises i denne liste.",
+    "conversationsLoadFailed": "Kunne ikke hente din samtalehistorik. Tjek din forbindelse, og prøv igen.",
+    "conversationUntitled": "Samtale uden spørgsmål",
+    "showMore": "Vis ældre",
+    "questionCount": "{count, plural, one {# spørgsmål} other {# spørgsmål}}"
   },
   "feedback": {
     "prompt": "Var dette nyttigt?",

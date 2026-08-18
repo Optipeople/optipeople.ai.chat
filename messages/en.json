@@ -271,7 +271,9 @@
     "errorNetworkBody": "No connection — check your internet and try again.",
     "errorServerBody": "The server responded with an error ({status}). Try again in a moment.",
     "toolFetchingMachineDataNamed": "Fetching machine data ({name})",
-    "toolRunningNamed": "Running {name}"
+    "toolRunningNamed": "Running {name}",
+    "restoredPhoto": "[Photo]",
+    "historyLoadFailed": "Could not open that conversation. Check your connection and try again."
   },
   "viewer": {
     "openInNewTab": "Open in new tab",
@@ -280,11 +282,10 @@
     "cannotPreview": "This file type can't be previewed."
   },
   "knowledgeDrawer": {
-    "openAria": "Open knowledge base",
-    "openTitle": "Browse manuals",
+    "openAria": "Open side panel",
+    "openTitle": "Manuals and chat history",
     "closeAria": "Close",
-    "drawerAria": "Knowledge base",
-    "heading": "Documents",
+    "drawerAria": "Manuals and chat history",
     "description": "Manuals and documents for this machine. Click any item to open it.",
     "fleetDescription": "Manuals and documents for every machine on the account, grouped per machine. Click any item to open it.",
     "empty": "No documents available yet. Ask your administrator to make manuals visible here.",
@@ -294,8 +295,18 @@
     "retry": "Try again",
     "missingUrl": "Missing URL in response",
     "openFailed": "Could not open document",
-    "railLabel": "Manuals",
-    "loadFailed": "Could not load the documents. Check your connection and try again."
+    "loadFailed": "Could not load the documents. Check your connection and try again.",
+    "tabs": {
+      "documents": "Documents",
+      "conversations": "Conversations"
+    },
+    "conversationsDescription": "Your earlier chats about this machine. Open one to read it or carry on where you left off.",
+    "conversationsFleetDescription": "Your earlier chats across all machines. Open one to read it or carry on where you left off.",
+    "conversationsEmpty": "No earlier chats yet. The conversations you have here will show up in this list.",
+    "conversationsLoadFailed": "Could not load your chat history. Check your connection and try again.",
+    "conversationUntitled": "Chat without a question",
+    "showMore": "Show older",
+    "questionCount": "{count, plural, one {# question} other {# questions}}"
   },
   "feedback": {
     "prompt": "Was this helpful?",
