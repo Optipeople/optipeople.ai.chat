@@ -41,14 +41,37 @@ import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Haiku 4.5 — grounded manual Q&A over search_kb snippets is squarely
-// its target workload, at a third of Sonnet 4.6's price ($1/$5 vs $3/$15
-// per MTok). Two Haiku-specific caveats: it rejects `output_config.effort`
-// (Sonnet/Opus only — re-add `output_config: { effort: "medium" }` if we
-// ever move back up a tier), and its minimum cacheable prefix is 4096
-// tokens, so machines with a tiny doc manifest may silently skip the
-// system-prompt cache. Both are acceptable at Haiku pricing.
-const MODEL = "claude-haiku-4-5";
+// Claude Sonnet 5. Chat is a rounding error in the AI bill (ingestion
+// vision dominates it), so this tier buys better Danish, better
+// multi-step tool use, and a 1024-token minimum cacheable prefix for a
+// few cents a day. That last point is a real fix, not a nicety: Haiku's
+// minimum was 4096 tokens, so machines with a small doc manifest were
+// silently skipping the system-prompt cache altogether.
+//
+// Three Sonnet 5 behaviours this file depends on:
+//   - Omitting `thinking` runs ADAPTIVE thinking, where on Haiku omitting
+//     it meant no thinking at all. Thinking also shares MAX_TOKENS with
+//     the visible reply. Both are set explicitly below so neither is a
+//     silent default.
+//   - `output_config.effort` is supported (Haiku rejected it outright).
+//   - New tokenizer: the same prompt counts ~30% more tokens than on
+//     Haiku or Sonnet 4.6. trimHistory() caps by message count rather
+//     than tokens so nothing breaks, but per-turn figures are not
+//     directly comparable to older usage_events rows.
+const MODEL = "claude-sonnet-5";
+
+// "medium" lands around Sonnet 4.6 at "high" — a clear step up from Haiku
+// for grounded technical Q&A. It is also the main latency dial: operators
+// are standing at a machine, and thinking happens before the first
+// tool_use event reaches them, so the UI is briefly idle. Drop to "low"
+// if the floor reports the wait; that keeps thinking on (which is what
+// keeps the model reaching for search_kb) while shortening it.
+const EFFORT = "medium" as const;
+
+// Covers thinking plus the reply. The old 2048 was sized for a
+// Haiku answer with no thinking budget to share, and would now truncate
+// mid-answer.
+const MAX_TOKENS = 8000;
 
 // Hard cap on the agentic loop. The model usually finishes in 1–2 tool
 // calls; this is a safety net against pathological loops.
@@ -1332,7 +1355,14 @@ export async function POST(req: Request) {
             // which holds here: system renders before messages.
             const s = anthropic.beta.messages.stream({
               model: MODEL,
-              max_tokens: 2048,
+              max_tokens: MAX_TOKENS,
+              // Adaptive is Sonnet 5's default when `thinking` is omitted;
+              // stated explicitly so it is clear this is a choice. Left on
+              // deliberately — with thinking disabled Sonnet 5 reaches for
+              // tools noticeably less, and every answer here has to come
+              // from a search_kb call.
+              thinking: { type: "adaptive" },
+              output_config: { effort: EFFORT },
               system: [
                 {
                   type: "text",
