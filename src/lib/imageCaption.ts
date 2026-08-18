@@ -7,18 +7,41 @@
 //     of {page, caption, altText} for every figure/diagram/photo present.
 //     Used by ingestPdf to seed kb_assets rows pointing back at the PDF.
 //
-// We use Sonnet for both — figure extraction over a multi-page manual is
-// a noticeable accuracy step up from Haiku, and the cost is dwarfed by
-// the OCR pass that ran just before.
+// extractPdfFigures only sends the pages that actually contain a figure.
+// It used to base64 the entire document, which made vision input the
+// single largest line item in the AI bill — a 29-page contract with no
+// figures at all still paid for 29 rasterised pages. pdfPageAnalysis
+// answers "which pages carry a figure?" locally, for free; pdfSlice cuts
+// the PDF down to those pages. When a document has no figure pages we
+// skip the API call outright.
 
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  analyzePdfFigures,
+  figurePages,
+  worthSlicing,
+} from "./pdfPageAnalysis";
+import { slicePdfPages, toOriginalPage } from "./pdfSlice";
 import {
   fromAnthropicUsage,
   recordUsage,
   type UsageAttribution,
 } from "./usage";
 
-const MODEL = "claude-sonnet-4-6";
+// Captioning a single operator-uploaded image. Sonnet is a noticeable
+// accuracy step up from Haiku here and it runs once per image, so the
+// cost is negligible.
+const CAPTION_MODEL = "claude-sonnet-4-6";
+
+// Figure inventory over a (now page-sliced) PDF. Kept on Sonnet for the
+// moment: these captions are what search_kb matches operator questions
+// against, so a quality regression here shows up as wrong answers rather
+// than as a smaller bill. Haiku 4.5 would be ~3x cheaper and this is a
+// bounded extraction task, so it is the obvious A/B candidate — flip this
+// one constant and compare captions on real vendor manuals before
+// committing. Page gating already removed most of the cost, so measure
+// that first.
+const FIGURE_MODEL = "claude-sonnet-4-6";
 
 export type ImageMime = "image/png" | "image/jpeg" | "image/webp";
 
@@ -36,7 +59,7 @@ export async function captionImage(
   const base64 = buf.toString("base64");
 
   const res = await anthropic.messages.create({
-    model: MODEL,
+    model: CAPTION_MODEL,
     max_tokens: 800,
     messages: [
       {
@@ -64,7 +87,7 @@ export async function captionImage(
     await recordUsage({
       ...usage,
       provider: "anthropic",
-      model: MODEL,
+      model: CAPTION_MODEL,
       operation: "image_caption",
       ...fromAnthropicUsage(res.usage),
     });
@@ -114,19 +137,53 @@ export type PdfFigure = {
   altText: string;
 };
 
-// Pulls a structured figure inventory from a PDF. We send the whole PDF
-// once (Claude's document input handles multi-page PDFs natively) and
-// ask for one row per visible figure/diagram. The list is bounded — we
-// cap output tokens and the model is told to skip pure-text pages.
+// Pulls a structured figure inventory from a PDF.
+//
+// We narrow the payload to the figure-bearing pages first (see the header
+// note), so what reaches the model is usually a handful of pages rather
+// than the whole manual. Three outcomes:
+//   - analysis says "no figure pages"  → return [] without an API call.
+//   - analysis picks a useful subset   → send a sliced PDF, then map the
+//                                        model's page numbers back to the
+//                                        original document.
+//   - analysis unavailable or the subset covers most of the document
+//                                      → send the original buffer, i.e.
+//                                        the old behaviour.
+//
+// Returned `page` values are always original-document page numbers, which
+// is what callers persist (kb_assets.page_from) and what operators are
+// sent to. Never leak a sliced page number out of this function.
 export async function extractPdfFigures(
   buf: Buffer,
   usage?: UsageAttribution,
 ): Promise<PdfFigure[]> {
+  let payload = buf;
+  // null = payload is the original document, so page numbers pass through.
+  let originalPages: number[] | null = null;
+
+  const analysis = await analyzePdfFigures(buf);
+  if (analysis) {
+    const pages = figurePages(analysis);
+    if (pages.length === 0) {
+      // Nothing on any page looks like a figure. Skipping the call is the
+      // whole point of the analysis — this is the common case for
+      // parameter lists, error-code tables and contracts.
+      return [];
+    }
+    if (worthSlicing(pages, analysis.pageCount)) {
+      const sliced = await slicePdfPages(buf, pages);
+      if (sliced) {
+        payload = sliced.buffer;
+        originalPages = sliced.originalPages;
+      }
+    }
+  }
+
   const anthropic = new Anthropic();
-  const base64 = buf.toString("base64");
+  const base64 = payload.toString("base64");
 
   const stream = anthropic.messages.stream({
-    model: MODEL,
+    model: FIGURE_MODEL,
     max_tokens: 8000,
     messages: [
       {
@@ -159,7 +216,7 @@ export async function extractPdfFigures(
     await recordUsage({
       ...usage,
       provider: "anthropic",
-      model: MODEL,
+      model: FIGURE_MODEL,
       operation: "figure_extraction",
       ...fromAnthropicUsage(final.usage),
     });
@@ -170,7 +227,27 @@ export async function extractPdfFigures(
     .join("")
     .trim();
 
-  return parseFigures(text);
+  const figures = parseFigures(text);
+  if (!originalPages) return figures;
+
+  // Translate sliced page numbers back to the original document. A figure
+  // whose page can't be mapped is dropped rather than kept: the model
+  // occasionally invents a page number, and anchoring a figure to the
+  // wrong page sends an operator to the wrong place in the manual, which
+  // is worse than not showing the figure at all.
+  const mapped: PdfFigure[] = [];
+  for (const f of figures) {
+    const page = toOriginalPage(f.page, originalPages);
+    if (page === null) {
+      console.warn(
+        `extractPdfFigures: dropping figure with unmappable page ${f.page} ` +
+          `(sliced document had ${originalPages.length} pages)`,
+      );
+      continue;
+    }
+    mapped.push({ ...f, page });
+  }
+  return mapped;
 }
 
 function parseFigures(raw: string): PdfFigure[] {
