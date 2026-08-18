@@ -888,7 +888,8 @@
       "colName": "Navn",
       "colAccountId": "Konto-ID",
       "colMachines": "Maskiner",
-      "colTokens": "Tokens (30 dage)"
+      "colTokens": "Tokens (30 dage)",
+      "colCost": "Anslået pris (30 dage)"
     },
     "accountSections": {
       "rules": "AI-regler",
@@ -922,7 +923,11 @@
       "opImageCaption": "Billedbeskrivelser",
       "opFigureExtraction": "Figurudtræk",
       "opSuggestions": "Startspørgsmål",
-      "opAutoOrganize": "Auto-organisering"
+      "opAutoOrganize": "Auto-organisering",
+      "cost": "Anslået pris",
+      "costHelp": "Anslået beløb i USD ud fra aktuelle listepriser og de registrerede tokens. Stemmeopkald måles endnu ikke og er derfor ikke medregnet.",
+      "costHelpIncomplete": "Anslået beløb i USD ud fra aktuelle listepriser. {models} model(ler) har ingen registreret pris og er udeladt, så det reelle beløb er højere. Stemmeopkald måles heller ikke endnu.",
+      "colCost": "Anslået pris"
     }
   },
   "server": {

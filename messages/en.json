@@ -888,7 +888,8 @@
       "colName": "Name",
       "colAccountId": "Account ID",
       "colMachines": "Machines",
-      "colTokens": "Tokens (30d)"
+      "colTokens": "Tokens (30d)",
+      "colCost": "Est. cost (30d)"
     },
     "accountSections": {
       "rules": "AI rules",
@@ -922,7 +923,11 @@
       "opImageCaption": "Image captions",
       "opFigureExtraction": "Figure extraction",
       "opSuggestions": "Starter questions",
-      "opAutoOrganize": "Auto-organize"
+      "opAutoOrganize": "Auto-organize",
+      "cost": "Estimated cost",
+      "costHelp": "Estimated USD at current list prices, derived from the recorded tokens. Voice (speech) calls are not metered yet, so they are not included.",
+      "costHelpIncomplete": "Estimated USD at current list prices. {models} model(s) have no price on file and are excluded, so the real figure is higher. Voice (speech) calls are not metered yet either.",
+      "colCost": "Est. cost"
     }
   },
   "server": {

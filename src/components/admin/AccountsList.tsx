@@ -18,17 +18,23 @@ import {
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import { getAdminMachines, getAdminUsageOverview } from "@/admin/adminApi";
 import { isAccountAdmin, useAuth } from "@/auth/AuthContext";
+import { formatUsd } from "@/lib/pricing";
 
-// tokens30d is input+output over the last 30 days; null means the usage
-// endpoint failed (the list still renders, the column shows —).
-type AccountRow = Account & { machineCount: number; tokens30d: number | null };
+// tokens30d is input+output over the last 30 days and cost30d is what that
+// came to in USD (see lib/pricing). null for either means the usage endpoint
+// failed — the list still renders and the column shows —.
+type AccountRow = Account & {
+  machineCount: number;
+  tokens30d: number | null;
+  cost30d: number | null;
+};
 
 const TOKENS_FMT = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
 
-type SortKey = "name" | "machines" | "tokens";
+type SortKey = "name" | "machines" | "tokens" | "cost";
 
 function SortButton({
   active,
@@ -109,10 +115,15 @@ export function AccountsList() {
             : new Map(
                 usage.map((u) => [u.accountId, u.inputTokens + u.outputTokens]),
               );
+        const costs =
+          usage === null
+            ? null
+            : new Map(usage.map((u) => [u.accountId, u.costUsd]));
         const merged: AccountRow[] = rows.map((a) => ({
           ...a,
           machineCount: counts.get(a.id) ?? 0,
           tokens30d: tokens ? (tokens.get(a.id) ?? 0) : null,
+          cost30d: costs ? (costs.get(a.id) ?? 0) : null,
         }));
         setAccounts(merged);
       })
@@ -140,7 +151,9 @@ export function AccountsList() {
           ? a.name.localeCompare(b.name)
           : sort.key === "machines"
             ? a.machineCount - b.machineCount
-            : (a.tokens30d ?? -1) - (b.tokens30d ?? -1);
+            : sort.key === "cost"
+              ? (a.cost30d ?? -1) - (b.cost30d ?? -1)
+              : (a.tokens30d ?? -1) - (b.tokens30d ?? -1);
       return cmp * sort.dir;
     });
     return rows;
@@ -236,6 +249,11 @@ export function AccountsList() {
                     <span className="tabular-nums text-[var(--color-foreground)]">
                       {a.tokens30d === null ? "—" : TOKENS_FMT.format(a.tokens30d)}
                     </span>
+                    <span className="mx-1.5">·</span>
+                    {t("colCost")}:{" "}
+                    <span className="tabular-nums text-[var(--color-foreground)]">
+                      {a.cost30d === null ? "—" : formatUsd(a.cost30d)}
+                    </span>
                   </p>
                 </div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
@@ -275,6 +293,15 @@ export function AccountsList() {
                     {t("colTokens")}
                   </SortButton>
                 </DataTableHeader>
+                <DataTableHeader align="right">
+                  <SortButton
+                    active={sort.key === "cost"}
+                    dir={sort.dir}
+                    onClick={() => toggleSort("cost")}
+                  >
+                    {t("colCost")}
+                  </SortButton>
+                </DataTableHeader>
                 <DataTableHeader className="w-10" />
               </DataTableHead>
               <DataTableBody>
@@ -294,6 +321,9 @@ export function AccountsList() {
                     </DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">
                       {a.tokens30d === null ? "—" : TOKENS_FMT.format(a.tokens30d)}
+                    </DataTableCell>
+                    <DataTableCell align="right" className="tabular-nums">
+                      {a.cost30d === null ? "—" : formatUsd(a.cost30d)}
                     </DataTableCell>
                     <DataTableCell align="right">
                       <ChevronRight className="ml-auto h-4 w-4 text-[var(--ds-grey-medium-05)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--ds-grey-dark-09)]" />

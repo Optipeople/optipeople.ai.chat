@@ -16,6 +16,7 @@ import {
   getAdminAccountUsage,
   type AdminAccountUsageResponse,
 } from "@/admin/adminApi";
+import { formatUsd } from "@/lib/pricing";
 
 // Translation keys for usage_events.operation values. Unknown operations
 // (added later server-side) fall through to the raw slug so they still
@@ -119,6 +120,22 @@ export function AccountUsageSection({ accountId }: { accountId: string }) {
             {fmt(totals.events)}
           </dd>
         </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+            {t("cost")}
+            <HelpHint
+              size={16}
+              content={
+                totals.unpricedRows > 0
+                  ? t("costHelpIncomplete", { models: totals.unpricedRows })
+                  : t("costHelp")
+              }
+            />
+          </dt>
+          <dd className="tabular-nums text-[var(--color-foreground)]">
+            {formatUsd(totals.costUsd)}
+          </dd>
+        </div>
       </dl>
 
       {rows.length === 0 ? (
@@ -134,6 +151,7 @@ export function AccountUsageSection({ accountId }: { accountId: string }) {
             <DataTableHeader align="right">{t("colInput")}</DataTableHeader>
             <DataTableHeader align="right">{t("colOutput")}</DataTableHeader>
             <DataTableHeader align="right">{t("colCacheRead")}</DataTableHeader>
+            <DataTableHeader align="right">{t("colCost")}</DataTableHeader>
           </DataTableHead>
           <DataTableBody>
             {rows.map((r) => (
@@ -157,6 +175,9 @@ export function AccountUsageSection({ accountId }: { accountId: string }) {
                 </DataTableCell>
                 <DataTableCell align="right" className="tabular-nums">
                   {fmt(r.cacheReadTokens)}
+                </DataTableCell>
+                <DataTableCell align="right" className="tabular-nums">
+                  {r.costUsd === null ? "—" : formatUsd(r.costUsd)}
                 </DataTableCell>
               </DataTableRow>
             ))}

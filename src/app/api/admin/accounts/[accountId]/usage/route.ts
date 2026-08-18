@@ -7,6 +7,7 @@
 
 import { getTranslations } from "next-intl/server";
 import { AuthError, assertAccountAccess, requireAdmin } from "@/lib/auth";
+import { costUsd, totalCostUsd } from "@/lib/pricing";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -23,9 +24,18 @@ export type AdminUsageRow = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** USD, or null when we have no price for this model (see lib/pricing). */
+  costUsd: number | null;
 };
 
-export type AdminUsageTotals = Omit<AdminUsageRow, "operation" | "model">;
+export type AdminUsageTotals = Omit<
+  AdminUsageRow,
+  "operation" | "model" | "costUsd"
+> & {
+  costUsd: number;
+  /** Rows excluded from costUsd because the model has no price entry. */
+  unpricedRows: number;
+};
 
 export type AdminAccountUsageResponse = {
   accountId: string;
@@ -76,18 +86,23 @@ export async function GET(
     return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
-  const rows: AdminUsageRow[] = ((data ?? []) as SummaryRow[]).map((r) => ({
-    operation: r.operation,
-    model: r.model,
-    events: Number(r.events),
-    inputTokens: Number(r.input_tokens),
-    outputTokens: Number(r.output_tokens),
-    cacheReadTokens: Number(r.cache_read_tokens),
-    cacheWriteTokens: Number(r.cache_write_tokens),
-  }));
+  const rows: AdminUsageRow[] = ((data ?? []) as SummaryRow[]).map((r) => {
+    const row = {
+      operation: r.operation,
+      model: r.model,
+      events: Number(r.events),
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      cacheReadTokens: Number(r.cache_read_tokens),
+      cacheWriteTokens: Number(r.cache_write_tokens),
+    };
+    return { ...row, costUsd: costUsd(row) };
+  });
 
+  const cost = totalCostUsd(rows);
   const totals: AdminUsageTotals = rows.reduce(
     (acc, r) => ({
+      ...acc,
       events: acc.events + r.events,
       inputTokens: acc.inputTokens + r.inputTokens,
       outputTokens: acc.outputTokens + r.outputTokens,
@@ -100,6 +115,8 @@ export async function GET(
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
+      costUsd: cost.usd,
+      unpricedRows: cost.unpricedRows,
     },
   );
 
