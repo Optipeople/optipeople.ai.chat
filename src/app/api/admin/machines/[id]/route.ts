@@ -27,7 +27,7 @@ export type AdminDocument = {
   byteSize: number | null;
   createdAt: string;
   createdBy: string;
-  extractionSource: "pdf-parse" | "claude-ocr" | null;
+  extractionSource: "pdf-parse" | "pdf-parse+tables" | "claude-ocr" | null;
   folderPath: string | null;
   progress: number | null;
   progressLabel: string | null;
@@ -172,7 +172,7 @@ export async function GET(
         byte_size: number | null;
         created_at: string;
         created_by: string;
-        extraction_source: "pdf-parse" | "claude-ocr" | null;
+        extraction_source: "pdf-parse" | "pdf-parse+tables" | "claude-ocr" | null;
         folder_path: string | null;
         progress: number | null;
         progress_label: string | null;

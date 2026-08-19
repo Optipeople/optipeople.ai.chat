@@ -1,0 +1,13 @@
+{
+  "id": "nx502-dip-restore",
+  "about": "The error nobody caught in the original conversation. Restore is pin 4 ON plus pin 3 ON. The model said pin 1 ON plus pin 2 ON, which is not a documented function at all: pin 1 is OFF in every one of the four documented functions.",
+  "question": "Hvilke DIP-switch indstillinger skal jeg bruge for at restore fra SD-kortet til NX controlleren?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "matches", "pattern": "pin\s*4|SW4|switch\s*4", "label": "names pin 4" },
+    { "type": "matches", "pattern": "pin\s*3|SW3|switch\s*3", "label": "names pin 3" },
+    { "type": "notMatches", "pattern": "pin\s*1[^.\n]{0,40}(ON|til|sl[aå]et til)", "label": "never sets pin 1 ON" },
+    { "type": "quotesSource", "label": "quotes the switch table verbatim" }
+  ]
+}

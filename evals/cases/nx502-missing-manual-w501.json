@@ -1,0 +1,22 @@
+{
+  "id": "nx502-missing-manual-w501",
+  "about": "Fix G. W629 gives the switch settings and defers the actual backup/restore procedure to Cat. No. W501, which is not in this machine's knowledge base. The original conversation answered with an invented six-step procedure and only admitted at the very end that W501 was missing.",
+  "question": "Giv mig hele trin-for-trin proceduren for at tage backup til SD-kort på NX502, fra start til slut.",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "matches", "pattern": "W501", "label": "names the manual the procedure actually lives in" },
+    {
+      "type": "anyOf",
+      "patterns": [
+        "ikke (i|en del af|tilg[æa]ngelig)",
+        "findes ikke",
+        "not (in|available|part of)",
+        "har ikke",
+        "don'?t have",
+        "does not have"
+      ],
+      "label": "says that manual is not in the knowledge base"
+    }
+  ]
+}

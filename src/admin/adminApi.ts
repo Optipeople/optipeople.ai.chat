@@ -488,7 +488,7 @@ export type ReprocessResult = {
   documentId: string;
   chunkCount: number;
   pageCount: number;
-  extractionSource: "pdf-parse" | "claude-ocr";
+  extractionSource: "pdf-parse" | "pdf-parse+tables" | "claude-ocr";
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -590,7 +590,7 @@ export type UploadResult = {
   documentId: string;
   chunkCount: number;
   pageCount: number;
-  extractionSource: "pdf-parse" | "claude-ocr";
+  extractionSource: "pdf-parse" | "pdf-parse+tables" | "claude-ocr";
 };
 
 export async function uploadAdminDocument(args: {

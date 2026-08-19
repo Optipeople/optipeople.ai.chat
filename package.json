@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "ingest": "tsx --env-file=.env.local scripts/ingest.ts",
+    "eval": "tsx --env-file=.env.local scripts/eval.ts",
     "regenerate-suggestions": "tsx --env-file=.env.local scripts/regenerate-suggestions.ts"
   },
   "dependencies": {

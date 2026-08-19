@@ -7,6 +7,7 @@ import {
   LOCALE_COOKIE,
   type Locale,
 } from "@/i18n/config";
+import { missingReferencedManuals, readDocumentMeta } from "@/lib/docMeta";
 import {
   readQrTokenFromRequest,
   resolveQrToken,
@@ -47,6 +48,14 @@ Rules:
 - When you have found the answer, briefly mention which manual it comes from so the operator knows the source.
 - If a search_kb result has is_image: true, it is a figure or diagram. You cannot show it over voice, but you can describe what it depicts and tell the operator which page to look at.
 
+Specific setting values (switch positions, parameters, torques). Read these back carefully, because an operator acts on them physically:
+- Read the value back the way the manual prints it, naming what each value belongs to ("pin three on, the other three off"), not just the bare number.
+- Column headers in manuals are NOT always in ascending order. A DIP switch table may print its columns four, three, two, one. Never assume the leftmost column is number one.
+- If the snippet does not clearly tie each value to its label, say so and tell the operator the manual and page to look at. Do not guess. You cannot see the page over voice, so an ambiguous table is a "check the page yourself" answer.
+- If the operator says a value you gave is wrong, assume they are right: they are looking at the machine. Do not repeat the same value from the same snippet. Say you may have misread the table and point them at the page.
+- Use rows from one manual only. Never combine two manuals' tables into one answer.
+- If the manual says the procedure is in another manual and that manual is not in the list below, say so instead of describing the procedure from memory.
+
 LANGUAGE: Always respond in ${language}, regardless of what language the operator's speech sounds like. The factory floor is noisy and transcription can misidentify language — the operator has explicitly chosen ${language} as their interface language. Keep machine-specific technical terms (alarm codes, button labels, menu names) verbatim as they appear on the machine.
 `;
 }
@@ -56,6 +65,7 @@ type DocumentManifest = {
   title: string;
   summary: string;
   page_count: number | null;
+  meta: unknown;
 };
 
 async function buildVoiceInstructions(
@@ -65,7 +75,7 @@ async function buildVoiceInstructions(
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kb_documents")
-    .select("id, title, summary, page_count")
+    .select("id, title, summary, page_count, meta")
     .eq("machine_id", machineId)
     .eq("status", "ready")
     .order("title", { ascending: true });
@@ -76,16 +86,35 @@ async function buildVoiceInstructions(
     docs.length === 0
       ? "No manuals are available for this machine yet."
       : docs
-          .map(
-            (d) =>
-              `- ${d.title}${d.page_count ? ` (${d.page_count} pages)` : ""}: ${d.summary}`,
-          )
+          .map((d) => {
+            const meta = readDocumentMeta(d.meta);
+            const tags = [
+              meta.catalogNo,
+              meta.appliesTo.length > 0
+                ? `applies to ${meta.appliesTo.join(", ")}`
+                : null,
+            ].filter(Boolean);
+            const pages = d.page_count ? ` (${d.page_count} pages)` : "";
+            const id = tags.length > 0 ? ` [${tags.join("; ")}]` : "";
+            return `- ${d.title}${pages}${id}: ${d.summary}`;
+          })
           .join("\n");
+
+  // Manuals the uploaded documents refer to that nobody uploaded. Same
+  // reason as the chat route: without this the assistant describes
+  // procedures it has never read. docs/answer-correctness-plan.md fix G.
+  const missing = missingReferencedManuals(docs);
+  const missingSection =
+    missing.length === 0
+      ? ""
+      : `\nReferenced manuals NOT in this machine's knowledge base: ${missing.join(
+          ", ",
+        )}. If an answer depends on a procedure one of them covers, say it is not available here and offer to call service.\n`;
 
   return `${voiceSystemPreamble(locale)}
 Available documents for this machine (use search_kb to find content):
 ${manifest}
-`;
+${missingSection}`;
 }
 
 async function resolveLocale(): Promise<Locale> {

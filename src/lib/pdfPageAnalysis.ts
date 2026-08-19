@@ -1,5 +1,5 @@
-// Per-page figure detection for a PDF, used to send the model only the
-// pages that actually need a vision pass.
+// Per-page figure AND table detection for a PDF, used to send the model
+// only the pages that actually need a vision pass.
 //
 // Why this exists: figure extraction (imageCaption.ts) used to base64 the
 // WHOLE document into the request. A 282-page manual with twelve diagrams
@@ -74,6 +74,82 @@ const MAX_FIGURE_PAGES = 150;
 // remap for nothing. Past this share, callers send the original buffer.
 const WHOLE_DOC_THRESHOLD = 0.7;
 
+// ---------------------------------------------------------------------------
+// Table detection (docs/answer-correctness-plan.md fix A)
+// ---------------------------------------------------------------------------
+//
+// A table is detected from its RULES, not from its text. The plan called
+// for trying a text-shape heuristic first, but pdf-parse's page renderer
+// concatenates text items on the same baseline with NO separator (see
+// render_page in pdf-parse/lib/pdf-parse.js), so a row of cells can
+// arrive as "BackupOFFONOFFOFF" with no column gap left to measure. The
+// column whitespace a text heuristic needs is exactly what is destroyed
+// before we could look at it, so geometry is the primary signal here and
+// the text heuristic is only an OR-ed fallback for PDFs that do preserve
+// spacing.
+//
+// The grid signature is horizontal rules at several distinct heights,
+// optionally crossed by vertical rules, with few curves. That separates a
+// ruled table from a schematic, which the figure detector above already
+// catches and which is answered by a different prompt.
+
+// A rule has to be longer than this (PDF user-space units, 1/72 inch) to
+// count. Filters out cell tick marks and glyph-sized artefacts.
+const MIN_RULE_LENGTH = 20;
+
+// Coordinates are rounded to this many units before counting distinct
+// rule positions, so a table drawn as many abutting segments per row
+// still reports one level per row.
+const RULE_LEVEL_ROUNDING = 2;
+
+// Tolerance for calling a segment axis-aligned.
+const AXIS_EPSILON = 0.6;
+
+// Thresholds, measured against the demo corpus (numbers are distinct rule
+// levels per page):
+//
+//   prose pages                    h 4-8,   v 2       (border + header/footer)
+//   horizontal-rule-only tables    h 13,    v 2
+//   ruled tables                   h 15-43, v 5-15
+//   vector technical drawings      h 10-12, v 4
+//
+// Tables on horizontal rules alone are common, so there are two paths in:
+// plenty of horizontal rules by themselves, or fewer of them crossed by
+// vertical ones.
+const MIN_H_LEVELS_ALONE = 12;
+const MIN_H_LEVELS_WITH_GRID = 8;
+const MIN_V_LEVELS_WITH_GRID = 3;
+//
+// This detector DELIBERATELY OVER-SELECTS, and the drawing row above is
+// why it has to: at 10-12 horizontal levels a vector drawing sits just
+// under the densest tables and just over the prose, with no clean gap. The
+// asymmetry decides it. Missing a table page leaves the linearization bug
+// that gave an operator the wrong DIP switch pin; a false positive costs a
+// few cents of vision and gets that page transcribed literally instead,
+// which is no worse than the text layer. So we take the false positives
+// and bound them with MAX_TABLE_PAGES plus the ingest deadline.
+//
+// If the vision bill ever justifies tightening this, the next signal to
+// add is shared extent: a table's horizontal rules all span roughly the
+// same x-range and its vertical rules the same y-range, where a drawing's
+// dimension lines do not. That needs per-rule extents rather than just
+// positions, and it should be calibrated against real vendor manuals
+// rather than the synthetic demo set the numbers above come from.
+//
+// Note what is NOT a signal here: curves. An earlier version rejected any
+// page whose curve count outweighed its rules, on the theory that curves
+// mean "drawing". Measured, that threw away real tables: a spec page with
+// 40 horizontal and 14 vertical rules also carried 48 curves, all of them
+// rounded corners on callout boxes. Curves say nothing about whether the
+// page holds a grid.
+
+// Hard cap on pages sent in one table pass, and the reason the cap
+// matters more here than for figures: a parameter-list manual can be
+// tables end to end, where figures are always a small minority. 60 pages
+// is roughly $0.40 of vision input plus its Markdown output on Sonnet.
+// Pages over the cap are dropped highest-score-first and logged.
+export const MAX_TABLE_PAGES = 60;
+
 export type PageFigureSignal = {
   /** 1-indexed, matching how both PDF readers and the model count pages. */
   page: number;
@@ -81,6 +157,19 @@ export type PageFigureSignal = {
   images: number;
   /** Vector path/fill/stroke operations (schematics, drawings, charts). */
   drawOps: number;
+  /** Rule geometry, used to tell ruled tables from drawings. */
+  grid: PageGridSignal;
+};
+
+export type PageGridSignal = {
+  /** Distinct heights carrying a horizontal rule. */
+  hLevels: number;
+  /** Distinct x positions carrying a vertical rule. */
+  vLevels: number;
+  /** Curve operations, the strongest "this is a drawing" signal. */
+  curves: number;
+  /** Segments that are neither horizontal nor vertical. */
+  diagonals: number;
 };
 
 export type PdfFigureAnalysis = {
@@ -122,12 +211,145 @@ const DRAW_OPS = [
   "shadingFill",
 ] as const;
 
+// Accumulator for one page's rule geometry.
+type GridAccumulator = {
+  hLevels: Set<number>;
+  vLevels: Set<number>;
+  curves: number;
+  diagonals: number;
+};
+
+function newGrid(): GridAccumulator {
+  return { hLevels: new Set(), vLevels: new Set(), curves: 0, diagonals: 0 };
+}
+
+function level(v: number): number {
+  return Math.round(v / RULE_LEVEL_ROUNDING);
+}
+
+// Classify one straight segment. Horizontal and vertical rules are
+// recorded by position so a row drawn as several abutting segments counts
+// once; anything else is a diagonal, which votes against "table".
+function addSegment(
+  g: GridAccumulator,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): void {
+  const dx = Math.abs(x2 - x1);
+  const dy = Math.abs(y2 - y1);
+  if (dy <= AXIS_EPSILON && dx >= MIN_RULE_LENGTH) {
+    g.hLevels.add(level(y1));
+  } else if (dx <= AXIS_EPSILON && dy >= MIN_RULE_LENGTH) {
+    g.vLevels.add(level(x1));
+  } else if (dx >= MIN_RULE_LENGTH || dy >= MIN_RULE_LENGTH) {
+    g.diagonals++;
+  }
+}
+
+/**
+ * Decodes one constructPath operator into rule geometry.
+ *
+ * `args` is `[subOps, coords]`: a list of path sub-operations and a flat
+ * coordinate array they consume in order. The consumption pattern per
+ * sub-op is copied from the vendored build's own CanvasGraphics
+ * implementation, so it stays in step with how pdf.js reads the same
+ * data. An unknown sub-op aborts the walk rather than guessing, because
+ * a wrong stride desynchronises every coordinate after it.
+ */
+function decodePath(
+  subOps: unknown,
+  coords: unknown,
+  sub: Record<string, number>,
+  g: GridAccumulator,
+): void {
+  if (!Array.isArray(subOps) || !coords) return;
+  const c = coords as ArrayLike<number>;
+  let x = 0;
+  let y = 0;
+  let j = 0;
+  const take = (): number => {
+    const v = c[j++];
+    return typeof v === "number" ? v : 0;
+  };
+  for (const rawOp of subOps as number[]) {
+    const op = rawOp | 0;
+    if (op === sub.rectangle) {
+      const rx = take();
+      const ry = take();
+      const w = take();
+      const h = take();
+      // A table rule is very often drawn as a hairline rectangle rather
+      // than a stroked line, so a thin rectangle counts as a rule and a
+      // fat one contributes all four of its sides.
+      if (Math.abs(h) <= AXIS_EPSILON && Math.abs(w) >= MIN_RULE_LENGTH) {
+        g.hLevels.add(level(ry));
+      } else if (Math.abs(w) <= AXIS_EPSILON && Math.abs(h) >= MIN_RULE_LENGTH) {
+        g.vLevels.add(level(rx));
+      } else {
+        addSegment(g, rx, ry, rx + w, ry);
+        addSegment(g, rx, ry + h, rx + w, ry + h);
+        addSegment(g, rx, ry, rx, ry + h);
+        addSegment(g, rx + w, ry, rx + w, ry + h);
+      }
+      x = rx;
+      y = ry;
+    } else if (op === sub.moveTo) {
+      x = take();
+      y = take();
+    } else if (op === sub.lineTo) {
+      const nx = take();
+      const ny = take();
+      addSegment(g, x, y, nx, ny);
+      x = nx;
+      y = ny;
+    } else if (op === sub.curveTo) {
+      j += 4;
+      x = take();
+      y = take();
+      g.curves++;
+    } else if (op === sub.curveTo2) {
+      j += 2;
+      x = take();
+      y = take();
+      g.curves++;
+    } else if (op === sub.curveTo3) {
+      x = take();
+      y = take();
+      j += 2;
+      g.curves++;
+    } else if (op === sub.closePath) {
+      // No coordinates.
+    } else {
+      // Unknown sub-op: the coordinate stride is no longer known.
+      return;
+    }
+  }
+}
+
 /**
  * Counts image and vector-drawing operations per page. Returns null if the
  * PDF can't be analysed (corrupt, encrypted, unexpected pdf.js shape) —
  * callers must then fall back to sending the whole document.
  */
+// One walk per buffer, not per caller. Both vision passes now need this
+// analysis (figures via imageCaption, tables via pdfText), and on a
+// 1316-page manual the operator-list walk is tens of seconds. The ingest
+// pipeline memoises its downloaded Buffer, so both callers arrive with the
+// same object; a resumed invocation re-downloads and simply misses.
+const analysisCache = new WeakMap<object, PdfFigureAnalysis | null>();
+
 export async function analyzePdfFigures(
+  buf: Buffer,
+): Promise<PdfFigureAnalysis | null> {
+  if (analysisCache.has(buf)) return analysisCache.get(buf) ?? null;
+  const result = await analyzePdfFiguresUncached(buf);
+  analysisCache.set(buf, result);
+  return result;
+}
+
+async function analyzePdfFiguresUncached(
   buf: Buffer,
 ): Promise<PdfFigureAnalysis | null> {
   let doc:
@@ -166,6 +388,21 @@ export async function analyzePdfFigures(
 
     const imageOps = opSet(OPS, IMAGE_OPS);
     const drawOps = opSet(OPS, DRAW_OPS);
+    const constructPathOp = OPS.constructPath;
+    // Path sub-operation codes live in the same OPS table as the top-level
+    // operators. Pulled once per document rather than per page.
+    const subOps: Record<string, number> = {};
+    for (const name of [
+      "rectangle",
+      "moveTo",
+      "lineTo",
+      "curveTo",
+      "curveTo2",
+      "curveTo3",
+      "closePath",
+    ]) {
+      if (typeof OPS[name] === "number") subOps[name] = OPS[name];
+    }
 
     // nativeImageDecoderSupport, unlike disableFontFace, IS read from the
     // per-call params (see the params handling in the vendored build).
@@ -186,18 +423,39 @@ export async function analyzePdfFigures(
     const pages: PageFigureSignal[] = [];
     for (let n = 1; n <= doc.numPages; n++) {
       const page = (await doc.getPage(n)) as {
-        getOperatorList: () => Promise<{ fnArray: number[] }>;
+        getOperatorList: () => Promise<{
+          fnArray: number[];
+          argsArray: unknown[];
+        }>;
         cleanup?: () => unknown;
       };
       try {
         const ops = await page.getOperatorList();
         let images = 0;
         let draws = 0;
-        for (const fn of ops.fnArray) {
+        const grid = newGrid();
+        for (let k = 0; k < ops.fnArray.length; k++) {
+          const fn = ops.fnArray[k];
           if (imageOps.has(fn)) images++;
           else if (drawOps.has(fn)) draws++;
+          if (fn === constructPathOp) {
+            const args = ops.argsArray?.[k] as unknown[] | undefined;
+            if (Array.isArray(args)) {
+              decodePath(args[0], args[1], subOps, grid);
+            }
+          }
         }
-        pages.push({ page: n, images, drawOps: draws });
+        pages.push({
+          page: n,
+          images,
+          drawOps: draws,
+          grid: {
+            hLevels: grid.hLevels.size,
+            vLevels: grid.vLevels.size,
+            curves: grid.curves,
+            diagonals: grid.diagonals,
+          },
+        });
       } finally {
         page.cleanup?.();
       }
@@ -256,6 +514,71 @@ export function figurePages(analysis: PdfFigureAnalysis): number[] {
     .slice(0, MAX_FIGURE_PAGES)
     .map((p) => p.page)
     .sort((a, b) => a - b);
+}
+
+// Does this page's geometry look like a ruled table?
+function looksLikeTable(p: PageFigureSignal): boolean {
+  const { hLevels, vLevels, diagonals } = p.grid;
+  const rules = hLevels + vLevels;
+  if (rules === 0) return false;
+  // A table's lines are essentially all axis-aligned. A page whose
+  // straight geometry is mostly diagonal is a schematic, and the figure
+  // pass is the right one for it.
+  if (diagonals > rules) return false;
+  if (hLevels >= MIN_H_LEVELS_ALONE) return true;
+  return hLevels >= MIN_H_LEVELS_WITH_GRID && vLevels >= MIN_V_LEVELS_WITH_GRID;
+}
+
+// Ranking for the MAX_TABLE_PAGES cap: denser grids first, since a page
+// with more rule levels holds more rows at risk of being linearized.
+function tableScore(p: PageFigureSignal): number {
+  return p.grid.hLevels * 2 + p.grid.vLevels;
+}
+
+// Fallback signal for PDFs whose text layer DOES preserve column
+// whitespace. Cheap enough to run unconditionally, and it costs nothing
+// when it never fires.
+const COLUMN_GAP_RE = /\S[ \t]{2,}\S+[ \t]{2,}\S/;
+const MIN_COLUMNAR_LINES = 4;
+
+function looksColumnar(pageText: string | undefined): boolean {
+  if (!pageText) return false;
+  let hits = 0;
+  for (const line of pageText.split("\n")) {
+    if (COLUMN_GAP_RE.test(line)) {
+      hits++;
+      if (hits >= MIN_COLUMNAR_LINES) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Pages that carry a ruled table (geometry), or whose extracted text
+ * still shows column whitespace (`pageTexts[i]` is page `i + 1`).
+ * Ascending page order, at most MAX_TABLE_PAGES entries. The second
+ * return value reports how many candidates the cap dropped so callers
+ * can log it rather than silently under-covering a document.
+ */
+export function tablePages(
+  analysis: PdfFigureAnalysis,
+  pageTexts?: string[],
+): { pages: number[]; dropped: number } {
+  const candidates = analysis.pages.filter(
+    (p) => looksLikeTable(p) || looksColumnar(pageTexts?.[p.page - 1]),
+  );
+  if (candidates.length <= MAX_TABLE_PAGES) {
+    return { pages: candidates.map((p) => p.page), dropped: 0 };
+  }
+  return {
+    pages: candidates
+      .slice()
+      .sort((a, b) => tableScore(b) - tableScore(a))
+      .slice(0, MAX_TABLE_PAGES)
+      .map((p) => p.page)
+      .sort((a, b) => a - b),
+    dropped: candidates.length - MAX_TABLE_PAGES,
+  };
 }
 
 /**

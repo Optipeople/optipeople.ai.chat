@@ -17,6 +17,7 @@ import {
   Image as ImageIcon,
   RefreshCw,
   ScanEye,
+  Table2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -445,6 +446,11 @@ function ServerRow({ doc }: { doc: AdminDocument }) {
           {doc.extractionSource === "claude-ocr" && (
             <span title={t("ocrTooltip")}>
               <ScanEye className="h-3.5 w-3.5 text-violet-600" />
+            </span>
+          )}
+          {doc.extractionSource === "pdf-parse+tables" && (
+            <span title={t("tablesTooltip")}>
+              <Table2 className="h-3.5 w-3.5 text-violet-600" />
             </span>
           )}
         </div>

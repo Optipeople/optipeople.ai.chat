@@ -116,6 +116,16 @@ administrator", since onboarding is on Optipeople.
 
 ### What's NOT done yet
 
+**Answer correctness, fixes A to H.** A production incident on 2026-08-19 (wrong
+DIP switch pins given to an operator, root cause: pdf-parse linearizes tables and
+destroys column binding) produced a full remediation plan in
+[answer-correctness-plan.md](answer-correctness-plan.md). All eight fixes are
+implemented. Two runtime steps are outstanding, both in that document's §0:
+apply migration `20260819120000_doc_meta_and_table_extraction.sql` **before**
+deploying (the chat route selects `kb_documents.meta`), then reprocess the
+manuals so they pick up table repair, page numbers and document metadata.
+New: `npm run eval` (see [../evals/README.md](../evals/README.md)).
+
 _Nothing critical pending — the launch list has been worked through.
 Forward-looking items live in §5 below._
 

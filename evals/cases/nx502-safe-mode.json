@@ -1,0 +1,11 @@
+{
+  "id": "nx502-safe-mode",
+  "about": "Safe Mode is pin 4 ON with pins 3, 2, 1 OFF, and W629 defers its procedure to Cat. No. W503. Fourth row of the same table that was misread, so it is a cheap check that the whole table survived extraction, not just the row the incident touched.",
+  "question": "How do I start the NX502 CPU unit in Safe Mode?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "matches", "pattern": "pin\s*4|SW4|switch\s*4", "label": "names pin 4" },
+    { "type": "quotesSource", "label": "quotes the switch table verbatim" }
+  ]
+}

@@ -22,6 +22,7 @@ import {
   RefreshCw,
   ScanEye,
   Sparkles,
+  Table2,
   Trash2,
   Upload,
   Wrench,
@@ -1728,6 +1729,14 @@ function DocumentRow({
           <span title={t("ocrTitle")}>
             <ScanEye
               aria-label={t("ocrAria")}
+              className="h-3.5 w-3.5 shrink-0 text-violet-600"
+            />
+          </span>
+        )}
+        {document.extractionSource === "pdf-parse+tables" && (
+          <span title={t("tablesTitle")}>
+            <Table2
+              aria-label={t("tablesAria")}
               className="h-3.5 w-3.5 shrink-0 text-violet-600"
             />
           </span>

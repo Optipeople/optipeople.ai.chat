@@ -106,9 +106,10 @@ export async function promoteFeedbackToKb(
   const chunks = chunkText(chunkContent);
   // Solution text is short by construction; embedDocuments handles the
   // single-chunk case fine and we get one Voyage call here.
-  const embeddings = await embedDocuments(chunks, {
-    usage: { machineId: input.machineId },
-  });
+  const embeddings = await embedDocuments(
+    chunks.map((c) => c.text),
+    { usage: { machineId: input.machineId } },
+  );
   if (embeddings.length !== chunks.length) {
     // Roll back the doc row so we don't leave an empty document hanging.
     await supabase.from("kb_documents").delete().eq("id", documentId);
@@ -117,13 +118,15 @@ export async function promoteFeedbackToKb(
     );
   }
 
-  const rows = chunks.map((text, i) => ({
+  // Promoted feedback has no source pages: it is operator-written text,
+  // not an extract from a manual.
+  const rows = chunks.map((chunk, i) => ({
     document_id: documentId,
     machine_id: input.machineId,
     ordinal: i,
-    page_from: null,
-    page_to: null,
-    text,
+    page_from: chunk.pageFrom,
+    page_to: chunk.pageTo,
+    text: chunk.text,
     embedding: embeddings[i],
     embedding_model: VOYAGE_MODEL,
   }));

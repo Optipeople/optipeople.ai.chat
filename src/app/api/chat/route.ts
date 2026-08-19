@@ -5,6 +5,8 @@ import type {
   BetaImageBlockParam as ImageBlockParam,
   BetaMessage as Message,
   BetaMessageParam as MessageParam,
+  BetaRequestDocumentBlock as DocumentBlockParam,
+  BetaTextBlockParam as TextBlockParam,
   BetaTool as Tool,
   BetaToolResultBlockParam as ToolResultBlockParam,
   BetaToolUnion as ToolUnion,
@@ -15,6 +17,8 @@ import {
   renderRulesSection,
 } from "@/lib/aiRules";
 import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import { containsTable } from "@/lib/chunking";
+import { missingReferencedManuals, readDocumentMeta } from "@/lib/docMeta";
 import {
   appendAssistantTurn,
   appendToolMessage,
@@ -34,6 +38,7 @@ import {
   resolveQrToken,
   type QrSession,
 } from "@/lib/qrAuth";
+import { slicePdfPages } from "@/lib/pdfSlice";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { fromAnthropicUsage, recordUsage } from "@/lib/usage";
 import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
@@ -140,6 +145,7 @@ Your job: help operators get fast, reliable answers from their machine manuals s
 Tool & formatting rules:
 - Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result.
 - Use the **list_documents** tool when the operator asks what manuals are available, asks for a link / the PDF / the file itself, asks "where do I find the manual", or wants to browse the knowledge base. The tool returns every operator-visible document for this machine; each one is then rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the operator you cannot share links — you can, by calling this tool.
 - Be brief and to the point. Operators are at the machine — they want the solution, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result.
@@ -152,6 +158,21 @@ Tool & formatting rules:
 - When you conclude the operator needs a human technician (the manuals don't cover it, the fix requires service intervention, or the issue is safety-critical), offer the escalation button inline using this exact form: \`[label](opti:call-service)\` with a short action label in the operator's language (e.g. "Tilkald service" / "Call service"). It renders as a button that starts the escalation flow. Only emit it when you are genuinely recommending human help — never as decoration on ordinary uses of the word "service".
 - If the question is ambiguous, ask one clarifying question before searching or guessing.
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
+
+Answering with a specific value (switch positions, parameters, torques):
+- A **value answer** is any answer whose payload is a specific setting: a switch or DIP pin position, a parameter number or value, a torque, pressure, temperature, voltage or timing figure, a part number, or a menu path. The operator is going to act on it physically, so it is right or it is damage.
+- Before you state such a value, quote the source row VERBATIM in a fenced code block, then give your reading of it underneath. The operator has to be able to check your reading against the manual's own words.
+- NEVER re-render a source table with a different column order, different headers, or renumbered columns. If you reproduce a table, reproduce it as printed.
+- Column headers in manuals are NOT always ascending. A DIP switch table may print its columns 4, 3, 2, 1. Read the header row that is actually in front of you; never assume 1, 2, 3, 4 and never assume left-to-right means lowest-first.
+- If the retrieved text does not unambiguously bind each value to its label (a table that arrived as a flat run of cells, a footnote you cannot place, a missing unit), do NOT guess. Call **get_page_image** on that page and read it. If it is still unresolvable, quote what you have, point the operator at the page, and ask them to read that row off the page themselves. A hedge costs the operator 30 seconds; a wrong switch position costs a production run.
+- Every row you quote for one value answer must come from ONE document. If the results span manuals covering different product series or models, say which manual you used, and never merge two manuals' tables into one answer.
+- If the manual defers the actual procedure to another manual (e.g. "for the backup procedure refer to Cat. No. W501") and that manual is not listed among this machine's documents, say so up front. Give the settings you do have and do NOT reconstruct the missing procedure from general knowledge.
+
+When the operator says you are wrong:
+- Treat it as strong evidence that you are. They are standing at the machine and are often looking at the very page you are quoting.
+- Do NOT re-assert the same value from the same search results. Call **get_page_image** on the page the value came from and LOOK at it. That is not optional: re-reading the same extracted text is exactly what produced the wrong answer the first time, and it will do it again. Only when there is no page to look at (the hit has no page number, or the source is not a PDF) fall back to re-reading the snippet specifically for structural ambiguity: column order, footnotes, units, which model or series the row applies to.
+- NEVER say the manual confirms you unless you quote, in that same message, the exact line that confirms it.
+- When you correct one value, re-derive EVERY other value you gave from the same table and correct those too. If you misread one row of a table, you have almost certainly misread its other rows the same way.
 
 Formatting (answers render as Markdown):
 - Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
@@ -186,6 +207,7 @@ Scope rules:
 Tool & formatting rules:
 - Use the **search_kb** tool to find information in the manuals BEFORE answering technical questions. It searches every machine by default; pass \`machine_id\` (from the fleet list) to focus on one machine. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the user should check or who they should contact.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result.
 - Use the **list_documents** tool when the user asks what manuals are available, asks for a link / the PDF / the file itself, or wants to browse the knowledge base — pass \`machine_id\` for one machine or omit it for all. Each returned document is rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the user you cannot share links — you can, by calling this tool.
 - Be brief and to the point. They want the answer, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result, and name the machine it belongs to.
@@ -196,6 +218,21 @@ Tool & formatting rules:
 - When a **search_kb** result has \`is_image: true\` AND an \`asset_id\`, you can **embed the figure inline** in your reply using this exact form: \`![short alt text](opti:asset/<asset_id>)\`. Place it on its own line, ideally right where you reference the figure in the prose. The renderer fetches the actual image. Same rules as for documents: only use \`asset_id\` values from tool results, never invent them, never paste raw URLs. If you embed a figure inline you can skip mentioning it again — the chip rail below still renders the same thumbnail for navigation.
 - When you conclude the user needs a human technician (the manuals don't cover it, the fix requires service intervention, or the issue is safety-critical), offer the escalation button inline using this exact form: \`[label](opti:call-service)\` with a short action label in the user's language (e.g. "Tilkald service" / "Call service"). It renders as a button that starts the escalation flow. Only emit it when you are genuinely recommending human help — never as decoration on ordinary uses of the word "service".
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the user to follow site safety procedures.
+
+Answering with a specific value (switch positions, parameters, torques):
+- A **value answer** is any answer whose payload is a specific setting: a switch or DIP pin position, a parameter number or value, a torque, pressure, temperature, voltage or timing figure, a part number, or a menu path. Someone is going to act on it physically, so it is right or it is damage.
+- Before you state such a value, quote the source row VERBATIM in a fenced code block, then give your reading of it underneath. The reader has to be able to check your reading against the manual's own words.
+- NEVER re-render a source table with a different column order, different headers, or renumbered columns. If you reproduce a table, reproduce it as printed.
+- Column headers in manuals are NOT always ascending. A DIP switch table may print its columns 4, 3, 2, 1. Read the header row that is actually in front of you; never assume 1, 2, 3, 4 and never assume left-to-right means lowest-first.
+- If the retrieved text does not unambiguously bind each value to its label (a table that arrived as a flat run of cells, a footnote you cannot place, a missing unit), do NOT guess. Call **get_page_image** on that page and read it. If it is still unresolvable, quote what you have, point at the page, and ask the user to read that row off the page themselves. A hedge costs 30 seconds; a wrong switch position costs a production run.
+- Every row you quote for one value answer must come from ONE document. If the results span manuals covering different product series, models, or machines, say which manual you used, and never merge two manuals' tables into one answer.
+- If the manual defers the actual procedure to another manual (e.g. "for the backup procedure refer to Cat. No. W501") and that manual is not in the knowledge base, say so up front. Give the settings you do have and do NOT reconstruct the missing procedure from general knowledge.
+
+When the user says you are wrong:
+- Treat it as strong evidence that you are. They are usually closer to the machine than you, and often looking at the very page you are quoting.
+- Do NOT re-assert the same value from the same search results. Call **get_page_image** on the page the value came from and LOOK at it. That is not optional: re-reading the same extracted text is exactly what produced the wrong answer the first time, and it will do it again. Only when there is no page to look at (the hit has no page number, or the source is not a PDF) fall back to re-reading the snippet specifically for structural ambiguity: column order, footnotes, units, which model or series the row applies to.
+- NEVER say the manual confirms you unless you quote, in that same message, the exact line that confirms it.
+- When you correct one value, re-derive EVERY other value you gave from the same table and correct those too. If you misread one row of a table, you have almost certainly misread its other rows the same way.
 
 Formatting (answers render as Markdown):
 - Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
@@ -243,11 +280,50 @@ const LIST_DOCUMENTS_TOOL: Tool = {
   },
 };
 
+// Lets the model look at a page instead of only reading text extracted
+// from it (docs/answer-correctness-plan.md fix C).
+//
+// This exists because of a specific failure: asked to re-check a DIP
+// switch table, the model ran the same search three times, read the same
+// linearized text, and got more confident each time. It had no way to see
+// that the table's columns were printed 4, 3, 2, 1. Re-reading extracted
+// text is not checking. Looking at the page is.
+//
+// Scope-independent: a document_id identifies exactly one document, and
+// the executor verifies it belongs to a machine in scope, so fleet mode
+// needs no machine_id parameter here.
+const GET_PAGE_IMAGE_TOOL: Tool = {
+  name: "get_page_image",
+  description:
+    "Look at one or more pages of a document exactly as printed. Returns the pages themselves, not extracted text, so you can read a table's real column layout and check a value against the page. Use it before stating a specific setting value that came from a table (switch or DIP pin positions, parameter values, torques), and ALWAYS when someone says a value you gave is wrong. Page numbers come from the page_from field of a search_kb result.",
+  input_schema: {
+    type: "object",
+    properties: {
+      document_id: {
+        type: "string",
+        description:
+          "The document_id from a search_kb or list_documents result. Never invent one.",
+      },
+      pages: {
+        type: "array",
+        items: { type: "integer" },
+        description:
+          "1-indexed page numbers, at most 3 per call. Use the page_from value from the search result. When the result also carries a page_to, the content is spread over that range, so ask for the whole range. Add the following page when a table may continue onto it.",
+      },
+    },
+    required: ["document_id", "pages"],
+  },
+};
+
 // Our custom tools live here. Portal data is no longer a custom tool;
 // it now comes from the Optipeople MCP server, which Anthropic calls
 // directly via the `mcp_servers` connector when the chat's account
 // has authorized credentials. See docs/optipeople-data-access.md.
-const TOOLS: Tool[] = [SEARCH_KB_TOOL, LIST_DOCUMENTS_TOOL];
+const TOOLS: Tool[] = [
+  SEARCH_KB_TOOL,
+  LIST_DOCUMENTS_TOOL,
+  GET_PAGE_IMAGE_TOOL,
+];
 
 // ---------------------------------------------------------------------------
 // Fleet scope ("all machines"). Same tool names, different schemas: the
@@ -300,7 +376,13 @@ const FLEET_LIST_DOCUMENTS_TOOL: Tool = {
   },
 };
 
-const FLEET_TOOLS: Tool[] = [FLEET_SEARCH_KB_TOOL, FLEET_LIST_DOCUMENTS_TOOL];
+// get_page_image is shared verbatim: it takes a document_id, which is
+// already machine-unambiguous, so it needs no fleet-specific schema.
+const FLEET_TOOLS: Tool[] = [
+  FLEET_SEARCH_KB_TOOL,
+  FLEET_LIST_DOCUMENTS_TOOL,
+  GET_PAGE_IMAGE_TOOL,
+];
 
 // Which machines a tool call may touch. Machine scope is exactly one id
 // (injected server-side, the model can't address others); fleet scope is
@@ -513,16 +595,51 @@ type DocumentManifest = {
   title: string;
   summary: string;
   page_count: number | null;
+  // Identity metadata from ingest: catalogue number, product models,
+  // cross-referenced manuals. jsonb, so null on documents ingested before
+  // the column existed. See src/lib/docMeta.ts.
+  meta: unknown;
 };
 
 // Caps on tool-result text going back to the model. Everything in a
 // tool_result is re-billed as input on every later loop iteration (and
-// cached-read on later turns), so long tails are pure cost. Chunk
-// snippets occasionally run very long (tables, dense pages) — past
-// ~2000 chars the tail rarely adds signal. Document summaries in
-// list_documents only need enough to identify the manual.
-const MAX_SNIPPET_CHARS = 2000;
+// cached-read on later turns), so long tails are pure cost.
+//
+// That cost argument holds for prose, where the tail rarely adds signal,
+// and it fails completely for tables, where the tail IS the payload. The
+// old flat 2000-char cap sat below the 3500-char chunk target, so up to
+// 43 % of every long hit was thrown away before the model saw it: a table
+// could lose its last rows, or its header, without any indication beyond a
+// "…[truncated]" marker. That is one of the causes of the 2026-08-19
+// wrong-DIP-switch answer (docs/answer-correctness-plan.md fix B).
+//
+// So: tables are never truncated, and the prose cap now sits just under
+// the chunk target instead of well below it.
+const MAX_SNIPPET_CHARS = 3000;
 const MAX_LIST_SUMMARY_CHARS = 280;
+
+// A backstop for table chunks, which the chunker deliberately refuses to
+// split however large they get. A 200-row parameter table is about 16k
+// chars and belongs in the answer; a pathological thousand-row table would
+// otherwise put 20k tokens into a tool_result and re-bill them on every
+// later loop iteration. Set well above any table worth reading whole.
+const MAX_TABLE_SNIPPET_CHARS = 12000;
+
+function snippetForModel(text: string): string {
+  const cap = containsTable(text) ? MAX_TABLE_SNIPPET_CHARS : MAX_SNIPPET_CHARS;
+  return text.length > cap ? `${text.slice(0, cap)} …[truncated]` : text;
+}
+
+// Page lookups are bounded per turn, not just per call. A page as a
+// document block runs roughly 1500 to 3000 input tokens and is re-billed
+// on every later iteration of the agentic loop, so an unbounded tool is a
+// cost incident waiting to happen.
+const MAX_PAGE_LOOKUP_PAGES = 3;
+const MAX_PAGE_LOOKUPS_PER_TURN = 2;
+
+// A sliced page that exceeds this is almost certainly a full-page scan at
+// print resolution. Refusing beats blowing the request's 32 MB ceiling.
+const MAX_PAGE_LOOKUP_BYTES = 6 * 1024 * 1024;
 
 async function buildSystemPrompt(
   machineId: string,
@@ -536,7 +653,7 @@ async function buildSystemPrompt(
   const [docsRes, machineRes, adminRules] = await Promise.all([
     supabase
       .from("kb_documents")
-      .select("id, title, summary, page_count")
+      .select("id, title, summary, page_count, meta")
       .eq("machine_id", machineId)
       .eq("status", "ready")
       .order("title", { ascending: true }),
@@ -565,15 +682,41 @@ async function buildSystemPrompt(
   // works from the KB alone.
   const portalMachineId = machineRow?.portal_machine_id ?? null;
 
+  // Each entry carries the manual's own identity (catalogue number, the
+  // models it documents) so the model can tell two manuals for two product
+  // families apart instead of blending their tables. See fix F in
+  // docs/answer-correctness-plan.md.
   const manifest =
     docs.length === 0
       ? "No manuals are available for this machine yet."
       : docs
-          .map(
-            (d) =>
-              `- **${d.title}**${d.page_count ? ` (${d.page_count} pages)` : ""}: ${d.summary}`,
-          )
+          .map((d) => {
+            const meta = readDocumentMeta(d.meta);
+            const tags = [
+              meta.catalogNo,
+              meta.appliesTo.length > 0
+                ? `applies to ${meta.appliesTo.join(", ")}`
+                : null,
+            ].filter(Boolean);
+            const pages = d.page_count ? ` (${d.page_count} pages)` : "";
+            const id = tags.length > 0 ? ` [${tags.join("; ")}]` : "";
+            return `- **${d.title}**${pages}${id}: ${d.summary}`;
+          })
           .join("\n");
+
+  // Manuals this machine's documents refer the reader to, that nobody
+  // uploaded. Naming them is what stops the model reconstructing a
+  // procedure it has never actually read (fix G). On 2026-08-19 it
+  // invented a six-step SD-card backup procedure that lives in W501,
+  // which is not in the knowledge base.
+  const missing = missingReferencedManuals(docs);
+  const missingSection =
+    missing.length === 0
+      ? ""
+      : `
+
+Referenced manuals NOT in this machine's knowledge base: ${missing.join(", ")}.
+The documents above cite these but nobody has uploaded them. If an answer depends on a procedure one of them covers, say plainly that it is not available here, give whatever settings or context you DO have, and offer to call service. Never reconstruct a procedure from a manual you cannot read.`;
 
   // Machine identity block. Tells the model "this whole conversation is
   // about ONE specific machine" so it doesn't fall back to account-wide
@@ -610,7 +753,7 @@ ${SYSTEM_PREAMBLE}
 ${machineIdentity}${mcpGuidance}
 
 Available documents for this machine (use search_kb to find content):
-${manifest}
+${manifest}${missingSection}
 `;
 }
 
@@ -707,6 +850,11 @@ type ImageHit = {
 type ToolExecResult = {
   // What goes back to the model as the tool_result content.
   modelPayload: unknown;
+  // Rich tool_result content, when the tool returns more than JSON.
+  // get_page_image uses it to hand the model actual PDF pages. When
+  // present this replaces modelPayload in the message to the model;
+  // modelPayload is still what gets written to the audit trail.
+  modelBlocks?: Array<TextBlockParam | DocumentBlockParam>;
   // chunk_ids retrieved (search_kb only) — persisted alongside the
   // tool message so audit views can show which snippets the AI saw.
   chunkIds: string[];
@@ -824,7 +972,10 @@ async function executeSearchKb(
   const chunkIds = rows.map((r) => r.chunk_id);
   const [docTitles, chunkAssets] = await Promise.all([
     docIds.length > 0
-      ? supabase.from("kb_documents").select("id, title").in("id", docIds)
+      ? supabase
+          .from("kb_documents")
+          .select("id, title, meta")
+          .in("id", docIds)
       : Promise.resolve({ data: [] }),
     chunkIds.length > 0
       ? supabase.from("kb_chunks").select("id, asset_id").in("id", chunkIds)
@@ -832,8 +983,20 @@ async function executeSearchKb(
   ]);
 
   const titleByDoc = new Map<string, string>();
-  for (const d of (docTitles.data ?? []) as { id: string; title: string }[]) {
+  // Catalogue number per document. Short, and it is what lets the model
+  // notice that two hits come from two different manuals covering two
+  // different product series (fix F). The fuller applies_to list stays in
+  // the system-prompt manifest, where each document appears once instead of
+  // once per hit.
+  const catalogByDoc = new Map<string, string>();
+  for (const d of (docTitles.data ?? []) as {
+    id: string;
+    title: string;
+    meta: unknown;
+  }[]) {
     titleByDoc.set(d.id, d.title);
+    const catalogNo = readDocumentMeta(d.meta).catalogNo;
+    if (catalogNo) catalogByDoc.set(d.id, catalogNo);
   }
   const assetByChunk = new Map<string, string>();
   for (const c of (chunkAssets.data ?? []) as {
@@ -928,11 +1091,19 @@ async function executeSearchKb(
                 machine: nameById.get(r.machine_id) ?? undefined,
               }
             : {}),
+          // Real page numbers since the page-provenance work; the model
+          // needs these to call get_page_image and to cite a page.
+          // page_to is only sent when the chunk spans more than one page,
+          // which is also the case where the model has to widen its page
+          // lookup to find the table.
           page_from: r.page_from,
-          text:
-            r.text.length > MAX_SNIPPET_CHARS
-              ? `${r.text.slice(0, MAX_SNIPPET_CHARS)} …[truncated]`
-              : r.text,
+          ...(r.page_to !== null && r.page_to !== r.page_from
+            ? { page_to: r.page_to }
+            : {}),
+          ...(catalogByDoc.has(r.document_id)
+            ? { catalog_no: catalogByDoc.get(r.document_id) }
+            : {}),
+          text: snippetForModel(r.text),
           // Image hits carry these three extra fields so the model can
           // spot them and optionally embed the figure inline via
           // ![alt](opti:asset/<asset_id>). Text-only hits omit them
@@ -981,7 +1152,9 @@ async function executeListDocuments(
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("kb_documents")
-    .select("id, machine_id, title, summary, folder_path, source_type, page_count")
+    .select(
+      "id, machine_id, title, summary, folder_path, source_type, page_count, meta",
+    )
     .in("machine_id", machineIds)
     .eq("operator_visible", true)
     .eq("status", "ready")
@@ -1010,6 +1183,7 @@ async function executeListDocuments(
     folder_path: string | null;
     source_type: string;
     page_count: number | null;
+    meta: unknown;
   }>;
 
   // Synthetic high score so list_documents hits sort above per-chunk
@@ -1026,23 +1200,35 @@ async function executeListDocuments(
 
   return {
     modelPayload: {
-      results: rows.map((r) => ({
-        document_id: r.id,
-        ...(isFleet
-          ? {
-              machine_id: r.machine_id,
-              machine: nameById.get(r.machine_id) ?? undefined,
-            }
-          : {}),
-        title: r.title,
-        summary:
-          (r.summary ?? "").length > MAX_LIST_SUMMARY_CHARS
-            ? `${r.summary.slice(0, MAX_LIST_SUMMARY_CHARS)}…`
-            : r.summary,
-        folder_path: r.folder_path,
-        source_type: r.source_type,
-        page_count: r.page_count,
-      })),
+      results: rows.map((r) => {
+        // Fleet scope gets its document identity here rather than from a
+        // manifest: the fleet system prompt deliberately carries doc counts
+        // only, so this tool is where catalogue numbers and product models
+        // reach the model (fix F).
+        const meta = readDocumentMeta(r.meta);
+        return {
+          document_id: r.id,
+          ...(isFleet
+            ? {
+                machine_id: r.machine_id,
+                machine: nameById.get(r.machine_id) ?? undefined,
+              }
+            : {}),
+          title: r.title,
+          summary:
+            (r.summary ?? "").length > MAX_LIST_SUMMARY_CHARS
+              ? `${r.summary.slice(0, MAX_LIST_SUMMARY_CHARS)}…`
+              : r.summary,
+          folder_path: r.folder_path,
+          source_type: r.source_type,
+          page_count: r.page_count,
+          ...(meta.catalogNo ? { catalog_no: meta.catalogNo } : {}),
+          ...(meta.appliesTo.length > 0 ? { applies_to: meta.appliesTo } : {}),
+          ...(meta.references.length > 0
+            ? { references_manuals: meta.references }
+            : {}),
+        };
+      }),
       note:
         rows.length === 0
           ? isFleet
@@ -1056,10 +1242,173 @@ async function executeListDocuments(
   };
 }
 
+// Synthetic chip score for a page the model actually looked at. Above
+// per-chunk search hits (rrf_score is << 1) and below list_documents, so
+// the chip rail deep-links to the verified page rather than to whichever
+// chunk happened to rank highest.
+const PAGE_LOOKUP_SCORE = 500;
+
+function toolError(message: string): ToolExecResult {
+  return {
+    modelPayload: { error: message },
+    chunkIds: [],
+    documents: [],
+    images: [],
+  };
+}
+
+// Hands the model the actual pages of a manual as a PDF document block.
+//
+// No rasteriser is involved: the Anthropic API renders PDF pages itself,
+// which is the same mechanism ingestion already uses for OCR and figure
+// extraction. That keeps a native rendering dependency out of the
+// serverless function.
+async function executeGetPageImage(
+  scope: ToolScope,
+  input: { document_id?: unknown; pages?: unknown },
+  budget: ToolBudget,
+): Promise<ToolExecResult> {
+  if (typeof input.document_id !== "string" || !input.document_id.trim()) {
+    return toolError("document_id must be a non-empty string");
+  }
+  const rawPages = Array.isArray(input.pages) ? input.pages : [];
+  const pages = [
+    ...new Set(
+      rawPages
+        .map((p) => (typeof p === "number" ? Math.trunc(p) : Number.NaN))
+        .filter((p) => Number.isFinite(p) && p >= 1),
+    ),
+  ]
+    .sort((a, b) => a - b)
+    .slice(0, MAX_PAGE_LOOKUP_PAGES);
+  if (pages.length === 0) {
+    return toolError("pages must contain at least one page number (1-indexed)");
+  }
+  if (budget.pageLookups >= MAX_PAGE_LOOKUPS_PER_TURN) {
+    return toolError(
+      `You have used all ${MAX_PAGE_LOOKUPS_PER_TURN} page lookups for this turn. ` +
+        "Answer from what you have, and say plainly which part you could not verify.",
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_documents")
+    .select("id, machine_id, title, storage_path, source_type, page_count")
+    .eq("id", input.document_id)
+    .maybeSingle();
+  if (error) {
+    console.error("get_page_image lookup failed:", error);
+    return toolError(error.message);
+  }
+  const doc = data as {
+    id: string;
+    machine_id: string;
+    title: string;
+    storage_path: string | null;
+    source_type: string;
+    page_count: number | null;
+  } | null;
+  if (!doc) return toolError(`Unknown document_id "${input.document_id}".`);
+
+  // Authorization: the model may only reach documents belonging to a
+  // machine in this conversation's scope. document_id comes from a tool
+  // result, but it is still model-supplied input.
+  const allowed =
+    scope.kind === "machine"
+      ? [scope.machineId]
+      : scope.machines.map((m) => m.machineId);
+  if (!allowed.includes(doc.machine_id)) {
+    return toolError(`Unknown document_id "${input.document_id}".`);
+  }
+  if (doc.source_type !== "pdf" || !doc.storage_path) {
+    return toolError(
+      `"${doc.title}" is not a paged PDF, so it has no page to show. ` +
+        "Figures already come back as thumbnails in the search results.",
+    );
+  }
+
+  budget.pageLookups++;
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from("kb-documents")
+    .download(doc.storage_path);
+  if (dlErr || !blob) {
+    console.error("get_page_image download failed:", dlErr);
+    return toolError("Could not read the original PDF for this document.");
+  }
+  const sliced = await slicePdfPages(
+    Buffer.from(await blob.arrayBuffer()),
+    pages,
+  );
+  if (!sliced) {
+    return toolError(
+      `Could not extract page(s) ${pages.join(", ")} from "${doc.title}"` +
+        (doc.page_count ? ` (it has ${doc.page_count} pages).` : "."),
+    );
+  }
+  if (sliced.buffer.byteLength > MAX_PAGE_LOOKUP_BYTES) {
+    return toolError(
+      `Page(s) ${pages.join(", ")} of "${doc.title}" are too large to show. ` +
+        "Ask for one page at a time.",
+    );
+  }
+
+  const shown = sliced.originalPages;
+  const payload = {
+    document_id: doc.id,
+    title: doc.title,
+    pages: shown,
+    note:
+      "The requested page(s) follow as a document. Read any table directly off " +
+      "the page: take the column headers in the order they are printed, which " +
+      "may be descending, and quote the row verbatim in your answer.",
+  };
+  return {
+    modelPayload: payload,
+    modelBlocks: [
+      { type: "text", text: JSON.stringify(payload) },
+      {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: sliced.buffer.toString("base64"),
+        },
+        title: `${doc.title} (page ${shown.join(", ")})`,
+      },
+    ],
+    chunkIds: [],
+    // Surface the verified page as a source chip so the operator can open
+    // the exact page the answer was checked against.
+    documents: [
+      {
+        id: doc.id,
+        title: doc.title,
+        pageFrom: shown[0] ?? null,
+        score: PAGE_LOOKUP_SCORE,
+        ...(scope.kind === "fleet"
+          ? {
+              machineName:
+                scope.machines.find((m) => m.machineId === doc.machine_id)
+                  ?.displayName ?? null,
+            }
+          : {}),
+      },
+    ],
+    images: [],
+  };
+}
+
+// Per-turn tool budget. Only page lookups need one so far: they are the
+// only tool whose result is measured in megabytes.
+type ToolBudget = { pageLookups: number };
+
 async function executeTool(
   name: string,
   input: unknown,
   scope: ToolScope,
+  budget: ToolBudget,
 ): Promise<ToolExecResult> {
   if (name === "search_kb") {
     return executeSearchKb(scope, input as Record<string, unknown>);
@@ -1067,12 +1416,14 @@ async function executeTool(
   if (name === "list_documents") {
     return executeListDocuments(scope, input as Record<string, unknown>);
   }
-  return {
-    modelPayload: { error: `Unknown tool: ${name}` },
-    chunkIds: [],
-    documents: [],
-    images: [],
-  };
+  if (name === "get_page_image") {
+    return executeGetPageImage(
+      scope,
+      input as Record<string, unknown>,
+      budget,
+    );
+  }
+  return toolError(`Unknown tool: ${name}`);
 }
 
 export async function POST(req: Request) {
@@ -1330,6 +1681,9 @@ export async function POST(req: Request) {
         // so we don't show the same diagram twice if multiple searches
         // retrieved it.
         const imageHits = new Map<string, ImageHit>();
+        // Shared across every iteration of this turn's loop, so the cap on
+        // page lookups is a per-turn cap rather than a per-iteration one.
+        const toolBudget: ToolBudget = { pageLookups: 0 };
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
           // Retry the stream on overloaded/5xx/connection errors. We
@@ -1513,7 +1867,12 @@ export async function POST(req: Request) {
           const toolResults: ToolResultBlockParam[] = await Promise.all(
             toolUses.map(async (tu) => {
               try {
-                const exec = await executeTool(tu.name, tu.input, toolScope);
+                const exec = await executeTool(
+                  tu.name,
+                  tu.input,
+                  toolScope,
+                  toolBudget,
+                );
                 for (const d of exec.documents) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);
@@ -1540,7 +1899,9 @@ export async function POST(req: Request) {
                 return {
                   type: "tool_result" as const,
                   tool_use_id: tu.id,
-                  content: payloadStr,
+                  // A tool that returns pages sends them as content
+                  // blocks; everything else stays a JSON string.
+                  content: exec.modelBlocks ?? payloadStr,
                 };
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);

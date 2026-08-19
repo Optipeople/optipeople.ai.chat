@@ -1,0 +1,22 @@
+{
+  "id": "nx502-dip-pin1",
+  "about": "Pin 1 is OFF in all four documented functions of W629 section 3-1-3. A model that has linearized the table tends to invent a role for it, which is how the original answer produced a pin 1 ON restore combination.",
+  "question": "What does DIP switch pin 1 do on the NX502 CPU unit?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    {
+      "type": "anyOf",
+      "patterns": [
+        "pin\s*1[^.\n]{0,60}OFF",
+        "OFF[^.\n]{0,60}pin\s*1",
+        "not used",
+        "ikke brugt",
+        "ingen af de",
+        "none of the (four )?functions",
+        "no documented function"
+      ],
+      "label": "says pin 1 stays OFF / has no documented function here"
+    }
+  ]
+}

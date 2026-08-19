@@ -5,6 +5,7 @@
 // the originating document id and an image flag so the model can cite
 // figures by description even though voice has no thumbnail UI.
 
+import { readDocumentMeta } from "./docMeta";
 import { getSupabaseServerClient } from "./supabase";
 import { embedQuery, VOYAGE_MODEL } from "./voyage";
 
@@ -17,6 +18,13 @@ export type SearchKbHit = {
   text: string;
   is_image: boolean;
   image_alt: string | null;
+  /**
+   * Catalogue number of the source manual when known. Lets the assistant
+   * notice that two hits come from two different manuals covering two
+   * different product series instead of merging their tables. See
+   * docs/answer-correctness-plan.md fix F.
+   */
+  catalog_no: string | null;
 };
 
 export type SearchKbResult = {
@@ -59,7 +67,10 @@ export async function searchKb(args: {
   const chunkIds = rows.map((r) => r.chunk_id);
   const [docTitles, chunkAssets] = await Promise.all([
     docIds.length > 0
-      ? supabase.from("kb_documents").select("id, title").in("id", docIds)
+      ? supabase
+          .from("kb_documents")
+          .select("id, title, meta")
+          .in("id", docIds)
       : Promise.resolve({ data: [] }),
     chunkIds.length > 0
       ? supabase.from("kb_chunks").select("id, asset_id").in("id", chunkIds)
@@ -67,8 +78,15 @@ export async function searchKb(args: {
   ]);
 
   const titleByDoc = new Map<string, string>();
-  for (const d of (docTitles.data ?? []) as { id: string; title: string }[]) {
+  const catalogByDoc = new Map<string, string>();
+  for (const d of (docTitles.data ?? []) as {
+    id: string;
+    title: string;
+    meta: unknown;
+  }[]) {
     titleByDoc.set(d.id, d.title);
+    const catalogNo = readDocumentMeta(d.meta).catalogNo;
+    if (catalogNo) catalogByDoc.set(d.id, catalogNo);
   }
   const assetByChunk = new Map<string, string>();
   for (const c of (chunkAssets.data ?? []) as {
@@ -106,6 +124,7 @@ export async function searchKb(args: {
         text: r.text,
         is_image: !!assetId,
         image_alt: assetId ? altByAsset.get(assetId) ?? null : null,
+        catalog_no: catalogByDoc.get(r.document_id) ?? null,
       };
     }),
     chunkIds,

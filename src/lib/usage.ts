@@ -22,6 +22,8 @@ export type UsageOperation =
   | "pdf_ocr"
   | "image_caption"
   | "figure_extraction"
+  | "table_extraction"
+  | "doc_metadata"
   | "suggestions"
   | "auto_organize";
 

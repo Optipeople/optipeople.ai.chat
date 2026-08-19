@@ -1,0 +1,20 @@
+{
+  "id": "nx502-dip-autotransfer",
+  "about": "Pin 2 ON alone is Automatic transfer FROM the SD Memory Card, i.e. card into controller. This is the setting the model wrongly handed out as 'backup', so the direction has to be unambiguous in the answer.",
+  "question": "Hvad sker der hvis jeg kun sætter pin 2 på DIP-switchen til ON på NX502?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    {
+      "type": "anyOf",
+      "patterns": [
+        "automatisk overf",
+        "automatic transfer",
+        "fra SD",
+        "from the SD"
+      ],
+      "label": "identifies it as automatic transfer from the SD card"
+    },
+    { "type": "notMatches", "pattern": "\bbackup\b[^.\n]{0,40}pin\s*2", "label": "does not describe pin 2 as backup" }
+  ]
+}

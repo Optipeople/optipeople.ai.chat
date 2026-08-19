@@ -2,6 +2,11 @@
 
 Suggestions for raising knowledge-base quality. The ingestion pipeline today is barely an LLM pipeline — only one model call is involved (the OCR fallback), so most quality gains live outside the model choice.
 
+> **Superseded in part.** A production incident on 2026-08-19 traced a
+> dangerously wrong answer to table linearization, a failure mode this document
+> does not name. See [answer-correctness-plan.md](answer-correctness-plan.md),
+> whose §8 maps the four proposals below onto that plan.
+
 ## Current pipeline
 
 1. **pdf-parse** (free, deterministic) — text-layer extraction

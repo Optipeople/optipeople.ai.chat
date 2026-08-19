@@ -128,22 +128,25 @@ export async function ingestFileFromStorage(
     }
 
     const chunks = chunkText(text);
-    const embeddings = await embedDocuments(chunks, {
-      usage: { accountId: input.accountId, machineId: input.machineId },
-    });
+    const embeddings = await embedDocuments(
+      chunks.map((c) => c.text),
+      { usage: { accountId: input.accountId, machineId: input.machineId } },
+    );
     if (embeddings.length !== chunks.length) {
       throw new Error(
         `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
       );
     }
 
+    // Page provenance stays null for these: the extractors here return a
+    // flat text stream with no page structure to carry sentinels.
     const rows = chunks.map((chunk, i) => ({
       document_id: documentId,
       machine_id: input.machineId,
       ordinal: i,
-      page_from: null,
-      page_to: null,
-      text: chunk,
+      page_from: chunk.pageFrom,
+      page_to: chunk.pageTo,
+      text: chunk.text,
       embedding: embeddings[i],
       embedding_model: VOYAGE_MODEL,
     }));

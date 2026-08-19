@@ -8,6 +8,8 @@
 // Server-only: uses the service-role Supabase client.
 
 import { randomUUID } from "node:crypto";
+import { chunkText } from "./chunking";
+import { extractDocumentMeta } from "./docMeta";
 import { attachPdfFigures, wipePdfFigures } from "./imageIngestion";
 import {
   extractPdfText,
@@ -50,53 +52,11 @@ export type IngestPdfResult = {
   extractionSource: PdfExtractionSource;
 };
 
-// Recursive splitter: tries the most natural break points first
-// (paragraph → newline → sentence → hard char split). Then a second
-// merging pass packs the small pieces back up to ~target chars with
-// ~overlap chars of trailing context shared into the next chunk.
-//
-// We can't rely on PDF text being well-formatted (pdf-parse often loses
-// paragraph breaks), so the recursive fallback is what makes this robust.
-function splitRecursive(text: string, target: number): string[] {
-  if (text.length <= target) return [text];
-  const seps = ["\n\n", "\n", ". ", " ", ""];
-  for (const sep of seps) {
-    if (sep === "") {
-      // Last resort: hard split.
-      const out: string[] = [];
-      for (let i = 0; i < text.length; i += target) {
-        out.push(text.slice(i, i + target));
-      }
-      return out;
-    }
-    const parts = text.split(sep);
-    if (parts.length === 1) continue;
-    const out: string[] = [];
-    for (const part of parts) {
-      if (part.length <= target) out.push(part);
-      else out.push(...splitRecursive(part, target));
-    }
-    return out;
-  }
-  return [text];
-}
-
-export function chunkText(text: string, target = 3500, overlap = 400): string[] {
-  const pieces = splitRecursive(text, target).filter((p) => p.trim());
-  const chunks: string[] = [];
-  let current = "";
-  for (const piece of pieces) {
-    const sep = current ? "\n\n" : "";
-    if (current.length + sep.length + piece.length > target && current) {
-      chunks.push(current.trim());
-      current = current.slice(-overlap) + "\n\n" + piece;
-    } else {
-      current += sep + piece;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
-  return chunks;
-}
+// The chunker moved to chunking.ts when it gained page provenance and
+// table awareness. Re-exported here because it was part of this module's
+// public surface (feedback.ts, fileIngestion.ts) and the import path is
+// not worth churning.
+export { chunkText };
 
 // Upserts the given folder path AND every ancestor into kb_folders so
 // the admin tree shows them even after their last document is deleted.
@@ -209,7 +169,16 @@ async function withIngestBudget<T>(
 // recomputes the same chunk list from the sidecar text and resumes at
 // the first ordinal that isn't in kb_chunks yet. The sidecar is deleted
 // when the document reaches 'ready'.
+//
+// The text carries `<<<page:N>>>` sentinels from version 2 onwards, which
+// is what makes per-chunk page provenance possible. A version 1 sidecar
+// has none, and its chunk list would therefore differ from what this code
+// produces, so it is treated as absent: the document re-extracts. That
+// only affects documents caught mid-ingest across the deploy.
+const SIDECAR_VERSION = 2;
+
 type ExtractedSidecar = {
+  version?: number;
   text: string;
   pageCount: number;
   source: PdfExtractionSource;
@@ -244,6 +213,13 @@ async function readSidecar(
   try {
     const parsed = JSON.parse(await blob.text()) as ExtractedSidecar;
     if (typeof parsed.text !== "string" || !parsed.text) return null;
+    if ((parsed.version ?? 1) !== SIDECAR_VERSION) {
+      console.warn(
+        `readSidecar: ignoring version ${parsed.version ?? 1} checkpoint ` +
+          `(current is ${SIDECAR_VERSION}); the document re-extracts`,
+      );
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -365,6 +341,64 @@ async function insertPdfDocRow(args: {
   if (docError) throw new Error(`kb_documents insert failed: ${docError.message}`);
 }
 
+// Document identity metadata (docs/answer-correctness-plan.md fixes F and
+// G): catalogue number, which product models the manual covers, which
+// other manuals it defers to, and a real one-paragraph summary.
+//
+// Idempotent and best-effort. Skipped when the row already carries
+// metadata, so a resumed invocation pays for it once. Every failure path
+// leaves the column null, which every reader already treats as "unknown".
+//
+// The summary only replaces the fallback value. insertPdfDocRow defaults
+// summary to the title (usually the filename); an admin who typed a real
+// summary keeps it.
+async function ensureDocumentMeta(args: {
+  documentId: string;
+  machineId: string;
+  text: string;
+}): Promise<void> {
+  try {
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("kb_documents")
+      .select("title, summary, meta")
+      .eq("id", args.documentId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const row = data as {
+      title: string;
+      summary: string | null;
+      meta: unknown;
+    } | null;
+    if (!row || row.meta) return;
+
+    const meta = await extractDocumentMeta({
+      text: args.text,
+      title: row.title,
+      usage: { machineId: args.machineId },
+    });
+
+    const patch: Record<string, unknown> = {
+      meta,
+      updated_at: new Date().toISOString(),
+    };
+    const summaryIsFallback =
+      !row.summary || row.summary.trim() === row.title.trim();
+    if (meta.summary && summaryIsFallback) patch.summary = meta.summary;
+
+    const { error: upErr } = await supabase
+      .from("kb_documents")
+      .update(patch)
+      .eq("id", args.documentId);
+    if (upErr) throw new Error(upErr.message);
+  } catch (err) {
+    console.warn(
+      "ensureDocumentMeta failed (continuing without metadata):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 // Outcome of one pipeline invocation. done:false means the soft budget
 // ran out mid-work — everything completed so far is persisted, and the
 // caller (ultimately the admin client) should call again to continue.
@@ -419,13 +453,21 @@ async function runPdfPipeline(args: {
     const extracted = await extractPdfText(await getBuffer(), {
       force: args.force,
       usage: { machineId },
+      // The table pass runs batch by batch and checks this between
+      // batches, so a long document degrades to "some pages repaired"
+      // instead of blowing the platform's function limit. The CLI passes
+      // null and repairs everything.
+      deadlineAt: args.deadlineAt,
       onPhaseStart: async (phase) => {
         if (phase === "claude-ocr") {
           await writeProgress(documentId, 10, "Running OCR (Claude vision)…");
+        } else if (phase === "pdf-parse+tables") {
+          await writeProgress(documentId, 15, "Læser tabeller…");
         }
       },
     });
     sidecar = {
+      version: SIDECAR_VERSION,
       text: extracted.text,
       pageCount: extracted.pageCount,
       source: extracted.source,
@@ -444,10 +486,22 @@ async function runPdfPipeline(args: {
       .eq("id", documentId);
   }
 
+  // 1b. Document identity metadata: which product family this manual
+  // covers and which other manuals it defers to. Persisted on the row so
+  // a resumed invocation doesn't pay for it twice, and best-effort
+  // throughout: a document with no metadata behaves exactly as it did
+  // before the column existed.
+  await ensureDocumentMeta({
+    documentId,
+    machineId,
+    text: sidecar.text,
+  });
+
   // 2. Chunking is deterministic, so a continuation recomputes the same
   // list and resumes at the first ordinal missing from kb_chunks. Figure
   // caption chunks don't interfere: they carry asset_id and live at
-  // ordinal ≥ 1e6.
+  // ordinal ≥ 1e6. Each chunk also carries the page range it came from,
+  // parsed out of the extraction's page sentinels.
   const chunks = chunkText(sidecar.text);
   const { data: lastChunk, error: lastErr } = await supabase
     .from("kb_chunks")
@@ -469,7 +523,9 @@ async function runPdfPipeline(args: {
       embedProgressPct(next, chunks.length),
       `Embedder ${next}/${chunks.length}`,
     );
-    for (const batch of planEmbedBatches(chunks.slice(next))) {
+    for (const batch of planEmbedBatches(
+      chunks.slice(next).map((c) => c.text),
+    )) {
       if (outOfTime()) return { done: false, documentId };
       const embeddings = await embedDocumentBatch(batch, { machineId });
       if (embeddings.length !== batch.length) {
@@ -477,12 +533,13 @@ async function runPdfPipeline(args: {
           `embedding count mismatch (${embeddings.length} vs ${batch.length})`,
         );
       }
+      // planEmbedBatches preserves order, so batch[i] is chunks[next + i].
       const rows = batch.map((text, i) => ({
         document_id: documentId,
         machine_id: machineId,
         ordinal: next + i,
-        page_from: null,
-        page_to: null,
+        page_from: chunks[next + i]?.pageFrom ?? null,
+        page_to: chunks[next + i]?.pageTo ?? null,
         text,
         embedding: embeddings[i],
         embedding_model: VOYAGE_MODEL,
@@ -762,6 +819,11 @@ export async function reprocessPdf(args: {
         status: "extracting",
         progress: 5,
         progress_label: "Reading PDF",
+        // Identity metadata is derived from the extracted text, so a
+        // fresh extraction gets a fresh read of it. Without this, a
+        // document reprocessed after a prompt or detector change would
+        // keep metadata from the old text.
+        meta: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);

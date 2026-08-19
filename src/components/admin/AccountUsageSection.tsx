@@ -27,6 +27,8 @@ const OPERATION_KEYS: Record<string, string> = {
   pdf_ocr: "opPdfOcr",
   image_caption: "opImageCaption",
   figure_extraction: "opFigureExtraction",
+  table_extraction: "opTableExtraction",
+  doc_metadata: "opDocMetadata",
   suggestions: "opSuggestions",
   auto_organize: "opAutoOrganize",
 };
