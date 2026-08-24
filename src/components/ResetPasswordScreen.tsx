@@ -7,11 +7,25 @@ import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { OptipeopleLogo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
-import { setNewPassword } from "@/auth/passwordApi";
+import { PasswordResetError, setNewPassword } from "@/auth/passwordApi";
 import { cn } from "@/lib/utils";
 
 const MIDNIGHT_GREEN = "#134343";
-const MIN_PASSWORD_LENGTH = 8;
+// Mirrors the backend policy: at least 10 characters with an uppercase
+// letter, a lowercase letter, a number, and a special character. The
+// backend re-validates and its rejection is surfaced too, so drift here
+// degrades to a slower error message, not a silent failure.
+const MIN_PASSWORD_LENGTH = 10;
+
+function meetsPasswordPolicy(password: string): boolean {
+  return (
+    password.length >= MIN_PASSWORD_LENGTH &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password) &&
+    /[^a-zA-Z0-9]/.test(password)
+  );
+}
 
 export function ResetPasswordScreen() {
   const t = useTranslations("resetPassword");
@@ -36,8 +50,8 @@ export function ResetPasswordScreen() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting) return;
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(t("tooShort", { min: MIN_PASSWORD_LENGTH }));
+    if (!meetsPasswordPolicy(password)) {
+      setError(t("policy", { min: MIN_PASSWORD_LENGTH }));
       return;
     }
     if (password !== confirm) {
@@ -51,7 +65,11 @@ export function ResetPasswordScreen() {
       setDone(true);
     } catch (err) {
       console.error("Password reset failed", err);
-      setError(t("genericError"));
+      if (err instanceof PasswordResetError && err.code === "policy") {
+        setError(t("policy", { min: MIN_PASSWORD_LENGTH }));
+      } else {
+        setError(t("genericError"));
+      }
     } finally {
       setSubmitting(false);
     }

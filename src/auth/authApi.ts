@@ -14,6 +14,10 @@ export type LoginResponse = {
   refresh_token?: string;
   user_name?: string;
   expires_in?: number;
+  // The backend reports bad credentials as HTTP 200 with this errors
+  // envelope instead of a 400/401, so a token-less 200 body must be
+  // inspected before concluding anything.
+  errors?: { title?: string; message?: string }[];
 };
 
 // Thrown when no session exists or the refresh token is dead. Callers
@@ -70,6 +74,9 @@ export async function login(
 
   const data = (await res.json()) as LoginResponse;
   if (!data.access_token) {
+    if (data.errors?.length) {
+      throw new LoginError("invalidCredentials", res.status);
+    }
     throw new LoginError("noToken");
   }
 

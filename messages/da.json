@@ -82,7 +82,7 @@
     "linkInvalid": "Dette nulstillingslink er ikke gyldigt.",
     "linkInvalidHint": "Linket kan være udløbet eller allerede brugt.",
     "requestNew": "Anmod om et nyt nulstillingslink",
-    "tooShort": "Adgangskoden skal være mindst {min} tegn.",
+    "policy": "Adgangskoden skal være mindst {min} tegn og indeholde et stort bogstav, et lille bogstav, et tal og et specialtegn.",
     "mismatch": "De to adgangskoder er ikke ens.",
     "genericError": "Noget gik galt. Prøv igen."
   },

@@ -82,7 +82,7 @@
     "linkInvalid": "This reset link isn't valid.",
     "linkInvalidHint": "The link may have expired or already been used.",
     "requestNew": "Request a new reset link",
-    "tooShort": "Password must be at least {min} characters.",
+    "policy": "Password must be at least {min} characters and include an uppercase letter, a lowercase letter, a number, and a special character.",
     "mismatch": "The two passwords don't match.",
     "genericError": "Something went wrong. Try again."
   },
