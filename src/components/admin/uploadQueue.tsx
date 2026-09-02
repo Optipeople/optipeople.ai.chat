@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Tag } from "@/components/ui/tag";
 import {
+  adminErrorMessage,
   reprocessAdminDocument,
   uploadAdminDocument,
   uploadAdminFile,
@@ -111,6 +112,7 @@ export function UploadQueueProvider({
   children: ReactNode;
 }) {
   const t = useTranslations("admin.uploadQueue");
+  const tErr = useTranslations("admin.apiErrors");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const queueRef = useRef<QueueItem[]>([]);
   const processingRef = useRef(false);
@@ -191,7 +193,7 @@ export function UploadQueueProvider({
                 ? {
                     ...i,
                     status: "failed",
-                    error: e instanceof Error ? e.message : t("failed"),
+                    error: adminErrorMessage(e, tErr) ?? t("failed"),
                   }
                 : i,
             ),
@@ -201,7 +203,7 @@ export function UploadQueueProvider({
     } finally {
       processingRef.current = false;
     }
-  }, [machineId, onChanged, update]);
+  }, [machineId, onChanged, t, tErr, update]);
 
   const enqueueUploads = useCallback(
     (files: DroppedFile[]) => {

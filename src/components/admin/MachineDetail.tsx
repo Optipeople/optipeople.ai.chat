@@ -32,6 +32,7 @@ import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  MAX_UPLOAD_LABEL,
   createAdminFolder,
   deleteAdminDocument,
   deleteAdminFolder,
@@ -838,6 +839,9 @@ function UploadCard({
           >
             {t("dropPickFiles")}
           </button>
+        </p>
+        <p className="text-[12px] text-[var(--color-muted-foreground)]">
+          {t("maxFileSize", { max: MAX_UPLOAD_LABEL })}
         </p>
         <input
           ref={inputRef}

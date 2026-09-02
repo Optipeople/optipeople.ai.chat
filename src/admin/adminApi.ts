@@ -95,11 +95,18 @@ export class AdminApiError extends Error {
 function apiError(
   key: string,
   fallback: string,
-  opts: { status?: number; serverMessage?: string | null } = {},
+  opts: {
+    status?: number;
+    serverMessage?: string | null;
+    params?: Record<string, string | number>;
+  } = {},
 ): AdminApiError {
   return new AdminApiError(
     key,
-    opts.status != null ? { status: opts.status } : {},
+    {
+      ...opts.params,
+      ...(opts.status != null ? { status: opts.status } : {}),
+    },
     opts.serverMessage ?? null,
     fallback,
   );
@@ -586,6 +593,28 @@ export async function deleteAdminDocument(id: string): Promise<void> {
 // to reject anything bigger with a 413 before the request reached us.
 export type UploadProgress = (loaded: number, total: number) => void;
 
+// Supabase rejects an object that exceeds the *smaller* of two ceilings:
+// the bucket's own file_size_limit and the project-wide cap set in the
+// dashboard. Both are 100 MB, so that's the effective limit — and
+// nothing in the sign/PUT round-trip knows the file size until the bytes
+// are already on the wire, so check it here, before a 68 MB PDF spends
+// ten minutes uploading only to be rejected at the end.
+// Keep in sync with Supabase → Storage → Settings → Upload file size
+// limit and the kb-documents bucket's own file_size_limit.
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+// Rendered in the upload UI as well as in the too-large error, so the
+// number the operator reads is always the number we enforce.
+export const MAX_UPLOAD_LABEL = `${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`;
+
+function fileTooLargeError(): AdminApiError {
+  return apiError(
+    "fileTooLarge",
+    `Filen er for stor til at uploade (maks. ${MAX_UPLOAD_LABEL})`,
+    { params: { max: MAX_UPLOAD_LABEL } },
+  );
+}
+
 export type UploadResult = {
   documentId: string;
   chunkCount: number;
@@ -671,6 +700,8 @@ async function directUpload<T>(args: {
   folderPath?: string | null;
   onProgress?: UploadProgress;
 }): Promise<T> {
+  if (args.file.size > MAX_UPLOAD_BYTES) throw fileTooLargeError();
+
   // The bucket enforces allowed_mime_types against the uploaded part's
   // content-type, which comes from the File. PDFs occasionally arrive
   // with an empty File.type — force application/pdf so the upload (and
@@ -769,8 +800,31 @@ function putToSignedUrl(args: {
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
-      } else if (xhr.status === 413) {
-        reject(apiError("fileTooLarge", "Filen er for stor til at uploade"));
+        return;
+      }
+      // Storage answers an over-limit object with HTTP *400*, keeping the
+      // real 413 in the JSON body:
+      //   {"statusCode":"413","error":"Payload too large","code":
+      //    "EntityTooLarge","message":"The object exceeded the maximum
+      //    allowed size"}
+      // Matching on the status line alone turned that into a bare
+      // "Upload failed (400)" with no hint of the cause, so parse the
+      // body — and carry its message through for every other failure too.
+      const body = parseStorageError(xhr.responseText);
+      if (
+        xhr.status === 413 ||
+        body?.statusCode === "413" ||
+        body?.code === "EntityTooLarge"
+      ) {
+        reject(fileTooLargeError());
+      } else if (body?.message) {
+        reject(
+          apiError(
+            "uploadFailedDetail",
+            `Upload failed (${xhr.status}): ${body.message}`,
+            { status: xhr.status, params: { detail: body.message } },
+          ),
+        );
       } else {
         reject(
           apiError("uploadFailedStatus", `Upload failed (${xhr.status})`, {
@@ -783,6 +837,23 @@ function putToSignedUrl(args: {
       reject(apiError("uploadNetworkFailed", "Upload failed (network)"));
     xhr.send(form);
   });
+}
+
+// Storage errors come back as JSON. Anything else — a proxy's HTML error
+// page, an empty body — yields null and the caller falls back to the
+// status code alone.
+function parseStorageError(
+  text: string,
+): { statusCode?: string; code?: string; message?: string } | null {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object"
+      ? (parsed as { statusCode?: string; code?: string; message?: string })
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function previewAutoOrganize(
