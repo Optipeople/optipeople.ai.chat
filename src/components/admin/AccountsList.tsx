@@ -19,6 +19,7 @@ import { getAccounts, type Account } from "@/auth/accountsApi";
 import { getAdminMachines, getAdminUsageOverview } from "@/admin/adminApi";
 import { isAccountAdmin, useAuth } from "@/auth/AuthContext";
 import { formatUsd } from "@/lib/pricing";
+import { formatCredits, summarizeCredits, type CreditSummary } from "@/lib/credits";
 
 // tokens30d is input+output over the last 30 days and cost30d is what that
 // came to in USD (see lib/pricing). null for either means the usage endpoint
@@ -27,6 +28,11 @@ type AccountRow = Account & {
   machineCount: number;
   tokens30d: number | null;
   cost30d: number | null;
+  // The same 30 days expressed in billable credits against the account's
+  // shared pool. Derived here rather than server-side: the machine count
+  // and the cost are both already on this row, and summarizeCredits is a
+  // pure function of the two.
+  credits: CreditSummary | null;
 };
 
 const TOKENS_FMT = new Intl.NumberFormat("en-US", {
@@ -34,7 +40,18 @@ const TOKENS_FMT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-type SortKey = "name" | "machines" | "tokens" | "cost";
+type SortKey = "name" | "machines" | "tokens" | "cost" | "credits";
+
+// Sort proxy for the credits column: how far through the pool an account
+// is. An account with usage and no machines has an infinite ratio, which
+// would produce NaN under subtraction, so it is pinned to the top end
+// instead.
+function poolRank(c: CreditSummary | null): number {
+  if (!c) return -1;
+  return Number.isFinite(c.poolUsedFraction)
+    ? c.poolUsedFraction
+    : Number.MAX_SAFE_INTEGER;
+}
 
 function SortButton({
   active,
@@ -119,12 +136,20 @@ export function AccountsList() {
           usage === null
             ? null
             : new Map(usage.map((u) => [u.accountId, u.costUsd]));
-        const merged: AccountRow[] = rows.map((a) => ({
-          ...a,
-          machineCount: counts.get(a.id) ?? 0,
-          tokens30d: tokens ? (tokens.get(a.id) ?? 0) : null,
-          cost30d: costs ? (costs.get(a.id) ?? 0) : null,
-        }));
+        const merged: AccountRow[] = rows.map((a) => {
+          const machineCount = counts.get(a.id) ?? 0;
+          const cost30d = costs ? (costs.get(a.id) ?? 0) : null;
+          return {
+            ...a,
+            machineCount,
+            tokens30d: tokens ? (tokens.get(a.id) ?? 0) : null,
+            cost30d,
+            credits:
+              cost30d === null
+                ? null
+                : summarizeCredits({ machines: machineCount, costUsd: cost30d }),
+          };
+        });
         setAccounts(merged);
       })
       .catch((err: unknown) => {
@@ -153,7 +178,9 @@ export function AccountsList() {
             ? a.machineCount - b.machineCount
             : sort.key === "cost"
               ? (a.cost30d ?? -1) - (b.cost30d ?? -1)
-              : (a.tokens30d ?? -1) - (b.tokens30d ?? -1);
+              : sort.key === "credits"
+                ? poolRank(a.credits) - poolRank(b.credits)
+                : (a.tokens30d ?? -1) - (b.tokens30d ?? -1);
       return cmp * sort.dir;
     });
     return rows;
@@ -254,6 +281,16 @@ export function AccountsList() {
                     <span className="tabular-nums text-[var(--color-foreground)]">
                       {a.cost30d === null ? "—" : formatUsd(a.cost30d)}
                     </span>
+                    <span className="mx-1.5">·</span>
+                    {t("colCredits")}:{" "}
+                    <span className="tabular-nums text-[var(--color-foreground)]">
+                      {a.credits === null
+                        ? "—"
+                        : t("creditsValue", {
+                            used: formatCredits(a.credits.usedCredits),
+                            included: formatCredits(a.credits.includedCredits),
+                          })}
+                    </span>
                   </p>
                 </div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
@@ -302,6 +339,15 @@ export function AccountsList() {
                     {t("colCost")}
                   </SortButton>
                 </DataTableHeader>
+                <DataTableHeader align="right">
+                  <SortButton
+                    active={sort.key === "credits"}
+                    dir={sort.dir}
+                    onClick={() => toggleSort("credits")}
+                  >
+                    {t("colCredits")}
+                  </SortButton>
+                </DataTableHeader>
                 <DataTableHeader className="w-10" />
               </DataTableHead>
               <DataTableBody>
@@ -324,6 +370,14 @@ export function AccountsList() {
                     </DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">
                       {a.cost30d === null ? "—" : formatUsd(a.cost30d)}
+                    </DataTableCell>
+                    <DataTableCell align="right" className="tabular-nums">
+                      {a.credits === null
+                        ? "—"
+                        : t("creditsValue", {
+                            used: formatCredits(a.credits.usedCredits),
+                            included: formatCredits(a.credits.includedCredits),
+                          })}
                     </DataTableCell>
                     <DataTableCell align="right">
                       <ChevronRight className="ml-auto h-4 w-4 text-[var(--ds-grey-medium-05)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--ds-grey-dark-09)]" />

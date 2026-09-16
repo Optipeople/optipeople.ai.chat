@@ -12,6 +12,10 @@ export type LiveTranscriptionState =
   | "error";
 
 type Options = {
+  // Machine the dictation is billed against. Null in fleet ("all
+  // machines") mode, where there is no single machine to attribute to —
+  // the account still gets the row, just without a machine on it.
+  machineId?: string | null;
   // Fires on every change to the streamed transcript. `text` is the
   // accumulated final segments plus the in-flight partial, suitable to
   // drop straight into a textarea value.
@@ -32,7 +36,12 @@ type SessionInfo = {
 // mode and surfaces partial + final transcript text as the user speaks.
 // Uses WebRTC like the full realtime hook but skips the assistant audio
 // sink, tools, and persistence — it's a Whisper-equivalent that streams.
-export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
+export function useLiveTranscription({
+  machineId,
+  onChange,
+  onFinal,
+  onError,
+}: Options) {
   const [state, setState] = useState<LiveTranscriptionState>("idle");
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -49,6 +58,33 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
   // event; resolved by handleEvent so we don't cut off trailing words
   // with a fixed timer.
   const finalizeResolveRef = useRef<(() => void) | null>(null);
+  // Usage objects from completed utterances, reported at the end of the
+  // dictation rather than per utterance. Like the realtime session, this
+  // transcription runs browser-to-OpenAI over WebRTC, so the counts only
+  // exist here.
+  const usageRef = useRef<unknown[]>([]);
+
+  // Best-effort — a dropped usage row is not worth a visible failure in
+  // a dictation box.
+  const flushUsage = useCallback(async () => {
+    const reports = usageRef.current.splice(0);
+    if (reports.length === 0) return;
+    try {
+      await fetchWithAuth("/api/voice/usage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machineId: machineId ?? null,
+          reports: reports.map((usage) => ({
+            kind: "transcription" as const,
+            usage,
+          })),
+        }),
+      });
+    } catch (err) {
+      console.warn("dictation usage report failed:", err);
+    }
+  }, [machineId]);
 
   const composed = useCallback(() => {
     const finals = finalsRef.current.join(" ").trim();
@@ -77,7 +113,13 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
     micStreamRef.current = null;
   }, []);
 
-  useEffect(() => () => cleanup(), [cleanup]);
+  useEffect(
+    () => () => {
+      void flushUsage();
+      cleanup();
+    },
+    [cleanup, flushUsage],
+  );
 
   const handleError = useCallback(
     (msg: string) => {
@@ -113,6 +155,11 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
 
       if (type === "conversation.item.input_audio_transcription.completed") {
         const finalText = ((evt.transcript as string) ?? "").trim();
+        // Audio the model listened to bills whether or not it resolved
+        // to words, so this is recorded before the empty-text branch.
+        if (evt.usage && typeof evt.usage === "object") {
+          usageRef.current.push(evt.usage);
+        }
         partialRef.current = "";
         if (finalText) finalsRef.current.push(finalText);
         emit();
@@ -253,16 +300,20 @@ export function useLiveTranscription({ onChange, onFinal, onError }: Options) {
     cleanup();
     const finalText = composed();
     setState("idle");
+    void flushUsage();
     onFinal(finalText);
-  }, [cleanup, composed, onFinal, state]);
+  }, [cleanup, composed, flushUsage, onFinal, state]);
 
+  // Cancelling throws the transcript away but not the bill: the audio
+  // was still transcribed.
   const cancel = useCallback(() => {
     cleanup();
+    void flushUsage();
     finalsRef.current = [];
     partialRef.current = "";
     lastEmittedRef.current = "";
     setState("idle");
-  }, [cleanup]);
+  }, [cleanup, flushUsage]);
 
   return { state, start, stop, cancel };
 }

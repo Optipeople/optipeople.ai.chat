@@ -57,6 +57,21 @@ type SessionInfo = {
   accountId: string;
 };
 
+// One metered call, forwarded to /api/voice/usage. The realtime session
+// talks to OpenAI directly over WebRTC, so the browser is the only place
+// the token counts exist — without shipping them back, voice spend never
+// reaches usage_events. `usage` is passed through opaquely; the server
+// picks the model and splits audio from text.
+type UsageReport = {
+  kind: "realtime" | "transcription";
+  usage: unknown;
+};
+
+// Events arrive in bursts (a response finishing and its transcription
+// landing are milliseconds apart), so reports are batched behind a short
+// timer instead of each one costing a request.
+const USAGE_FLUSH_DELAY_MS = 250;
+
 // Build the WebRTC connection to OpenAI Realtime, run the session, and
 // expose live transcript + state to the UI. Audio plays automatically
 // through a hidden <audio> element this hook owns. cleanup() is always
@@ -85,6 +100,47 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
   // do the snapshot+clear safely outside setTranscript (whose callback
   // may run twice under React strict mode).
   const sourcedResponsesRef = useRef<Set<string>>(new Set());
+  // Metered calls waiting to be reported, and the timer batching them.
+  const usageQueueRef = useRef<UsageReport[]>([]);
+  const usageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Drains the queue to the server. Best-effort by design: losing a
+  // usage row to a network blip must never surface to an operator who
+  // is mid-fault at a machine. splice() hands this call an exclusive
+  // batch, so overlapping flushes cannot double-report.
+  const flushUsage = useCallback(async () => {
+    if (usageTimerRef.current) {
+      clearTimeout(usageTimerRef.current);
+      usageTimerRef.current = null;
+    }
+    const reports = usageQueueRef.current.splice(0);
+    if (reports.length === 0) return;
+    try {
+      await fetchWithAuth("/api/voice/usage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machineId: sessionRef.current?.machineId ?? machineId,
+          reports,
+        }),
+      });
+    } catch (err) {
+      console.warn("voice usage report failed:", err);
+    }
+  }, [machineId]);
+
+  const queueUsage = useCallback(
+    (kind: UsageReport["kind"], usage: unknown) => {
+      if (!usage || typeof usage !== "object") return;
+      usageQueueRef.current.push({ kind, usage });
+      if (usageTimerRef.current) return;
+      usageTimerRef.current = setTimeout(() => {
+        usageTimerRef.current = null;
+        void flushUsage();
+      }, USAGE_FLUSH_DELAY_MS);
+    },
+    [flushUsage],
+  );
 
   const handleError = useCallback(
     (msg: string) => {
@@ -256,6 +312,10 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
       if (type === "conversation.item.input_audio_transcription.completed") {
         const itemId = (evt.item_id as string) ?? crypto.randomUUID();
         const text = ((evt.transcript as string) ?? "").trim();
+        // Transcription bills separately from the assistant response, so
+        // it is metered before the empty-transcript bail-out: audio the
+        // model heard as nothing still cost something to hear.
+        queueUsage("transcription", evt.usage);
         if (!text) return;
         turnsRef.current.push({ role: "user", content: text });
         setTranscript((prev) => {
@@ -369,13 +429,24 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
         return;
       }
 
+      // Every assistant turn ends here, carrying the token counts for
+      // the whole response. This is the single most valuable event in
+      // the stream for cost: a realtime turn replays the conversation,
+      // so the cached-input figure it reports is most of what voice
+      // actually costs.
+      if (type === "response.done") {
+        const response = evt.response as { usage?: unknown } | undefined;
+        queueUsage("realtime", response?.usage);
+        return;
+      }
+
       if (type === "error") {
         const errPayload = evt.error as { message?: string } | undefined;
         handleError(errPayload?.message ?? "Realtime error");
         return;
       }
     },
-    [handleError, handleToolCall],
+    [handleError, handleToolCall, queueUsage],
   );
 
   const cleanup = useCallback(() => {
@@ -397,7 +468,17 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
     sourcedResponsesRef.current.clear();
   }, []);
 
-  useEffect(() => () => cleanup(), [cleanup]);
+  // Unmount (operator closes the sheet, navigates away) tears the
+  // session down. Flush first, best-effort: a navigation can cancel the
+  // request in flight, which costs us at most the final turn rather than
+  // the session.
+  useEffect(
+    () => () => {
+      void flushUsage();
+      cleanup();
+    },
+    [cleanup, flushUsage],
+  );
 
   const start = useCallback(async () => {
     if (state === "connecting" || state === "active") return;
@@ -500,6 +581,12 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
     cleanup();
     setState("idle");
 
+    // Report whatever the batching timer has not sent yet. Ahead of the
+    // transcript write on purpose: a session with no usable transcript
+    // still has tokens to bill, and this must not sit behind a persist
+    // call that will be skipped.
+    await flushUsage();
+
     // Best-effort persistence — losing the audit on a network blip is
     // not worth blocking the UI on.
     if (turns.length > 0) {
@@ -513,7 +600,7 @@ export function useRealtimeVoice({ machineId, accountId, onError }: Options) {
         console.warn("voice persist failed:", err);
       }
     }
-  }, [accountId, cleanup, machineId, state]);
+  }, [accountId, cleanup, flushUsage, machineId, state]);
 
   const toggleMute = useCallback(() => {
     const stream = micStreamRef.current;

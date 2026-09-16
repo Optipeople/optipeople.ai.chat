@@ -9,7 +9,7 @@
 // Provider prices change, and when they do you want one obvious file to
 // edit with a date next to each number.
 //
-// PRICES LAST CHECKED: 2026-08-18
+// PRICES LAST CHECKED: 2026-09-16
 //   Anthropic  https://platform.claude.com/docs/en/pricing
 //   Voyage     https://docs.voyageai.com/docs/pricing
 //   OpenAI     https://developers.openai.com/api/docs/pricing
@@ -27,11 +27,27 @@
 //     that window reads slightly high.
 //   - Voyage's first 200M tokens per account are free. We price all
 //     embedding tokens, so embeddings show a cost before they bill one.
+//   - Text-to-speech returns no usage object, so its tokens are estimated
+//     from the length of the text spoken rather than measured. Every
+//     other line here is measured.
 
 /** Dollars per million tokens. */
 export type ModelPrice = {
   input: number;
   output: number;
+  /**
+   * Absolute cached-read price, when the model does not price its cache
+   * as a multiple of its input rate. Anthropic does (a tenth of input),
+   * so those entries leave this unset and take CACHE_READ_MULTIPLIER.
+   * OpenAI Realtime does not: cached input is a flat $0.40/MTok whether
+   * the cached tokens are text or audio, which is a fortieth of the
+   * audio input rate, not a tenth. Applying the multiplier there would
+   * overstate a long voice session by ~8x on its largest line, because
+   * the whole conversation replays from cache on every turn.
+   */
+  cacheRead?: number;
+  /** Same, for cache writes. Unset means the per-TTL multiplier applies. */
+  cacheWrite?: number;
 };
 
 const MILLION = 1_000_000;
@@ -70,12 +86,36 @@ const MODEL_PRICES: Record<string, ModelPrice> = {
   "voyage-4": { input: 0.06, output: 0 },
   "voyage-4-lite": { input: 0.02, output: 0 },
 
-  // OpenAI. Unused until the voice paths call recordUsage — they don't
-  // today, so voice spend is absent from every usage view. Listed so that
-  // metering voice is a one-line change there rather than a change here.
-  // gpt-realtime bills audio and text at different rates; usage_events has
-  // only input/output, so these are the audio rates, which dominate.
-  "gpt-realtime": { input: 32, output: 64 },
+  // OpenAI voice.
+  //
+  // These models bill text and audio tokens at very different rates — a
+  // factor of 8 on input, 4 on output — and a voice session uses plenty
+  // of both: the audio is the operator and the assistant talking, the
+  // text is the machine's system prompt and document manifest replaying
+  // on every turn. usage_events has one input column and one output
+  // column, so a single row cannot hold the split.
+  //
+  // So the voice metering writes TWO rows per API response, one per
+  // modality, keyed `<model>:audio` and `<model>:text`. See
+  // splitRealtimeUsage in src/lib/usage.ts. The bare keys stay as the
+  // audio rate: they are what an unsplit row (an older client, a usage
+  // object with no token details) falls back to, and overstating is the
+  // right direction to fail in.
+  "gpt-realtime": { input: 32, output: 64, cacheRead: 0.4 },
+  "gpt-realtime:audio": { input: 32, output: 64, cacheRead: 0.4 },
+  "gpt-realtime:text": { input: 4, output: 16, cacheRead: 0.4 },
+
+  // Input-audio transcription. Runs inside every realtime voice session
+  // (the operator's mic is transcribed so we can render and persist it)
+  // and standalone behind the dictation button. Output is always text.
+  "gpt-4o-mini-transcribe": { input: 3, output: 5 },
+  "gpt-4o-mini-transcribe:audio": { input: 3, output: 5 },
+  "gpt-4o-mini-transcribe:text": { input: 1.25, output: 5 },
+
+  // Per-message "read this answer aloud". The speech endpoint returns no
+  // usage object at all, so src/app/api/voice/speak/route.ts estimates
+  // both figures from the text length — see the constants there. Small
+  // next to a realtime session, but not zero.
   "gpt-4o-mini-tts": { input: 0.6, output: 12 },
 };
 
@@ -107,12 +147,13 @@ export function costUsd(usage: PriceableUsage): number | null {
       ? CACHE_WRITE_MULTIPLIER_1H
       : CACHE_WRITE_MULTIPLIER_5M;
 
+  const cacheReadRate = price.cacheRead ?? price.input * CACHE_READ_MULTIPLIER;
+  const cacheWriteRate = price.cacheWrite ?? price.input * writeMultiplier;
+
   const inputCost = usage.inputTokens * price.input;
   const outputCost = usage.outputTokens * price.output;
-  const cacheReadCost =
-    usage.cacheReadTokens * price.input * CACHE_READ_MULTIPLIER;
-  const cacheWriteCost =
-    usage.cacheWriteTokens * price.input * writeMultiplier;
+  const cacheReadCost = usage.cacheReadTokens * cacheReadRate;
+  const cacheWriteCost = usage.cacheWriteTokens * cacheWriteRate;
 
   return (inputCost + outputCost + cacheReadCost + cacheWriteCost) / MILLION;
 }

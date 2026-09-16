@@ -7,6 +7,7 @@
 
 import { getTranslations } from "next-intl/server";
 import { AuthError, assertAccountAccess, requireAdmin } from "@/lib/auth";
+import { summarizeCredits, type CreditSummary } from "@/lib/credits";
 import { costUsd, totalCostUsd } from "@/lib/pricing";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -42,6 +43,12 @@ export type AdminAccountUsageResponse = {
   days: number;
   totals: AdminUsageTotals;
   rows: AdminUsageRow[];
+  /**
+   * The same spend expressed in the unit the account is billed in, against
+   * the pool its machines earn. See src/lib/credits.ts — this is the
+   * invoicing basis, not a limit: nothing enforces it.
+   */
+  credits: CreditSummary;
 };
 
 type SummaryRow = {
@@ -75,10 +82,30 @@ export async function GET(
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
   const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase.rpc("usage_account_summary", {
-    p_account_id: accountId,
-    p_since: since,
-  });
+
+  // Onboarded machines are what the credit pool scales with, so the count
+  // is fetched alongside the usage rather than derived from the usage
+  // (an account with five machines and one busy one still earns five
+  // machines' worth of credits — that pooling is the whole point).
+  const [{ data, error }, { count: machineCount, error: machineError }] =
+    await Promise.all([
+      supabase.rpc("usage_account_summary", {
+        p_account_id: accountId,
+        p_since: since,
+      }),
+      supabase
+        .from("machine_kb")
+        .select("machine_id", { count: "exact", head: true })
+        .eq("account_id", accountId),
+    ]);
+
+  if (machineError) {
+    // Non-fatal: the usage table still renders, the pool reads as zero
+    // machines and the credits line shows everything as overage. Loud in
+    // the log because that is a wrong-looking invoice basis, not a
+    // cosmetic gap.
+    console.error("admin usage GET: machine count failed:", machineError);
+  }
 
   if (error) {
     console.error("admin usage GET failed:", error);
@@ -120,6 +147,16 @@ export async function GET(
     },
   );
 
-  const result: AdminAccountUsageResponse = { accountId, days, totals, rows };
+  const result: AdminAccountUsageResponse = {
+    accountId,
+    days,
+    totals,
+    rows,
+    credits: summarizeCredits({
+      machines: machineCount ?? 0,
+      costUsd: totals.costUsd,
+      days,
+    }),
+  };
   return Response.json(result);
 }

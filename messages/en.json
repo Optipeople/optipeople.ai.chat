@@ -894,7 +894,9 @@
       "colAccountId": "Account ID",
       "colMachines": "Machines",
       "colTokens": "Tokens (30d)",
-      "colCost": "Est. cost (30d)"
+      "colCost": "Est. cost (30d)",
+      "colCredits": "Credits",
+      "creditsValue": "{used} of {included}"
     },
     "accountSections": {
       "rules": "AI rules",
@@ -932,9 +934,21 @@
       "opSuggestions": "Starter questions",
       "opAutoOrganize": "Auto-organize",
       "cost": "Estimated cost",
-      "costHelp": "Estimated USD at current list prices, derived from the recorded tokens. Voice (speech) calls are not metered yet, so they are not included.",
-      "costHelpIncomplete": "Estimated USD at current list prices. {models} model(s) have no price on file and are excluded, so the real figure is higher. Voice (speech) calls are not metered yet either.",
-      "colCost": "Est. cost"
+      "costHelp": "Estimated USD at current list prices, derived from the recorded tokens. Text-to-speech is estimated from the length of the text spoken; every other line is measured.",
+      "costHelpIncomplete": "Estimated USD at current list prices. {models} model(s) have no price on file and are excluded, so the real figure is higher.",
+      "colCost": "Est. cost",
+      "creditsUsed": "Credits used",
+      "creditsValue": "{used} of {included}",
+      "creditsHelp": "Credits are the unit the account is invoiced in, after the fact. The pool is shared across the whole account and scales with machines: {machines} machine(s) × {perMachine} credits a month. Unused credits on a quiet machine are available to a busy one. Nothing is blocked when the pool runs out.",
+      "overage": "Overage",
+      "overageNone": "Within pool",
+      "overageValue": "{credits} credits ({amount})",
+      "overageHelp": "Credits used above the pool, invoiced in blocks of {block} at {price} per block.",
+      "opVoice": "Voice (spoken assistant)",
+      "opTranscription": "Speech to text",
+      "opTts": "Read aloud",
+      "overageValueCredits": "{credits} credits",
+      "overageHelpCredits": "Credits used above the pool. Invoiced separately in blocks of {block}."
     }
   },
   "server": {

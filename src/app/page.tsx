@@ -695,6 +695,7 @@ function ChatApp({
   // transcript is appended onto this so already-typed text isn't lost.
   const voicePrefixRef = useRef("");
   const liveTranscribe = useLiveTranscription({
+    machineId: machine?.id ?? null,
     onChange: (text) => {
       const prefix = voicePrefixRef.current;
       setInput(prefix ? `${prefix} ${text}` : text);
