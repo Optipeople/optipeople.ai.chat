@@ -273,13 +273,22 @@
     "toolFetchingMachineDataNamed": "Fetching machine data ({name})",
     "toolRunningNamed": "Running {name}",
     "restoredPhoto": "[Photo]",
-    "historyLoadFailed": "Could not open that conversation. Check your connection and try again."
+    "historyLoadFailed": "Could not open that conversation. Check your connection and try again.",
+    "stoppedTitle": "Stopped",
+    "stoppedBody": "You stopped the answer before it started.",
+    "errorCutOffBody": "The answer was cut off. Try again.",
+    "errorRequestTitle": "The message couldn't be sent",
+    "unansweredTitle": "Not answered",
+    "unansweredBody": "This question never got an answer — try again.",
+    "truncatedNotice": "The answer was cut short. Ask me to continue."
   },
   "viewer": {
     "openInNewTab": "Open in new tab",
     "openFailed": "Could not open file",
     "missingUrl": "Missing URL in response",
-    "cannotPreview": "This file type can't be previewed."
+    "cannotPreview": "This file type can't be previewed.",
+    "notFound": "Document not found — it may have been removed.",
+    "sessionExpired": "Your session has expired. Log in again to open the file."
   },
   "knowledgeDrawer": {
     "openAria": "Open side panel",
@@ -555,7 +564,15 @@
       "folderLabelAll": "Folder (files land here; dropped folders keep their structure inside it)",
       "failedReasonAria": "Failure reason",
       "moveDocFailed": "Could not move \"{title}\"",
-      "deleteFolderFailed": "Could not delete the folder \"{name}\""
+      "deleteFolderFailed": "Could not delete the folder \"{name}\"",
+      "maxFileSizeByKind": "Max {max} per file ({imageMax} for images)",
+      "reindexTitle": "Re-index — the server picks the best extraction method; runs in the shared queue",
+      "reindexAria": "Re-index document",
+      "reindexConfirmTitle": "Re-index \"{title}\"?",
+      "reindexConfirmBody": "Existing chunks are deleted and the document is processed again. The server chooses the extraction method automatically; Claude OCR is only used if needed.",
+      "reindexConfirmLabel": "Re-index",
+      "processingLockedHint": "The document is being processed on the server. Reprocess and delete become available when it finishes.",
+      "processingLockedAria": "Why actions are unavailable"
     },
     "machineEscalation": {
       "heading": "Service escalation",
@@ -752,7 +769,30 @@
       "ocrAria": "Claude vision OCR",
       "tablesTooltip": "Tables re-read with Claude vision so their columns survived",
       "failed": "Failed",
-      "retryAllFailed": "Retry all failed"
+      "retryAllFailed": "Retry all failed",
+      "sessionExpired": "Your session expired before this item finished",
+      "sessionExpiredBanner": "Your session has expired. Log in again to continue the queue — items not yet started stay waiting.",
+      "sessionExpiredAction": "Log in again",
+      "skippedEmpty": "Skipped {count, plural, one {# empty file} other {# empty files}}",
+      "duplicateTitle": "Duplicate",
+      "duplicateTitleHint": "A document with this name already exists — it is uploaded anyway",
+      "reindexTag": "Re-index",
+      "reindexing": "Re-indexing…",
+      "resume": "Resume",
+      "resumeTitle": "The file is already uploaded — only processing is restarted",
+      "resumeHint": "file already uploaded, processing can be resumed",
+      "phase": {
+        "reading_pdf": "Reading PDF",
+        "ocr": "Reading with Claude vision (OCR)",
+        "tables": "Re-reading tables",
+        "chunking": "Chunking ({pages, plural, one {# page} other {# pages}})",
+        "embedding": "Embedding {done} of {total}",
+        "figures": "Describing figures",
+        "reading_file": "Reading file",
+        "describing_image": "Describing image (Claude vision)",
+        "embedding_caption": "Embedding description",
+        "metadata": "Reading document details"
+      }
     },
     "escalationsInbox": {
       "heading": "Escalations",
@@ -1045,5 +1085,9 @@
     "backToChat": "Back to the chat",
     "notFoundTitle": "Page not found",
     "notFoundDescription": "The page you're looking for doesn't exist or has been moved."
+  },
+  "noMachineAccess": {
+    "heading": "No machine access",
+    "body": "Your login has no machines in Opti Assist. Ask your administrator for access, or scan the QR code on the machine."
   }
 }

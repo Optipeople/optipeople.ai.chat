@@ -12,7 +12,7 @@ import {
 import { useTranslations } from "next-intl";
 import { ExternalLink, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchWithAuth } from "@/auth/authApi";
+import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/utils";
@@ -86,6 +86,15 @@ export function useFileViewer(): FileViewerContextValue {
   };
 }
 
+// Non-OK signed-URL lookup. Carries the status so the modal can pick a
+// human sentence ("removed", "logged out") instead of leaking "Server
+// error 404" to an operator.
+class ViewerHttpError extends Error {
+  constructor(public readonly status: number) {
+    super(`Server error ${status}`);
+  }
+}
+
 type LoadState =
   | { phase: "loading"; request: ViewerRequest }
   | { phase: "ready"; request: ViewerRequest; file: ResolvedFile }
@@ -107,7 +116,7 @@ export function FileViewerProvider({ children }: { children: ReactNode }) {
               ? `/api/documents/${encodeURIComponent(req.id)}/url`
               : `/api/assets/${encodeURIComponent(req.id)}/url`;
           const res = await fetchWithAuth(path);
-          if (!res.ok) throw new Error(`Server error ${res.status}`);
+          if (!res.ok) throw new ViewerHttpError(res.status);
           const body = (await res.json()) as {
             url?: string;
             title?: string;
@@ -144,11 +153,16 @@ export function FileViewerProvider({ children }: { children: ReactNode }) {
             },
           });
         } catch (err) {
-          setState({
-            phase: "error",
-            request: req,
-            message: err instanceof Error ? err.message : t("openFailed"),
-          });
+          let message = t("openFailed");
+          if (err instanceof SessionExpiredError) {
+            message = t("sessionExpired");
+          } else if (err instanceof ViewerHttpError) {
+            if (err.status === 404) message = t("notFound");
+            else if (err.status === 401) message = t("sessionExpired");
+          } else if (err instanceof Error && err.message === t("missingUrl")) {
+            message = err.message;
+          }
+          setState({ phase: "error", request: req, message });
         }
       })();
     },

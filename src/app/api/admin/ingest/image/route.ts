@@ -13,6 +13,11 @@ import {
 } from "@/lib/auth";
 import { ingestImageFromStorage } from "@/lib/imageIngestion";
 import { extensionForMime, isSupportedImageMime } from "@/lib/imageCaption";
+import {
+  IngestRequestError,
+  IngestTimeoutError,
+  normalizeFolderPath,
+} from "@/lib/ingestion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +27,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
+  const requestStartedAt = Date.now();
   let admin;
   try {
     admin = await requireAdmin(req);
@@ -77,15 +83,22 @@ export async function POST(req: Request) {
   // match what /sign minted for this document.
   const storagePath = `${machineId}/${documentId}.${extensionForMime(contentType)}`;
   const fileName =
-    typeof body.fileName === "string" && body.fileName ? body.fileName : "image";
+    typeof body.fileName === "string" && body.fileName.trim()
+      ? body.fileName.trim()
+      : "image";
   const summary =
     typeof body.summary === "string" && body.summary.trim()
       ? body.summary.trim()
       : null;
-  const folderPath =
-    typeof body.folderPath === "string" && body.folderPath.trim()
-      ? body.folderPath.trim()
-      : null;
+  let folderPath: string | null;
+  try {
+    folderPath = normalizeFolderPath(body.folderPath);
+  } catch (err) {
+    if (err instanceof IngestRequestError) {
+      return Response.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 
   try {
     const result = await ingestImageFromStorage({
@@ -98,9 +111,19 @@ export async function POST(req: Request) {
       summary,
       folderPath,
       createdBy: admin.email,
+      requestStartedAt,
     });
     return Response.json(result);
   } catch (err) {
+    if (err instanceof IngestRequestError) {
+      return Response.json({ error: err.message }, { status: err.status });
+    }
+    if (err instanceof IngestTimeoutError) {
+      return Response.json(
+        { error: err.message, code: "timeout" },
+        { status: 504 },
+      );
+    }
     console.error("admin image ingest failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return Response.json(

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useLocale, useTranslations } from "next-intl";
 import {
   AlertCircle,
@@ -55,6 +61,7 @@ import {
   saveQrSession,
   type QrMachineInfo,
 } from "@/auth/qrStorage";
+import { CHAT_STASH_PREFIX } from "@/auth/storage";
 import { cn } from "@/lib/utils";
 
 // Temporarily disabled: hides the realtime voice-conversation entry point.
@@ -192,9 +199,29 @@ interface Message {
   // when text resumes, for non-MCP tools).
   toolSteps?: ToolStep[];
   // Set when this turn failed (Anthropic outage, network error, …).
-  // The MessageRow renders an OutageCard instead of the markdown
-  // bubble; the "Try again" button rewinds and re-streams the turn.
+  // The MessageRow renders an OutageCard — in place of the markdown
+  // bubble when nothing arrived, beneath it when the answer broke off
+  // mid-sentence; the "Try again" button rewinds and re-streams the
+  // turn. `errorMessage` is the card body; `content` stays whatever
+  // prose actually arrived.
   error?: OutageInfo;
+  errorMessage?: string;
+  // Hides "Try again" for failures a retry can't fix (4xx rejections).
+  noRetry?: boolean;
+  // Server hit max_tokens — the answer is complete as far as it goes
+  // but the model was cut short. Renders a small notice under the bubble.
+  truncated?: boolean;
+}
+
+// Non-2xx from POST /api/chat. Carries the status plus the server's own
+// (already translated) explanation when it sent one.
+class ChatHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly serverMessage?: string,
+  ) {
+    super(`Server error ${status}`);
+  }
 }
 
 // Local-only state for an attachment the operator is in the middle of
@@ -366,10 +393,11 @@ export default function Home() {
   }
   if (qrPhase.kind === "active") {
     return (
-      <>
-        <ChatApp account={qrPhase.target.account} machine={qrPhase.target.machine} />
-        <QrConsentBanner />
-      </>
+      <ChatApp
+        account={qrPhase.target.account}
+        machine={qrPhase.target.machine}
+        footerNotice={<QrConsentBanner />}
+      />
     );
   }
 
@@ -414,6 +442,14 @@ export default function Home() {
     return <MachineSelectScreen />;
   }
 
+  const scope = !currentMachine && fleetSelected ? "fleet" : "machine";
+  // Operator-role users whose account/machine lookups came back
+  // forbidden have nothing to chat against — the server would reject
+  // every turn. Say so instead of rendering a chat that can't work.
+  if (scope === "machine" && (!currentAccount || !currentMachine)) {
+    return <NoMachineAccessScreen />;
+  }
+
   return (
     <ChatApp
       account={
@@ -422,11 +458,44 @@ export default function Home() {
       machine={
         currentMachine ? { id: currentMachine.id, name: currentMachine.name } : null
       }
-      scope={!currentMachine && fleetSelected ? "fleet" : "machine"}
+      scope={scope}
       onChangeMachine={
         machines.length > 1 ? clearSelectedMachine : undefined
       }
     />
+  );
+}
+
+// Dead end for logged-in users without any machine access. Same shell
+// as the account/machine pickers (AppHeader carries the UserMenu with
+// its logout entry) plus an explicit logout button so a shared tablet
+// can be handed on.
+function NoMachineAccessScreen() {
+  const t = useTranslations("noMachineAccess");
+  const tUserMenu = useTranslations("userMenu");
+  const { logout } = useAuth();
+  return (
+    <div className="relative flex h-full flex-col bg-[var(--color-background)]">
+      <AppHeader />
+      <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-10">
+        <div
+          className={cn(
+            "msg-in w-full max-w-md rounded-[4px] bg-[var(--color-surface)] p-5 sm:p-8",
+            "border-2 border-[var(--ds-grey-light-02)] shadow-[var(--ds-shadow-destructive)]",
+          )}
+        >
+          <h1 className="mb-1 text-[20px] font-semibold text-[var(--color-foreground)] sm:text-[22px]">
+            {t("heading")}
+          </h1>
+          <p className="mb-5 break-words text-[14px] text-[var(--color-muted-foreground)] sm:mb-6 sm:text-[15px]">
+            {t("body")}
+          </p>
+          <Button type="button" variant="secondary" onClick={logout}>
+            {tUserMenu("logout")}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -492,23 +561,51 @@ type EscalateState =
     }
   | { phase: "error"; message: string };
 
-// The live conversation is stashed in sessionStorage (per machine) so a
-// refresh, tab discard under memory pressure, or a detour to the camera
-// app doesn't wipe the chat. Attachments and tool steps are stripped —
-// object URLs don't survive a reload anyway. Errored/empty assistant
-// bubbles are dropped so a stale outage card doesn't resurrect.
-const CHAT_STASH_PREFIX = "optiai_chat_";
+// The live conversation is stashed in sessionStorage (per identity and
+// machine) so a refresh, tab discard under memory pressure, or a detour
+// to the camera app doesn't wipe the chat. Attachments and tool steps
+// are stripped — object URLs don't survive a reload anyway. Errored/
+// empty assistant bubbles are dropped so a stale outage card doesn't
+// resurrect. Keys carry who was chatting so a logout → login as someone
+// else on the same tablet can never show the previous person's chat;
+// logout / QR clear also wipe every slot (see clearChatStashes).
+const CHAT_STASH_VERSION_PREFIX = `${CHAT_STASH_PREFIX}v2__`;
 const CHAT_STASH_MAX_MESSAGES = 60;
 
-function chatStashKey(machineId: string | null | undefined): string {
-  return `${CHAT_STASH_PREFIX}${machineId ?? "none"}`;
+function chatStashKey(identity: string, slot: string): string {
+  return `${CHAT_STASH_VERSION_PREFIX}${identity}__${slot}`;
+}
+
+// One-time migration: pre-identity keys (`optiai_chat_<machineId>`)
+// can't be attributed to anyone, so they're dropped rather than read.
+let chatStashMigrated = false;
+function migrateChatStash(): void {
+  if (chatStashMigrated) return;
+  chatStashMigrated = true;
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (
+        key &&
+        key.startsWith(CHAT_STASH_PREFIX) &&
+        !key.startsWith(CHAT_STASH_VERSION_PREFIX)
+      ) {
+        doomed.push(key);
+      }
+    }
+    for (const key of doomed) window.sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
 }
 
 function loadChatStash(
-  machineId: string | null | undefined,
+  key: string,
 ): { conversationId: string | null; messages: Message[] } | null {
   try {
-    const raw = window.sessionStorage.getItem(chatStashKey(machineId));
+    migrateChatStash();
+    const raw = window.sessionStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       conversationId?: unknown;
@@ -531,7 +628,7 @@ function loadChatStash(
 }
 
 function saveChatStash(
-  machineId: string | null | undefined,
+  key: string,
   conversationId: string | null,
   messages: Message[],
 ): void {
@@ -547,11 +644,11 @@ function saveChatStash(
         images,
       }));
     if (trimmed.length === 0) {
-      window.sessionStorage.removeItem(chatStashKey(machineId));
+      window.sessionStorage.removeItem(key);
       return;
     }
     window.sessionStorage.setItem(
-      chatStashKey(machineId),
+      key,
       JSON.stringify({ conversationId, messages: trimmed }),
     );
   } catch {
@@ -559,9 +656,9 @@ function saveChatStash(
   }
 }
 
-function clearChatStash(machineId: string | null | undefined): void {
+function clearChatStash(key: string): void {
   try {
-    window.sessionStorage.removeItem(chatStashKey(machineId));
+    window.sessionStorage.removeItem(key);
   } catch {
     // ignore
   }
@@ -584,6 +681,7 @@ function ChatApp({
   machine,
   scope = "machine",
   onChangeMachine,
+  footerNotice,
 }: {
   account: { id: string; name: string } | null;
   machine: { id: string; name: string } | null;
@@ -592,15 +690,19 @@ function ChatApp({
   // machine-picked chats stay "machine".
   scope?: "machine" | "fleet";
   onChangeMachine?: () => void;
+  // Rendered inline at the top of the composer panel (e.g. the QR
+  // terms notice) so it pushes the chat up instead of floating over it.
+  footerNotice?: ReactNode;
 }) {
   const tChat = useTranslations("chat");
   const tEscalate = useTranslations("escalate");
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const locale = useLocale();
   // Session-expired card action: logged-in operators get "Log in again"
   // (logout → login screen; the stashed chat survives on this device).
   // QR operators must re-scan — no in-app action can mint a new token.
-  const inQrMode = !!getQrToken();
+  const qrToken = getQrToken();
+  const inQrMode = !!qrToken;
   const sessionAction = inQrMode
     ? undefined
     : { label: tChat("sessionExpiredAction"), onClick: logout };
@@ -623,7 +725,16 @@ function ChatApp({
   // Stash slot for refresh/tab-discard recovery. Fleet chats get their
   // own per-account slot so they never collide with a machine chat (or
   // with the machinesForbidden path, which stashes under "none").
-  const stashId = isFleet ? `fleet_${account?.id ?? "unknown"}` : machine?.id;
+  const stashSlot = isFleet
+    ? `fleet_${account?.id ?? "unknown"}`
+    : machine?.id ?? "none";
+  // Who is chatting: the login (email) or, for anonymous QR operators,
+  // the tail of the QR token — enough to separate two stickers, never
+  // the whole secret.
+  const stashIdentity = qrToken
+    ? `qr_${qrToken.slice(-8)}`
+    : user?.email ?? "anon";
+  const stashKey = chatStashKey(stashIdentity, stashSlot);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -687,6 +798,28 @@ function ChatApp({
   const rafRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped whenever the chat context moves on (machine switch, history
+  // open, new chat, Stop). A stream started under an older id must not
+  // touch `messages` any more — they may belong to a different chat.
+  const runIdRef = useRef(0);
+  // Sequence for openConversation: only the newest request may apply.
+  const openSeqRef = useRef(0);
+  // Translations reached from the reset effect without re-running it.
+  const tChatRef = useRef(tChat);
+  useEffect(() => {
+    tChatRef.current = tChat;
+  }, [tChat]);
+
+  // Tears down any in-flight stream without touching messages. Callers
+  // decide what happens to the half-written bubble (mark stopped,
+  // replace with a restored transcript, wipe).
+  const cancelActiveStream = useCallback(() => {
+    runIdRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    pendingRef.current = "";
+    streamDoneRef.current = true;
+  }, []);
 
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceConvOpen, setVoiceConvOpen] = useState(false);
@@ -741,10 +874,30 @@ function ChatApp({
     // discard recovery); otherwise start clean. This synchronises
     // several local state slots with the externally-owned machine
     // selection; key-based remount would be a heavier refactor.
-    const stash = loadChatStash(stashId);
+    //
+    // A reply still streaming for the previous machine must not keep
+    // landing in the new chat — kill it first.
+    cancelActiveStream();
+    const stash = loadChatStash(stashKey);
+    const restored = stash?.messages ?? [];
+    // The stash never holds errored/empty assistant turns, so a chat
+    // that was interrupted mid-answer restores ending on the user's
+    // question. Give it a card with "Try again" instead of leaving the
+    // question hanging with no way to re-ask.
+    const last = restored[restored.length - 1];
+    if (last?.role === "user") {
+      restored.push({
+        role: "assistant",
+        content: "",
+        createdAt: last.createdAt,
+        error: { kind: "error", title: tChatRef.current("unansweredTitle") },
+        errorMessage: tChatRef.current("unansweredBody"),
+      });
+    }
     /* eslint-disable react-hooks/set-state-in-effect */
+    setStreaming(false);
     setConversationId(stash?.conversationId ?? null);
-    setMessages(stash?.messages ?? []);
+    setMessages(restored);
     setFeedback({ phase: "hidden" });
     setEscalate({ phase: "hidden" });
     setSuggestions([]);
@@ -760,9 +913,9 @@ function ChatApp({
     setIsAtBottom(true);
     setDragDepth(0);
     /* eslint-enable react-hooks/set-state-in-effect */
-    // stashId covers both axes: it changes on machine switch AND on
-    // machine ↔ fleet scope changes.
-  }, [stashId]);
+    // stashKey covers every axis: it changes on machine switch, on
+    // machine ↔ fleet scope changes, and when the identity changes.
+  }, [stashKey, cancelActiveStream]);
 
   // Per-machine starter questions live on machine_kb keyed by locale and
   // are regenerated on KB changes (ingest / reset / delete). We fetch the
@@ -782,7 +935,9 @@ function ChatApp({
     /* eslint-enable react-hooks/set-state-in-effect */
     (async () => {
       try {
-        const res = await fetch(
+        // Same credentials as the chat POST (bearer or X-QR-Token) —
+        // the route is scoped to the operator's machine access.
+        const res = await fetchWithAuth(
           `/api/machines/${encodeURIComponent(id)}/suggestions?lang=${encodeURIComponent(locale)}`,
         );
         if (!res.ok) return;
@@ -806,8 +961,8 @@ function ChatApp({
   // (messages mutate every animation frame while streaming).
   useEffect(() => {
     if (streaming) return;
-    saveChatStash(stashId, conversationId, messages);
-  }, [messages, conversationId, streaming, stashId]);
+    saveChatStash(stashKey, conversationId, messages);
+  }, [messages, conversationId, streaming, stashKey]);
 
   const isEmpty = messages.length === 0;
 
@@ -891,6 +1046,18 @@ function ChatApp({
     }
   }, []);
 
+  // Input is locked while a reply streams, after the chat was ended,
+  // and while a history pick is being fetched (its transcript is about
+  // to replace the thread — a send in that window would be lost).
+  // Escalating does NOT lock the input — "also, it's now leaking oil"
+  // after the tech was called is exactly the follow-up we want to keep.
+  const inputLocked =
+    streaming || feedback.phase === "thanks" || loadingConversationId !== null;
+  const canAttach =
+    !inputLocked &&
+    !!machine?.id &&
+    pendingAttachments.length < MAX_ATTACHMENTS;
+
   // Upload a single image file. The pending entry is added immediately
   // so the operator sees a thumbnail with a spinner; on success we fill
   // in the server-side id, on failure we leave it as "error" so the X
@@ -926,7 +1093,15 @@ function ChatApp({
           ),
         );
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        // An expired session surfaces as the same sentence the outage
+        // card uses — "Session expired" in English is jargon to a Danish
+        // operator.
+        const msg =
+          err instanceof SessionExpiredError
+            ? tChat(inQrMode ? "sessionExpiredBodyQr" : "sessionExpiredBody")
+            : err instanceof Error
+              ? err.message
+              : String(err);
         setPendingAttachments((prev) =>
           prev.map((p) =>
             p.localId === localId
@@ -937,7 +1112,7 @@ function ChatApp({
         setAttachmentError(msg);
       }
     },
-    [machine],
+    [machine, inQrMode, tChat],
   );
 
   const addAttachments = useCallback(
@@ -990,6 +1165,10 @@ function ChatApp({
   // while the textarea is focused so we don't fight other paste targets.
   const onPaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // Same gate as the + button and drag-drop: no machine (fleet), a
+      // locked input or a full tray means pasted images fall through as
+      // (nothing) rather than starting an upload we can't finish.
+      if (!canAttach) return;
       const items = Array.from(e.clipboardData?.items ?? []);
       const files = items
         .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
@@ -1000,7 +1179,7 @@ function ChatApp({
         addAttachments(files);
       }
     },
-    [addAttachments],
+    [addAttachments, canAttach],
   );
 
   useEffect(() => {
@@ -1015,11 +1194,15 @@ function ChatApp({
     }
     clearIdleTimer();
     return undefined;
+    // `input` is in the deps on purpose: every keystroke re-arms the
+    // timer, so an operator mid-sentence is never interrupted by the
+    // "was this resolved?" prompt.
   }, [
     conversationId,
     streaming,
     feedback.phase,
     messages,
+    input,
     armIdleTimer,
     clearIdleTimer,
   ]);
@@ -1035,9 +1218,10 @@ function ChatApp({
   // it belonged to. Photo-only turns come back as a text placeholder.
   async function openConversation(id: string) {
     if (id === conversationId) return;
-    abortRef.current?.abort();
-    pendingRef.current = "";
-    streamDoneRef.current = false;
+    const seq = ++openSeqRef.current;
+    // Any reply mid-stream is abandoned — its bubble is marked stopped
+    // so the thread stays coherent should the fetch below fail.
+    stopGenerating();
     clearIdleTimer();
     setLoadingConversationId(id);
     setHistoryError(null);
@@ -1049,6 +1233,10 @@ function ChatApp({
       const res = await fetchWithAuth(url);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const body = (await res.json()) as OperatorConversationResponse;
+      // A newer open / send / new-chat happened while this was in
+      // flight — its result would clobber what the operator is now
+      // looking at. Drop it.
+      if (openSeqRef.current !== seq) return;
       const restored: Message[] = body.messages.map((m) => ({
         role: m.role,
         content: m.photoOnly ? tChat("restoredPhoto") : m.content,
@@ -1072,18 +1260,19 @@ function ChatApp({
         return [];
       });
     } catch (err) {
+      if (openSeqRef.current !== seq) return;
       console.error("Open conversation failed", err);
       setHistoryError(tChat("historyLoadFailed"));
     } finally {
-      setLoadingConversationId(null);
+      if (openSeqRef.current === seq) setLoadingConversationId(null);
     }
   }
 
   function startNewConversation() {
-    abortRef.current?.abort();
-    pendingRef.current = "";
-    streamDoneRef.current = false;
-    clearChatStash(stashId);
+    openSeqRef.current += 1;
+    cancelActiveStream();
+    clearChatStash(stashKey);
+    setLoadingConversationId(null);
     setStreaming(false);
     setMessages([]);
     setConversationId(null);
@@ -1124,7 +1313,7 @@ function ChatApp({
       }
       // The conversation is concluded — a refresh should start fresh
       // rather than resurrect a finished chat.
-      clearChatStash(stashId);
+      clearChatStash(stashKey);
       setFeedback({ phase: "thanks", resolved });
     } catch (err: unknown) {
       console.error("Feedback submit failed", err);
@@ -1219,6 +1408,9 @@ function ChatApp({
       setMessages((prev) => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
+        // The thread may have been swapped under us (machine switch,
+        // history open) — never graft text onto a foreign message.
+        if (!last || last.role !== "assistant" || last.error) return prev;
         copy[copy.length - 1] = { ...last, content: last.content + slice };
         return copy;
       });
@@ -1240,6 +1432,15 @@ function ChatApp({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const myRun = ++runIdRef.current;
+    // Only a stream that still owns the thread may write to it. Stop,
+    // machine switch, history open and new-chat all bump runIdRef.
+    const owns = () => runIdRef.current === myRun;
+    // `done` closes every healthy turn; `error` closes a failed one. A
+    // stream that ends with neither was cut off (proxy timeout, dropped
+    // connection) and must not be left looking like a finished answer.
+    let sawDone = false;
+    let sawError = false;
 
     try {
       const res = await fetchWithAuth("/api/chat", {
@@ -1253,13 +1454,18 @@ function ChatApp({
           conversationId,
           // Error-flagged bubbles hold outage copy, not assistant prose —
           // they must never be shipped back to the model as real turns.
+          // Empty assistant turns (a Stop before any text) are rejected
+          // by the server — and carry nothing the model needs.
           messages: baseMessages
             .slice(0, -1)
-            .filter((m) => !m.error)
+            .filter(
+              (m) =>
+                !m.error && !(m.role === "assistant" && !m.content.trim()),
+            )
             .map((m) => ({
               role: m.role,
               content: m.content,
-              attachmentIds: m.attachments?.map((a) => a.id),
+              attachmentIds: m.attachments?.slice(0, MAX_ATTACHMENTS).map((a) => a.id),
             })),
         }),
       });
@@ -1270,7 +1476,17 @@ function ChatApp({
         if (res.status === 401 || res.status === 403) {
           throw new SessionExpiredError();
         }
-        throw new Error(`Server error ${res.status}`);
+        // The server's JSON error bodies are already translated for
+        // the operator's locale — prefer them over a generic sentence.
+        const body = (await res.json().catch(() => null)) as {
+          error?: unknown;
+        } | null;
+        throw new ChatHttpError(
+          res.status,
+          typeof body?.error === "string" && body.error.length > 0
+            ? body.error
+            : undefined,
+        );
       }
 
       const reader = res.body.getReader();
@@ -1319,6 +1535,19 @@ function ChatApp({
             });
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
+          } else if (event === "done") {
+            sawDone = true;
+          } else if (event === "truncated") {
+            // Model hit max_tokens. The text is intact but incomplete —
+            // flag the bubble so a short notice renders under it.
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") {
+                copy[copy.length - 1] = { ...last, truncated: true };
+              }
+              return copy;
+            });
           } else if (event === "tool_use") {
             // Anthropic just opened a content block for a tool call —
             // either one of our custom tools (search_kb, list_documents)
@@ -1398,6 +1627,11 @@ function ChatApp({
               });
             }
           } else if (event === "error") {
+            sawError = true;
+            // Whatever text already streamed stays on screen — the card
+            // goes underneath it, so the operator keeps the half answer
+            // and still gets "Try again".
+            const flushed = pendingRef.current;
             pendingRef.current = "";
             const rawKind = typeof data.kind === "string" ? data.kind : "error";
             const kind: OutageInfo["kind"] =
@@ -1414,24 +1648,53 @@ function ChatApp({
               typeof data.statusUrl === "string" ? data.statusUrl : undefined;
             const message =
               typeof data.message === "string" ? data.message : "";
+            if (!owns()) continue;
             setMessages((prev) => {
               const copy = [...prev];
               const prevMsg = copy[copy.length - 1];
+              const kept =
+                prevMsg?.role === "assistant" ? prevMsg.content + flushed : "";
               copy[copy.length - 1] = {
+                ...(prevMsg?.role === "assistant" ? prevMsg : {}),
                 role: "assistant",
-                content: message,
+                content: kept,
                 createdAt: prevMsg?.createdAt ?? Date.now(),
                 error: { kind, title, statusUrl },
+                errorMessage: message,
               };
               return copy;
             });
           }
         }
       }
+
+      // Stream closed without `done` or `error`: the answer was cut
+      // off upstream. An empty bubble becomes an error card; a partial
+      // answer keeps its text and gets the card underneath.
+      if (!sawDone && !sawError && owns()) {
+        const flushed = pendingRef.current;
+        pendingRef.current = "";
+        const title = tChat("errorConnectionTitle");
+        const body = tChat("errorCutOffBody");
+        setMessages((prev) => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (!last || last.role !== "assistant" || last.error) return prev;
+          copy[copy.length - 1] = {
+            ...last,
+            content: last.content + flushed,
+            error: { kind: "error", title },
+            errorMessage: body,
+          };
+          return copy;
+        });
+      }
     } catch (err: unknown) {
       // Caller-initiated aborts (component unmount, machine switch) aren't
       // errors — just stop quietly so the UI doesn't flash an outage card.
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted || !owns()) {
+        // stopGenerating() / cancelActiveStream() already dealt with
+        // the bubble (or replaced the thread). Nothing to render here.
         pendingRef.current = "";
       } else if (err instanceof SessionExpiredError) {
         // Auth is gone (expired bearer or revoked QR token). Render the
@@ -1444,11 +1707,12 @@ function ChatApp({
           const prevMsg = copy[copy.length - 1];
           copy[copy.length - 1] = {
             role: "assistant",
-            content: inQrMode
-              ? tChat("sessionExpiredBodyQr")
-              : tChat("sessionExpiredBody"),
+            content: "",
             createdAt: prevMsg?.createdAt ?? Date.now(),
             error: { kind: "session", title: tChat("sessionExpiredTitle") },
+            errorMessage: inQrMode
+              ? tChat("sessionExpiredBodyQr")
+              : tChat("sessionExpiredBody"),
           };
           return copy;
         });
@@ -1459,27 +1723,43 @@ function ChatApp({
         // Raw error strings ("Failed to fetch", "Server error 500") are
         // jargon to an operator; log them, show a localized sentence.
         console.error("Chat stream failed", err);
-        const serverStatus =
-          err instanceof Error
-            ? /^Server error (\d+)/.exec(err.message)?.[1]
-            : undefined;
+        const http = err instanceof ChatHttpError ? err : null;
+        // 4xx = the request itself was refused (too long, bad shape…);
+        // repeating it verbatim can't help — except timeouts and rate
+        // limits, which are exactly the cases where a retry does.
+        const rejected =
+          !!http &&
+          http.status >= 400 &&
+          http.status < 500 &&
+          http.status !== 408 &&
+          http.status !== 429;
+        const body = http
+          ? http.serverMessage ?? tChat("errorServerBody", { status: http.status })
+          : tChat("errorNetworkBody");
         pendingRef.current = "";
         setMessages((prev) => {
           const copy = [...prev];
           const prevMsg = copy[copy.length - 1];
           copy[copy.length - 1] = {
             role: "assistant",
-            content: serverStatus
-              ? tChat("errorServerBody", { status: Number(serverStatus) })
-              : tChat("errorNetworkBody"),
+            content: "",
             createdAt: prevMsg?.createdAt ?? Date.now(),
-            error: { kind: "error", title: tChat("errorConnectionTitle") },
+            error: {
+              kind: "error",
+              title: rejected
+                ? tChat("errorRequestTitle")
+                : tChat("errorConnectionTitle"),
+            },
+            errorMessage: body,
+            noRetry: rejected,
           };
           return copy;
         });
       }
     } finally {
-      streamDoneRef.current = true;
+      // Only the owning run may end the drain — a newer stream has its
+      // own streamDoneRef lifecycle.
+      if (owns()) streamDoneRef.current = true;
       if (abortRef.current === controller) abortRef.current = null;
     }
   }
@@ -1491,7 +1771,9 @@ function ChatApp({
     // remove it; we don't drop spinners silently into the sent message.
     const readyAttachments = pendingAttachments.filter((p) => p.status === "ready");
     const hasAttachments = readyAttachments.length > 0;
-    if ((!text && !hasAttachments) || streaming) return;
+    if ((!text && !hasAttachments) || inputLocked) return;
+    // A send supersedes any history open still in flight.
+    openSeqRef.current += 1;
     // Any send means the operator isn't done — drop the idle prompt
     // (and any in-flight feedback state) so it doesn't sit there stale.
     clearIdleTimer();
@@ -1541,7 +1823,7 @@ function ChatApp({
   // failed assistant bubble with a fresh empty one and re-streams from
   // the same conversation prefix — no new user message is appended.
   async function retry() {
-    if (streaming) return;
+    if (inputLocked) return;
     if (messages.length < 2) return;
     const failed = messages[messages.length - 1];
     if (failed?.role !== "assistant" || !failed.error) return;
@@ -1558,7 +1840,7 @@ function ChatApp({
   // Regenerate the last assistant reply (after a successful turn). Drops
   // the existing bubble and re-streams from the same conversation prefix.
   async function regenerate() {
-    if (streaming) return;
+    if (inputLocked) return;
     if (messages.length < 2) return;
     const last = messages[messages.length - 1];
     if (last?.role !== "assistant") return;
@@ -1572,12 +1854,38 @@ function ChatApp({
     await runChatStream(next);
   }
 
-  // Manual cancel: aborts the in-flight stream. Whatever has already
-  // been rendered into the assistant bubble is kept as-is — the abort
-  // path clears `pendingRef` so no further chunks land, and the drain
-  // loop notices streamDoneRef and flips `streaming` back off.
+  // Manual cancel: aborts the in-flight stream. Text already received
+  // (including anything still queued for the drain) is kept. A bubble
+  // that never got any text becomes a "Stopped" card with "Try again" —
+  // an empty assistant turn would otherwise sit there as "Working…"
+  // forever and be rejected by the server on the next send.
   function stopGenerating() {
-    abortRef.current?.abort();
+    if (!abortRef.current) return;
+    const flushed = pendingRef.current;
+    cancelActiveStream();
+    const title = tChat("stoppedTitle");
+    const body = tChat("stoppedBody");
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (!last || last.role !== "assistant" || last.error) return prev;
+      const content = last.content + flushed;
+      const now = Date.now();
+      const toolSteps = last.toolSteps?.map((step) =>
+        step.completedAt ? step : { ...step, completedAt: now },
+      );
+      copy[copy.length - 1] = content.trim()
+        ? { ...last, content, toolSteps }
+        : {
+            ...last,
+            content: "",
+            toolSteps,
+            error: { kind: "error", title },
+            errorMessage: body,
+          };
+      return copy;
+    });
+    setStreaming(false);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1600,9 +1908,6 @@ function ChatApp({
   const hasAssistantReply = messages.some(
     (m) => m.role === "assistant" && m.content.length > 0,
   );
-  // Escalating does NOT lock the input — "also, it's now leaking oil"
-  // after the tech was called is exactly the follow-up we want to keep.
-  const inputLocked = streaming || feedback.phase === "thanks";
   const hasReadyAttachment = pendingAttachments.some((p) => p.status === "ready");
   const isUploadingAttachment = pendingAttachments.some(
     (p) => p.status === "uploading",
@@ -1611,10 +1916,6 @@ function ChatApp({
     !inputLocked &&
     !isUploadingAttachment &&
     (input.trim().length > 0 || hasReadyAttachment);
-  const canAttach =
-    !inputLocked &&
-    !!machine?.id &&
-    pendingAttachments.length < MAX_ATTACHMENTS;
   const showActionButtons =
     feedback.phase === "hidden" &&
     (escalate.phase === "hidden" || escalate.phase === "error");
@@ -1773,6 +2074,7 @@ function ChatApp({
             scroll content bleed through. */}
         <div className="pointer-events-auto w-full bg-[var(--color-background)]">
         <div className="mx-auto max-w-3xl px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 sm:px-4 sm:pb-8">
+          {footerNotice}
           {(isEmpty || forceShowSuggestions) && (
             <div className="msg-in mb-6 sm:mb-10">
               <div className="flex max-w-xl flex-wrap gap-2">
@@ -1789,7 +2091,7 @@ function ChatApp({
                         setForceShowSuggestions(false);
                         void send(q);
                       }}
-                      disabled={streaming}
+                      disabled={inputLocked}
                       className="chip-in tap-target max-w-full rounded-full whitespace-normal text-left sm:text-[14px]"
                       style={{ ["--chip-index" as string]: i }}
                     >
@@ -2256,22 +2558,27 @@ function MessageRow({
     );
   }
 
-  if (message.error) {
-    // Outage / network failure card. We render this in place of the
-    // normal markdown bubble so the operator gets a clear non-prose
-    // affordance ("Try again", optional status link) instead of a
-    // chat-styled error sentence they might miss. Session expiry gets
-    // a recovery action instead of a retry that can never succeed.
-    const isSession = message.error.kind === "session";
-    return (
-      <OutageCard
-        info={message.error}
-        message={message.content}
-        onRetry={isSession ? undefined : onRetry}
-        action={isSession ? sessionAction : undefined}
-      />
-    );
-  }
+  // Outage / network failure card. Rendered in place of the markdown
+  // bubble when nothing arrived, or beneath it when the answer broke
+  // off part-way — either way the operator gets a clear non-prose
+  // affordance ("Try again", optional status link) instead of a
+  // chat-styled error sentence they might miss. Session expiry gets a
+  // recovery action instead of a retry that can never succeed; request
+  // rejections (4xx) get neither, since repeating them can't help.
+  const errorCard = message.error ? (
+    <OutageCard
+      info={message.error}
+      message={message.errorMessage ?? message.content}
+      onRetry={
+        message.error.kind === "session" || message.noRetry
+          ? undefined
+          : onRetry
+      }
+      action={message.error.kind === "session" ? sessionAction : undefined}
+    />
+  ) : null;
+
+  if (errorCard && !message.content) return errorCard;
 
   if (!message.content) {
     // No text yet. If the model has already announced a tool call,
@@ -2295,7 +2602,17 @@ function MessageRow({
       {isStreaming && message.toolSteps && message.toolSteps.length > 0 ? (
         <ToolStepsList steps={message.toolSteps} />
       ) : null}
-      {!isStreaming && (
+      {message.truncated && !isStreaming && (
+        <p
+          role="note"
+          className="flex items-center gap-2 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]"
+        >
+          <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {tChat("truncatedNotice")}
+        </p>
+      )}
+      {errorCard}
+      {!isStreaming && !message.error && (
         <div className="-mt-1 flex items-center gap-1">
           <SpeakButton text={message.content} />
           <CopyButton text={message.content} />

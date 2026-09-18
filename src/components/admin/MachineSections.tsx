@@ -118,7 +118,7 @@ export function MachineSections({ machineId }: { machineId: string }) {
           keepMounted
           panel={
             <div className="pt-5 sm:pt-6">
-              <MachineDetail machineId={machineId} />
+              <MachineDetail key={machineId} machineId={machineId} />
             </div>
           }
         >

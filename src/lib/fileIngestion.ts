@@ -24,6 +24,10 @@ import {
   chunkText,
   ensureFolderPath,
   ensureMachineKb,
+  markFailedOnError,
+  normalizeFolderPath,
+  phaseLabel,
+  withIngestBudget,
 } from "./ingestion";
 import { regenerateSuggestedQuestionsSafe } from "./suggestions";
 import { getSupabaseServerClient } from "./supabase";
@@ -41,6 +45,9 @@ export type IngestFileInput = {
   summary?: string | null;
   folderPath?: string | null;
   createdBy?: string;
+  // ms epoch when the HTTP request arrived; the time budget counts from
+  // here. Defaults to now.
+  requestStartedAt?: number;
 };
 
 export type IngestFileResult = {
@@ -56,7 +63,10 @@ export type IngestFileResult = {
 
 // Storage-based entry point: the bytes are already in the bucket, so we
 // download them once for text extraction instead of receiving them
-// through the function request body.
+// through the function request body. Wrapped in the same hard time budget
+// and failure marking as the PDF pipeline: a ZIP full of text that embeds
+// for longer than the platform allows used to be reaped mid-flight and
+// sit in 'embedding' forever.
 export async function ingestFileFromStorage(
   input: IngestFileInput,
 ): Promise<IngestFileResult> {
@@ -64,6 +74,9 @@ export async function ingestFileFromStorage(
   await ensureMachineKb(input.machineId, input.accountId, input.machineName);
 
   const { documentId, storagePath } = input;
+  // Path validation happens before any row exists so a bad path is a
+  // plain 400 rather than a failed document.
+  const folderPath = normalizeFolderPath(input.folderPath);
 
   const { data: blob, error: dlErr } = await supabase.storage
     .from("kb-documents")
@@ -75,12 +88,11 @@ export async function ingestFileFromStorage(
   }
   const fileBuffer = Buffer.from(await blob.arrayBuffer());
   const byteSize = fileBuffer.byteLength;
-  const title = input.fileName.replace(/\.[^.]+$/, "") || input.fileName;
+  const title =
+    input.fileName.replace(/\.[^.]+$/, "").trim() ||
+    input.fileName.trim() ||
+    "upload";
 
-  const folderPath =
-    typeof input.folderPath === "string" && input.folderPath.trim()
-      ? input.folderPath.trim()
-      : null;
   if (folderPath) {
     await ensureFolderPath(input.machineId, folderPath);
   }
@@ -97,9 +109,25 @@ export async function ingestFileFromStorage(
     created_by: input.createdBy ?? "admin",
     folder_path: folderPath,
     progress: 20,
-    progress_label: "Læser fil",
+    progress_label: phaseLabel("reading_file"),
   });
   if (docErr) throw new Error(`kb_documents insert failed: ${docErr.message}`);
+
+  return markFailedOnError(
+    documentId,
+    withIngestBudget(documentId, runFilePipeline(input, fileBuffer), {
+      startedAt: input.requestStartedAt,
+    }),
+  );
+}
+
+async function runFilePipeline(
+  input: IngestFileInput,
+  fileBuffer: Buffer,
+): Promise<IngestFileResult> {
+  const supabase = getSupabaseServerClient();
+  const { documentId, storagePath } = input;
+  const byteSize = fileBuffer.byteLength;
 
   try {
     const { text, source } = extractFileText(fileBuffer);
@@ -128,6 +156,17 @@ export async function ingestFileFromStorage(
     }
 
     const chunks = chunkText(text);
+    await supabase
+      .from("kb_documents")
+      .update({
+        progress: 40,
+        progress_label: phaseLabel("embedding", {
+          done: 0,
+          total: chunks.length,
+        }),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", documentId);
     const embeddings = await embedDocuments(
       chunks.map((c) => c.text),
       { usage: { accountId: input.accountId, machineId: input.machineId } },
@@ -154,7 +193,10 @@ export async function ingestFileFromStorage(
     const BATCH = 50;
     for (let i = 0; i < rows.length; i += BATCH) {
       const slice = rows.slice(i, i + BATCH);
-      const { error } = await supabase.from("kb_chunks").insert(slice);
+      const { error } = await supabase.from("kb_chunks").upsert(slice, {
+        onConflict: "document_id,ordinal,embedding_model",
+        ignoreDuplicates: true,
+      });
       if (error) {
         throw new Error(
           `kb_chunks insert failed at offset ${i}: ${error.message}`,
@@ -192,7 +234,7 @@ export async function ingestFileFromStorage(
         status: "failed",
         progress: null,
         progress_label:
-          err instanceof Error ? err.message.slice(0, 200) : "Fejlede",
+          err instanceof Error ? err.message.slice(0, 200) : "Failed",
         updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);

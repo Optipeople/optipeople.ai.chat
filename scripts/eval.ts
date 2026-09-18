@@ -1,11 +1,12 @@
 // Answer-correctness eval harness (docs/answer-correctness-plan.md fix H).
 //
 // Runs golden questions against the REAL chat endpoint, against the REAL
-// knowledge base, and asserts on the answer and on which tools the model
-// called. There is no mocking here on purpose: every cause of the
-// 2026-08-19 wrong-DIP-switch answer lived in the seams between
-// extraction, chunking, retrieval and the prompt, and a harness that
-// stubs any of those cannot see the bug it exists to catch.
+// knowledge base, and asserts on the answer, on which tools the model
+// called, and on what retrieval actually returned. There is no mocking
+// here on purpose: every cause of the 2026-08-19 wrong-DIP-switch answer
+// lived in the seams between extraction, chunking, retrieval and the
+// prompt, and a harness that stubs any of those cannot see the bug it
+// exists to catch.
 //
 // Usage:
 //   npm run dev                     # in another terminal
@@ -13,13 +14,26 @@
 //   EVAL_MACHINE_ID=<machine> npm run eval -- nx502-dip-backup
 //
 // Env:
-//   EVAL_MACHINE_ID  default machine for cases that don't name one
-//   EVAL_BASE_URL    default http://localhost:3000
-//   EVAL_TIMEOUT_MS  per-request ceiling, default 180000
+//   EVAL_MACHINE_ID          default machine for cases that don't name one
+//   EVAL_BASE_URL            default http://localhost:3000
+//   EVAL_TIMEOUT_MS          per-request ceiling, default 180000
+//   EVAL_FORCE_VOYAGE_FAIL   "1" selects the infra-failure cases. The SAME
+//                            variable must be set on the dev server, where
+//                            embedQuery honours it by throwing, so the run
+//                            exercises the keyword-only fallback. Cases
+//                            without `infraFailure` are skipped in that
+//                            mode and infra cases are skipped outside it.
 //
 // Auth: the harness reads the fixture machine's qr_token straight from
 // machine_kb with the service-role key and passes it as X-QR-Token, which
 // is the same door the shop-floor sticker uses. No Optipeople login needed.
+//
+// Retrieval visibility: the chat route persists every search_kb call as a
+// `messages` row with role 'tool' and the returned kb_chunks ids in
+// `tool_chunks`. The harness picks up the conversation id from the SSE
+// `conversation` event and reads those rows back with the service client,
+// so assertions can look at the chunks the model actually saw, not only at
+// the prose it produced from them.
 //
 // Two modes per case:
 //   single    ask once, assert on the answer and the tool calls.
@@ -36,6 +50,7 @@ import { getSupabaseServerClient } from "../src/lib/supabase.ts";
 
 const BASE_URL = process.env.EVAL_BASE_URL ?? "http://localhost:3000";
 const TIMEOUT_MS = Number(process.env.EVAL_TIMEOUT_MS ?? 180_000);
+const FORCE_VOYAGE_FAIL = process.env.EVAL_FORCE_VOYAGE_FAIL === "1";
 const CASES_DIR = join(process.cwd(), "evals", "cases");
 const OUT_DIR = join(process.cwd(), "evals", "out");
 
@@ -57,10 +72,21 @@ type Assertion =
   | { type: "toolCalled"; name: string; label?: string }
   | { type: "toolNotCalled"; name: string; label?: string }
   // The answer must contain a fenced block or a Markdown table, i.e. it
-  // quoted the source rather than paraphrasing a value out of it.
+  // quoted the source rather than paraphrasing a value out of it, AND at
+  // least one quoted row/line must appear verbatim in a chunk that
+  // search_kb actually returned this turn. A beautifully formatted table
+  // that exists nowhere in the manual is the failure mode this pins.
   | { type: "quotesSource"; label?: string }
   // A source chip must point at one of these pages.
-  | { type: "citesPage"; pages: number[]; label?: string };
+  | { type: "citesPage"; pages: number[]; label?: string }
+  // Retrieval must have returned a chunk covering one of these pages
+  // (page_from <= N <= page_to). This is the retrieval-side twin of
+  // citesPage: it fails even when the model happens to answer correctly
+  // from the wrong chunk.
+  | { type: "pageInRetrieval"; pages: number[]; label?: string }
+  // The answer must say the manual does not cover the question and must
+  // not hand out a value with a unit. See REFUSAL_RE / VALUE_WITH_UNIT_RE.
+  | { type: "mustRefuse"; label?: string };
 
 type EvalCase = {
   id: string;
@@ -75,6 +101,19 @@ type EvalCase = {
   assert: Assertion[];
   /** Assertions on the answer after the pushback. */
   assertAfterPushback?: Assertion[];
+  /** Shorthand for a `mustRefuse` assertion on the first answer. */
+  mustRefuse?: boolean;
+  /**
+   * Shorthand for a `pageInRetrieval` assertion on the first answer. One
+   * page or several acceptable pages.
+   */
+  expectedPageInRetrieval?: number | number[];
+  /**
+   * Marks a case that only makes sense with an infrastructure failure
+   * injected. "voyage": the embedding call fails, retrieval must fall back
+   * to keyword-only search. Selected by EVAL_FORCE_VOYAGE_FAIL=1.
+   */
+  infraFailure?: "voyage";
 };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +124,15 @@ type ChatTurn = {
   answer: string;
   toolCalls: string[];
   sources: { id: string; title: string; pageFrom: number | null }[];
+  conversationId: string | null;
   error: string | null;
+};
+
+type RetrievedChunk = {
+  id: string;
+  text: string;
+  page_from: number | null;
+  page_to: number | null;
 };
 
 type WireMessage = { role: "user" | "assistant"; content: string };
@@ -124,6 +171,7 @@ async function askChat(args: {
     answer: "",
     toolCalls: [],
     sources: [],
+    conversationId: null,
     error: null,
   };
 
@@ -161,6 +209,9 @@ async function askChat(args: {
       } else if (event === "sources") {
         const sources = (payload as { sources?: ChatTurn["sources"] }).sources;
         if (Array.isArray(sources)) turn.sources = sources;
+      } else if (event === "conversation") {
+        const id = (payload as { id?: string }).id;
+        if (typeof id === "string") turn.conversationId = id;
       } else if (event === "error") {
         const p = payload as { message?: string; title?: string };
         turn.error = p.message ?? p.title ?? "unknown error";
@@ -168,6 +219,34 @@ async function askChat(args: {
     }
   }
   return turn;
+}
+
+// The chunks search_kb returned during this conversation. Every tool
+// execution is persisted as a role='tool' message carrying the chunk ids,
+// so this is exactly what the model had in front of it, in the same text
+// the model saw.
+async function retrievedChunksFor(
+  conversationId: string | null,
+): Promise<RetrievedChunk[]> {
+  if (!conversationId) return [];
+  const supabase = getSupabaseServerClient();
+  const { data: msgs, error } = await supabase
+    .from("messages")
+    .select("tool_chunks")
+    .eq("conversation_id", conversationId)
+    .eq("role", "tool");
+  if (error) throw new Error(`messages lookup failed: ${error.message}`);
+  const ids = new Set<string>();
+  for (const m of (msgs ?? []) as { tool_chunks: string[] | null }[]) {
+    for (const id of m.tool_chunks ?? []) ids.add(id);
+  }
+  if (ids.size === 0) return [];
+  const { data: chunks, error: chunkErr } = await supabase
+    .from("kb_chunks")
+    .select("id, text, page_from, page_to")
+    .in("id", [...ids]);
+  if (chunkErr) throw new Error(`kb_chunks lookup failed: ${chunkErr.message}`);
+  return (chunks ?? []) as RetrievedChunk[];
 }
 
 // ---------------------------------------------------------------------------
@@ -190,9 +269,13 @@ function describe(a: Assertion): string {
     case "toolNotCalled":
       return `did not call ${a.name}`;
     case "quotesSource":
-      return "quoted the source verbatim (code block or table)";
+      return "quoted the source verbatim (code block or table row present in a retrieved chunk)";
     case "citesPage":
       return `cited page ${a.pages.join(" or ")}`;
+    case "pageInRetrieval":
+      return `retrieval returned a chunk covering page ${a.pages.join(" or ")}`;
+    case "mustRefuse":
+      return "says the manual does not cover it and gives no value with a unit";
   }
 }
 
@@ -200,7 +283,68 @@ function describe(a: Assertion): string {
 // operator the manual's own words instead of a paraphrase.
 const QUOTE_RE = /```[\s\S]*?```|^[^\n]*\|[^\n]*\|[^\n]*$/m;
 
-function check(a: Assertion, turn: ChatTurn): Failure | null {
+// Markdown table separator rows carry no content to look for.
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+// Table padding, cell alignment and line wrapping differ between the
+// manual's Markdown and the model's, so compare with pipes tightened and
+// whitespace collapsed.
+function normaliseQuote(s: string): string {
+  return s
+    .replace(/\s*\|\s*/g, "|")
+    .replace(/^\|+|\|+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Every line the answer presents as a verbatim quote: table rows (minus
+// separators) and the lines inside fenced blocks.
+function quotedLines(answer: string): string[] {
+  const out: string[] = [];
+  for (const m of answer.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+    for (const line of m[1].split("\n")) {
+      if (line.trim() && !TABLE_SEPARATOR_RE.test(line)) out.push(line);
+    }
+  }
+  const withoutFences = answer.replace(/```[\s\S]*?```/g, "");
+  for (const line of withoutFences.split("\n")) {
+    if (/\|[^\n]*\|/.test(line) && !TABLE_SEPARATOR_RE.test(line)) out.push(line);
+  }
+  return out.map(normaliseQuote).filter((l) => l.length >= 3);
+}
+
+// "the manual does not cover this", in both languages the operators use.
+const REFUSAL_RE = new RegExp(
+  [
+    // Danish
+    "findes ikke",
+    "d[æa]kker ikke",
+    "ikke d[æa]kket",
+    "ikke (?:i|en del af|tilg[æa]ngelig|beskrevet|omtalt|n[æa]vnt|dokumenteret)",
+    "har ikke (?:oplysninger|information|dokumentation|noget)",
+    "ingen (?:oplysninger|information|dokumentation)",
+    "kan ikke finde",
+    "uden ?for",
+    // English
+    "not (?:in|part of|available|covered|documented|mentioned|described)",
+    "does ?n[o']t (?:cover|contain|include|mention|describe|have)",
+    "no (?:information|documentation|coverage)",
+    "(?:don'?t|do not|cannot|can'?t) (?:have|find)",
+    "outside (?:the|of)",
+  ].join("|"),
+  "i",
+);
+
+// A number followed by a unit an operator could act on. Case-sensitive so
+// "W629" (catalogue number) and "3 sider" do not fire; the lookarounds
+// keep "NX502" and "E1-09" out.
+const VALUE_WITH_UNIT_RE =
+  /(?<![\w.,-])\d+(?:[.,]\d+)?\s?(?:Nm|N·m|N-m|kNm|kg|mm|cm|V|VDC|VAC|A|mA|W|kW|Hz|kHz|bar|kPa|MPa|°C|°F|rpm|ms|sec)(?![\w])/;
+
+type CheckContext = { chunks: RetrievedChunk[] };
+
+function check(a: Assertion, turn: ChatTurn, ctx: CheckContext): Failure | null {
   const fail = (detail: string): Failure => ({
     assertion: describe(a),
     detail,
@@ -226,10 +370,29 @@ function check(a: Assertion, turn: ChatTurn): Failure | null {
       return turn.toolCalls.includes(a.name)
         ? fail(`tools called: ${turn.toolCalls.join(", ")}`)
         : null;
-    case "quotesSource":
-      return QUOTE_RE.test(turn.answer)
-        ? null
-        : fail("no fenced block and no table row in the answer");
+    case "quotesSource": {
+      if (!QUOTE_RE.test(turn.answer)) {
+        return fail("no fenced block and no table row in the answer");
+      }
+      const lines = quotedLines(turn.answer);
+      if (lines.length === 0) {
+        return fail("quote present but it carries no content lines");
+      }
+      if (ctx.chunks.length === 0) {
+        return fail(
+          "answer quotes something but no search_kb chunks were persisted " +
+            "for this conversation (no conversation id, or search never ran)",
+        );
+      }
+      const haystacks = ctx.chunks.map((c) => normaliseQuote(c.text));
+      const found = lines.filter((l) => haystacks.some((h) => h.includes(l)));
+      if (found.length > 0) return null;
+      return fail(
+        `none of the ${lines.length} quoted line(s) appears in any of the ` +
+          `${ctx.chunks.length} retrieved chunk(s); first quoted line: ` +
+          JSON.stringify(lines[0].slice(0, 120)),
+      );
+    }
     case "citesPage": {
       const cited = turn.sources
         .map((s) => s.pageFrom)
@@ -238,19 +401,68 @@ function check(a: Assertion, turn: ChatTurn): Failure | null {
         ? null
         : fail(`cited pages: ${cited.join(", ") || "(none)"}`);
     }
+    case "pageInRetrieval": {
+      const covered = ctx.chunks.some((c) => {
+        if (typeof c.page_from !== "number") return false;
+        const to = typeof c.page_to === "number" ? c.page_to : c.page_from;
+        return a.pages.some((n) => c.page_from! <= n && n <= to);
+      });
+      if (covered) return null;
+      const ranges = ctx.chunks
+        .map((c) =>
+          typeof c.page_from === "number"
+            ? c.page_to && c.page_to !== c.page_from
+              ? `${c.page_from}-${c.page_to}`
+              : String(c.page_from)
+            : "?",
+        )
+        .join(", ");
+      return fail(`retrieved chunk pages: ${ranges || "(no chunks)"}`);
+    }
+    case "mustRefuse": {
+      if (!REFUSAL_RE.test(turn.answer)) {
+        return fail("no not-covered phrase (DA/EN) in the answer");
+      }
+      const m = VALUE_WITH_UNIT_RE.exec(turn.answer);
+      if (m) return fail(`answer hands out a value with a unit: "${m[0]}"`);
+      return null;
+    }
   }
+}
+
+// Expands the case-level shorthands into assertions on the first answer.
+function firstTurnAssertions(c: EvalCase): Assertion[] {
+  const out: Assertion[] = [...c.assert];
+  if (c.mustRefuse) {
+    out.push({ type: "mustRefuse", label: "refuses: manual does not cover it" });
+  }
+  if (c.expectedPageInRetrieval !== undefined) {
+    const pages = Array.isArray(c.expectedPageInRetrieval)
+      ? c.expectedPageInRetrieval
+      : [c.expectedPageInRetrieval];
+    out.push({ type: "pageInRetrieval", pages });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
+type TurnRecord = {
+  answer: string;
+  toolCalls: string[];
+  conversationId: string | null;
+  retrievedChunks: { id: string; page_from: number | null; page_to: number | null }[];
+};
+
 type CaseResult = {
   id: string;
   about?: string;
   passed: boolean;
+  skipped?: string;
   failures: Failure[];
-  turns: { answer: string; toolCalls: string[] }[];
+  turns: TurnRecord[];
   error?: string;
 };
 
@@ -290,6 +502,41 @@ async function qrTokenFor(machineId: string): Promise<string> {
   return token;
 }
 
+// Infra-failure cases need the fault injected on the server, which the
+// harness cannot do over HTTP; the operator sets EVAL_FORCE_VOYAGE_FAIL=1
+// on both processes. Running a normal case against a server with Voyage
+// disabled, or an infra case against a healthy server, would measure the
+// wrong thing, so each mode runs only its own cases.
+function skipReason(c: EvalCase): string | null {
+  if (c.infraFailure && !FORCE_VOYAGE_FAIL) {
+    return "infra case: needs EVAL_FORCE_VOYAGE_FAIL=1 on server and harness";
+  }
+  if (!c.infraFailure && FORCE_VOYAGE_FAIL) {
+    return "normal case: skipped while EVAL_FORCE_VOYAGE_FAIL=1";
+  }
+  return null;
+}
+
+async function recordTurn(turn: ChatTurn): Promise<{
+  record: TurnRecord;
+  ctx: CheckContext;
+}> {
+  const chunks = await retrievedChunksFor(turn.conversationId);
+  return {
+    record: {
+      answer: turn.answer,
+      toolCalls: turn.toolCalls,
+      conversationId: turn.conversationId,
+      retrievedChunks: chunks.map((c) => ({
+        id: c.id,
+        page_from: c.page_from,
+        page_to: c.page_to,
+      })),
+    },
+    ctx: { chunks },
+  };
+}
+
 async function runCase(
   c: EvalCase,
   defaultMachineId: string | undefined,
@@ -302,6 +549,12 @@ async function runCase(
     failures: [],
     turns: [],
   };
+  const skip = skipReason(c);
+  if (skip) {
+    result.skipped = skip;
+    result.passed = true;
+    return result;
+  }
   if (!machineId) {
     result.error =
       "no machineId on the case and EVAL_MACHINE_ID is not set";
@@ -312,13 +565,14 @@ async function runCase(
     const qrToken = await qrTokenFor(machineId);
     const messages: WireMessage[] = [{ role: "user", content: c.question }];
     const first = await askChat({ machineId, qrToken, messages });
-    result.turns.push({ answer: first.answer, toolCalls: first.toolCalls });
+    const firstRec = await recordTurn(first);
+    result.turns.push(firstRec.record);
     if (first.error) {
       result.error = `chat error: ${first.error}`;
       return result;
     }
-    for (const a of c.assert) {
-      const f = check(a, first);
+    for (const a of firstTurnAssertions(c)) {
+      const f = check(a, first, firstRec.ctx);
       if (f) result.failures.push(f);
     }
 
@@ -339,13 +593,21 @@ async function runCase(
           { role: "user", content: c.pushback },
         ],
       });
-      result.turns.push({ answer: second.answer, toolCalls: second.toolCalls });
+      const secondRec = await recordTurn(second);
+      result.turns.push(secondRec.record);
       if (second.error) {
         result.error = `chat error (pushback): ${second.error}`;
         return result;
       }
+      // The pushback turn is a new conversation on the wire, so its
+      // retrieval is whatever the model fetched this time. A quote that
+      // only exists in the FIRST turn's chunks is still the manual's text,
+      // so both turns' chunks count.
+      const ctx: CheckContext = {
+        chunks: [...secondRec.ctx.chunks, ...firstRec.ctx.chunks],
+      };
       for (const a of c.assertAfterPushback ?? []) {
-        const f = check(a, second);
+        const f = check(a, second, ctx);
         if (f) result.failures.push(f);
       }
     }
@@ -369,7 +631,8 @@ async function main() {
 
   console.log(
     `Running ${cases.length} case(s) against ${BASE_URL}` +
-      (defaultMachineId ? ` (machine ${defaultMachineId})` : ""),
+      (defaultMachineId ? ` (machine ${defaultMachineId})` : "") +
+      (FORCE_VOYAGE_FAIL ? " [EVAL_FORCE_VOYAGE_FAIL=1: infra cases only]" : ""),
   );
 
   const results: CaseResult[] = [];
@@ -380,7 +643,8 @@ async function main() {
     process.stdout.write(`  ${c.id} ... `);
     const r = await runCase(c, defaultMachineId);
     results.push(r);
-    if (r.error) console.log(`ERROR (${r.error})`);
+    if (r.skipped) console.log(`skip (${r.skipped})`);
+    else if (r.error) console.log(`ERROR (${r.error})`);
     else if (r.passed) console.log("pass");
     else console.log(`FAIL (${r.failures.length})`);
     for (const f of r.failures) {
@@ -389,7 +653,9 @@ async function main() {
     }
   }
 
-  const failed = results.filter((r) => !r.passed);
+  const skipped = results.filter((r) => r.skipped);
+  const ran = results.filter((r) => !r.skipped);
+  const failed = ran.filter((r) => !r.passed);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   await mkdir(OUT_DIR, { recursive: true });
   const outPath = join(OUT_DIR, `${stamp}.json`);
@@ -400,8 +666,10 @@ async function main() {
         ranAt: new Date().toISOString(),
         baseUrl: BASE_URL,
         machineId: defaultMachineId ?? null,
-        total: results.length,
-        passed: results.length - failed.length,
+        forceVoyageFail: FORCE_VOYAGE_FAIL,
+        total: ran.length,
+        passed: ran.length - failed.length,
+        skipped: skipped.length,
         results,
       },
       null,
@@ -411,8 +679,14 @@ async function main() {
   );
 
   console.log(
-    `\n${results.length - failed.length}/${results.length} passed. Report: ${outPath}`,
+    `\n${ran.length - failed.length}/${ran.length} passed` +
+      (skipped.length > 0 ? `, ${skipped.length} skipped` : "") +
+      `. Report: ${outPath}`,
   );
+  if (ran.length === 0) {
+    console.log("Nothing ran (every matched case was skipped).");
+    process.exit(1);
+  }
   if (failed.length > 0) {
     console.log("Failed: " + failed.map((f) => f.id).join(", "));
     process.exit(1);

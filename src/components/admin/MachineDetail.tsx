@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronRight,
@@ -28,11 +28,13 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  MAX_IMAGE_UPLOAD_LABEL,
   MAX_UPLOAD_LABEL,
+  adminErrorMessage,
   createAdminFolder,
   deleteAdminDocument,
   deleteAdminFolder,
@@ -60,6 +62,7 @@ import { Select } from "@/components/ui/select";
 import {
   UploadQueuePanel,
   UploadQueueProvider,
+  formatProgressLabel,
   useUploadQueue,
 } from "@/components/admin/uploadQueue";
 import { MachineEscalationCard } from "@/components/admin/MachineEscalationCard";
@@ -68,11 +71,24 @@ import { AutoOrganizeDialog } from "@/components/admin/AutoOrganizeDialog";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
 
-const DA_DATE = new Intl.DateTimeFormat("da-DK", {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-});
+// Locale-aware short date (e.g. "18. sep. 2026" / "Sep 18, 2026"),
+// following the admin's UI language rather than a hard-coded da-DK.
+function useDateFormatter(): Intl.DateTimeFormat {
+  const locale = useLocale();
+  return useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }),
+    [locale],
+  );
+}
+
+// Statuses during which the server owns the row: reprocess would 409 and
+// delete would rip the storage object out from under the pipeline.
+const PROCESSING_STATUSES = new Set(["uploaded", "extracting", "embedding"]);
 
 function formatBytes(b: number | null): string {
   if (b == null) return "—";
@@ -171,7 +187,10 @@ export function MachineDetail({ machineId }: { machineId: string }) {
       )}
     >
       <div className="flex flex-col gap-5 pb-24 sm:gap-8 sm:pb-32">
-        <UploadCard existingFolders={mergedFolders(data)} />
+        <UploadCard
+          existingFolders={mergedFolders(data)}
+          existingTitles={new Set(data.documents.map((d) => d.title))}
+        />
 
         <UploadQueuePanel />
 
@@ -262,6 +281,7 @@ function MachineSummary({
   const t = useTranslations("admin.machineDetail");
   const router = useRouter();
   const confirm = useConfirm();
+  const dateFormat = useDateFormatter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(machine.displayName ?? "");
   const [saving, setSaving] = useState(false);
@@ -486,7 +506,7 @@ function MachineSummary({
         <div className="flex flex-wrap gap-x-2 gap-y-0.5">
           <dt className="text-[var(--color-muted-foreground)]">{t("updatedLabel")}</dt>
           <dd className="text-[var(--color-foreground)]">
-            {DA_DATE.format(new Date(machine.updatedAt))}
+            {dateFormat.format(new Date(machine.updatedAt))}
           </dd>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -534,6 +554,7 @@ function MachineQrCard({
 }) {
   const t = useTranslations("admin.machineDetail");
   const confirm = useConfirm();
+  const dateFormat = useDateFormatter();
   const [busy, setBusy] = useState<"generate" | "revoke" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -602,7 +623,7 @@ function MachineQrCard({
   }
 
   const created = machine.qrTokenCreatedAt
-    ? DA_DATE.format(new Date(machine.qrTokenCreatedAt))
+    ? dateFormat.format(new Date(machine.qrTokenCreatedAt))
     : null;
 
   return (
@@ -719,8 +740,11 @@ const ROOT_FOLDER_SENTINEL = "__root__";
 
 function UploadCard({
   existingFolders,
+  existingTitles,
 }: {
   existingFolders: string[];
+  // Current document titles, so the queue can flag likely duplicates.
+  existingTitles: ReadonlySet<string>;
 }) {
   const t = useTranslations("admin.machineDetail");
   const { enqueueUploads } = useUploadQueue();
@@ -743,16 +767,18 @@ function UploadCard({
   function handleFileInput(list: FileList | null) {
     if (!list || list.length === 0) return;
     const folderPath = pickerFolderPath();
+    let skippedEmpty = 0;
     const files = Array.from(list).flatMap((file) => {
       const kind = classifyFile(file);
+      if (!kind) skippedEmpty++;
       return kind ? [{ file, folderPath, kind }] : [];
     });
-    enqueueUploads(files);
+    enqueueUploads(files, { existingTitles, skippedEmpty });
     if (inputRef.current) inputRef.current.value = "";
   }
 
   async function handleDrop(dt: DataTransfer) {
-    const files = await filesFromDrop(dt);
+    const { files, skippedEmpty } = await filesFromDrop(dt);
     const base = pickerFolderPath();
     enqueueUploads(
       base
@@ -761,6 +787,7 @@ function UploadCard({
             folderPath: f.folderPath ? `${base}/${f.folderPath}` : base,
           }))
         : files,
+      { existingTitles, skippedEmpty },
     );
   }
 
@@ -841,7 +868,10 @@ function UploadCard({
           </button>
         </p>
         <p className="text-[12px] text-[var(--color-muted-foreground)]">
-          {t("maxFileSize", { max: MAX_UPLOAD_LABEL })}
+          {t("maxFileSizeByKind", {
+            max: MAX_UPLOAD_LABEL,
+            imageMax: MAX_IMAGE_UPLOAD_LABEL,
+          })}
         </p>
         <input
           ref={inputRef}
@@ -1572,7 +1602,9 @@ function DocumentRow({
   onToggleSelected: (id: string) => void;
 }) {
   const t = useTranslations("admin.machineDetail");
+  const tq = useTranslations("admin.uploadQueue");
   const confirm = useConfirm();
+  const dateFormat = useDateFormatter();
   const { enqueueReprocess } = useUploadQueue();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(document.summary);
@@ -1582,17 +1614,34 @@ function DocumentRow({
   const [downloading, setDownloading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function reprocess() {
-    const ok = await confirm({
-      title: t("reprocessConfirmTitle", { title: document.title }),
-      description: t("reprocessConfirmBody"),
-      confirmLabel: t("reprocessConfirmLabel"),
-    });
+  // The server owns the row while it's mid-pipeline: reprocess would
+  // 409 and delete would pull the object out from under the worker.
+  const processing = PROCESSING_STATUSES.has(document.status);
+
+  // Two flavours of reprocess: "re-index" lets the server pick the
+  // extraction path (cheap, no Claude tokens unless needed); "force OCR"
+  // is the explicit vision pass for scans the parser mangled.
+  async function reprocess(force?: "ocr") {
+    if (processing) return;
+    const ok = await confirm(
+      force === "ocr"
+        ? {
+            title: t("reprocessConfirmTitle", { title: document.title }),
+            description: t("reprocessConfirmBody"),
+            confirmLabel: t("reprocessConfirmLabel"),
+          }
+        : {
+            title: t("reindexConfirmTitle", { title: document.title }),
+            description: t("reindexConfirmBody"),
+            confirmLabel: t("reindexConfirmLabel"),
+          },
+    );
     if (!ok) return;
     enqueueReprocess({
       documentId: document.id,
       documentTitle: document.title,
       fileSize: document.byteSize,
+      force,
     });
   }
 
@@ -1665,6 +1714,7 @@ function DocumentRow({
   }
 
   async function remove() {
+    if (processing) return;
     const ok = await confirm({
       title: t("deleteDocConfirmTitle", { title: document.title }),
       description: t("deleteDocConfirmBody"),
@@ -1819,8 +1869,15 @@ function DocumentRow({
         {document.status === "failed" && document.progressLabel && (
           <HelpHint
             size={16}
-            content={document.progressLabel}
+            content={formatProgressLabel(document.progressLabel, tq)}
             ariaLabel={t("failedReasonAria")}
+          />
+        )}
+        {processing && (
+          <HelpHint
+            size={16}
+            content={t("processingLockedHint")}
+            ariaLabel={t("processingLockedAria")}
           />
         )}
       </div>
@@ -1834,11 +1891,15 @@ function DocumentRow({
       </div>
 
       <div className="text-[var(--color-muted-foreground)]">
-        {DA_DATE.format(new Date(document.createdAt))}
+        {dateFormat.format(new Date(document.createdAt))}
       </div>
 
       <div className="flex items-center justify-center">
-        <OperatorVisibleToggle document={document} onChanged={onChanged} />
+        <OperatorVisibleToggle
+          document={document}
+          onChanged={onChanged}
+          onError={setErr}
+        />
       </div>
 
       <div className="flex items-center justify-end gap-0.5">
@@ -1869,24 +1930,41 @@ function DocumentRow({
               )}
             </IconButton>
             {document.sourceType === "pdf" && (
-              <IconButton
-                onClick={() => void reprocess()}
-                title={t("reprocessTitle")}
-                aria-label={t("reprocessAria")}
-                className="hover:bg-violet-50 hover:text-violet-700"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </IconButton>
+              <>
+                <IconButton
+                  onClick={() => void reprocess()}
+                  disabled={processing}
+                  title={
+                    processing ? t("processingLockedHint") : t("reindexTitle")
+                  }
+                  aria-label={t("reindexAria")}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </IconButton>
+                <IconButton
+                  onClick={() => void reprocess("ocr")}
+                  disabled={processing}
+                  title={
+                    processing ? t("processingLockedHint") : t("reprocessTitle")
+                  }
+                  aria-label={t("reprocessAria")}
+                  className="hover:bg-violet-50 hover:text-violet-700"
+                >
+                  <ScanEye className="h-4 w-4" />
+                </IconButton>
+              </>
             )}
           </>
         )}
         <IconButton
           onClick={() => void remove()}
-          disabled={deleting}
+          disabled={deleting || processing}
           title={
-            document.sourceType === "feedback"
-              ? t("deleteFeedbackTitle")
-              : t("deleteDocTitle")
+            processing
+              ? t("processingLockedHint")
+              : document.sourceType === "feedback"
+                ? t("deleteFeedbackTitle")
+                : t("deleteDocTitle")
           }
           aria-label={t("deleteDocAria")}
           className="hover:bg-[var(--ds-red-bg)] hover:text-[var(--ds-red)]"
@@ -1905,11 +1983,16 @@ function DocumentRow({
 function OperatorVisibleToggle({
   document,
   onChanged,
+  onError,
 }: {
   document: AdminDocument;
   onChanged: () => Promise<void>;
+  // Surfaces a failed PATCH in the row's error slot instead of silently
+  // snapping the switch back.
+  onError: (message: string | null) => void;
 }) {
   const t = useTranslations("admin.machineDetail");
+  const tErr = useTranslations("admin.apiErrors");
   const [saving, setSaving] = useState(false);
   // Optimistic local state — the row only re-renders with fresh server
   // data after `onChanged` resolves, so we mirror the click immediately
@@ -1926,11 +2009,13 @@ function OperatorVisibleToggle({
     const next = !localVisible;
     setSaving(true);
     setLocalVisible(next);
+    onError(null);
     try {
       await updateAdminDocumentOperatorVisible(document.id, next);
       await onChanged();
-    } catch {
+    } catch (e) {
       setLocalVisible(!next);
+      onError(adminErrorMessage(e, tErr) ?? t("genericError"));
     } finally {
       setSaving(false);
     }

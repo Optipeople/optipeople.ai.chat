@@ -1,4 +1,4 @@
-import { fetchWithAuth } from "@/auth/authApi";
+import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
 import type { AdminMachine } from "@/app/api/admin/machines/route";
 import type {
   AdminDocument,
@@ -508,10 +508,21 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 //
 // Continuation calls (resume=true) also retry transient failures: if a
 // server invocation gets reaped at the platform limit mid-batch, the
-// work done so far is persisted and calling again is safe. A 504 with
-// code "timeout" is NOT transient — the server already marked the
-// document failed — so it surfaces immediately, as does any failure on
-// the very first call.
+// work done so far is persisted and calling again is safe. Retries back
+// off exponentially (5, 10, 20, 40 s — five attempts in total) so a
+// wobbly connection or a briefly overloaded function gets room to
+// recover. A 504 with code "timeout" is NOT transient — the server
+// already marked the document failed — so it surfaces immediately, as
+// does any HTTP failure on the very first call. A *network* failure on
+// the first call (fetch threw: DNS hiccup, dropped Wi-Fi) is retried
+// once, since nothing reached the server and re-sending is harmless.
+const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000];
+const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
+
+function retryDelay(failures: number): number {
+  return RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length) - 1];
+}
+
 async function postJsonUntilDone<T>(
   url: string,
   makeBody: (resume: boolean) => Record<string, unknown>,
@@ -521,7 +532,6 @@ async function postJsonUntilDone<T>(
   // Runaway guard: each continuation represents ~3.5 min of server-side
   // work, so 200 calls is far beyond any realistic document.
   const MAX_CALLS = 200;
-  const MAX_CONSECUTIVE_FAILURES = 3;
   let resume = false;
   let failures = 0;
   for (let call = 0; call < MAX_CALLS; call++) {
@@ -533,8 +543,12 @@ async function postJsonUntilDone<T>(
         body: JSON.stringify(makeBody(resume)),
       });
     } catch (err) {
-      if (!resume || ++failures > MAX_CONSECUTIVE_FAILURES) throw err;
-      await sleep(5_000);
+      // Session expiry is never transient — let the queue stop cleanly.
+      if (err instanceof SessionExpiredError) throw err;
+      failures++;
+      const allowed = resume ? MAX_ATTEMPTS : 2;
+      if (failures >= allowed) throw err;
+      await sleep(retryDelay(failures));
       continue;
     }
     if (!res.ok) {
@@ -543,8 +557,8 @@ async function postJsonUntilDone<T>(
         code?: string;
       };
       const transient = res.status >= 500 && body.code !== "timeout";
-      if (resume && transient && ++failures <= MAX_CONSECUTIVE_FAILURES) {
-        await sleep(5_000);
+      if (resume && transient && ++failures < MAX_ATTEMPTS) {
+        await sleep(retryDelay(failures));
         continue;
       }
       throw apiError(errorKey, `${errorLabel} (${res.status})`, {
@@ -563,13 +577,17 @@ async function postJsonUntilDone<T>(
   throw new AdminApiError(errorKey, {}, null, errorLabel);
 }
 
+// `force` is optional: omitted, the server auto-detects the best
+// extraction path for the document. Pass "ocr" only when the admin
+// explicitly asked for a Claude vision pass. The server answers 409
+// while the document is still mid-pipeline.
 export async function reprocessAdminDocument(
   id: string,
-  force: "ocr" | "pdf-parse" = "ocr",
+  force?: "ocr" | "pdf-parse",
 ): Promise<ReprocessResult> {
   return postJsonUntilDone<ReprocessResult>(
     `/api/admin/documents/${id}/reprocess`,
-    (resume) => ({ force, resume }),
+    (resume) => (force ? { force, resume } : { resume }),
     "reprocessFailed",
     "Reprocess fejlede",
   );
@@ -593,6 +611,12 @@ export async function deleteAdminDocument(id: string): Promise<void> {
 // to reject anything bigger with a 413 before the request reached us.
 export type UploadProgress = (loaded: number, total: number) => void;
 
+// Fires as soon as /sign has minted the kb_documents row, before any
+// bytes move. The queue stores the documentId so a failed item can be
+// resumed (re-POST finalize) instead of re-uploading from scratch, and
+// so the panel can pair the in-tab row with the server's progress row.
+export type OnSigned = (documentId: string) => void;
+
 // Supabase rejects an object that exceeds the *smaller* of two ceilings:
 // the bucket's own file_size_limit and the project-wide cap set in the
 // dashboard. Both are 100 MB, so that's the effective limit — and
@@ -603,15 +627,32 @@ export type UploadProgress = (loaded: number, total: number) => void;
 // limit and the kb-documents bucket's own file_size_limit.
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
+// Images land in a bucket with a tighter 25 MB file_size_limit (vision
+// models cap input size well below that anyway). Keep in sync with the
+// image bucket's file_size_limit.
+export const MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 // Rendered in the upload UI as well as in the too-large error, so the
 // number the operator reads is always the number we enforce.
 export const MAX_UPLOAD_LABEL = `${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`;
+export const MAX_IMAGE_UPLOAD_LABEL = `${Math.round(MAX_IMAGE_UPLOAD_BYTES / 1024 / 1024)} MB`;
 
-function fileTooLargeError(): AdminApiError {
+export type UploadKind = "pdf" | "image" | "file";
+
+export function maxUploadBytesFor(kind: UploadKind): number {
+  return kind === "image" ? MAX_IMAGE_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+}
+
+export function maxUploadLabelFor(kind: UploadKind): string {
+  return kind === "image" ? MAX_IMAGE_UPLOAD_LABEL : MAX_UPLOAD_LABEL;
+}
+
+function fileTooLargeError(kind: UploadKind): AdminApiError {
+  const max = maxUploadLabelFor(kind);
   return apiError(
     "fileTooLarge",
-    `Filen er for stor til at uploade (maks. ${MAX_UPLOAD_LABEL})`,
-    { params: { max: MAX_UPLOAD_LABEL } },
+    `Filen er for stor til at uploade (maks. ${max})`,
+    { params: { max } },
   );
 }
 
@@ -628,10 +669,11 @@ export async function uploadAdminDocument(args: {
   summary?: string;
   folderPath?: string | null;
   onProgress?: UploadProgress;
+  onSigned?: OnSigned;
 }): Promise<UploadResult> {
   return directUpload<UploadResult>({
     kind: "pdf",
-    finalizeUrl: "/api/admin/ingest",
+    finalizeUrl: FINALIZE_URL.pdf,
     ...args,
   });
 }
@@ -651,10 +693,11 @@ export async function uploadAdminImage(args: {
   summary?: string;
   folderPath?: string | null;
   onProgress?: UploadProgress;
+  onSigned?: OnSigned;
 }): Promise<ImageUploadResult> {
   return directUpload<ImageUploadResult>({
     kind: "image",
-    finalizeUrl: "/api/admin/ingest/image",
+    finalizeUrl: FINALIZE_URL.image,
     ...args,
   });
 }
@@ -675,10 +718,11 @@ export async function uploadAdminFile(args: {
   summary?: string;
   folderPath?: string | null;
   onProgress?: UploadProgress;
+  onSigned?: OnSigned;
 }): Promise<FileUploadResult> {
   return directUpload<FileUploadResult>({
     kind: "file",
-    finalizeUrl: "/api/admin/ingest/file",
+    finalizeUrl: FINALIZE_URL.file,
     ...args,
   });
 }
@@ -691,31 +735,72 @@ type SignUploadResponse = {
   token: string;
 };
 
+const FINALIZE_URL: Record<UploadKind, string> = {
+  pdf: "/api/admin/ingest",
+  image: "/api/admin/ingest/image",
+  file: "/api/admin/ingest/file",
+};
+
+// The content-type the bucket sees. PDFs occasionally arrive with an
+// empty File.type — force application/pdf so the upload (and the .pdf
+// storage path the sign endpoint mints) stay consistent. Images already
+// require a concrete supported type (the sign endpoint rejects
+// otherwise). Generic files are whatever the browser says, falling back
+// to octet-stream — proprietary formats routinely report an empty type.
+export function uploadContentType(kind: UploadKind, file: File): string {
+  return kind === "pdf"
+    ? "application/pdf"
+    : kind === "file"
+      ? file.type || "application/octet-stream"
+      : file.type;
+}
+
+// Re-POST the finalize step for a document whose bytes are already in
+// Storage (sign + PUT succeeded, finalize failed or the tab lost the
+// loop). Finalize is idempotent: a `ready` row answers done:true right
+// away, a row mid-pipeline resumes from its checkpoint. The body must
+// match what the original upload sent.
+export async function resumeAdminDocument<T = UploadResult>(args: {
+  kind: UploadKind;
+  machineId: string;
+  documentId: string;
+  fileName: string;
+  contentType: string;
+  summary?: string;
+  folderPath?: string | null;
+}): Promise<T> {
+  return postJsonUntilDone<T>(
+    FINALIZE_URL[args.kind],
+    () => ({
+      machineId: args.machineId,
+      documentId: args.documentId,
+      fileName: args.fileName,
+      contentType: args.contentType,
+      summary: args.summary,
+      folderPath: args.folderPath,
+    }),
+    "uploadFailed",
+    "Upload failed",
+  );
+}
+
 async function directUpload<T>(args: {
-  kind: "pdf" | "image" | "file";
+  kind: UploadKind;
   finalizeUrl: string;
   machineId: string;
   file: File;
   summary?: string;
   folderPath?: string | null;
   onProgress?: UploadProgress;
+  onSigned?: OnSigned;
 }): Promise<T> {
-  if (args.file.size > MAX_UPLOAD_BYTES) throw fileTooLargeError();
+  if (args.file.size > maxUploadBytesFor(args.kind)) {
+    throw fileTooLargeError(args.kind);
+  }
 
   // The bucket enforces allowed_mime_types against the uploaded part's
-  // content-type, which comes from the File. PDFs occasionally arrive
-  // with an empty File.type — force application/pdf so the upload (and
-  // the .pdf storage path the sign endpoint mints) stay consistent, just
-  // as the old server-side upload did. Images already require a concrete
-  // supported type (the sign endpoint rejects otherwise). Generic files
-  // are whatever the browser says, falling back to octet-stream —
-  // proprietary formats routinely report an empty type.
-  const contentType =
-    args.kind === "pdf"
-      ? "application/pdf"
-      : args.kind === "file"
-        ? args.file.type || "application/octet-stream"
-        : args.file.type;
+  // content-type, which comes from the File — see uploadContentType.
+  const contentType = uploadContentType(args.kind, args.file);
   const blob =
     args.file.type === contentType
       ? args.file
@@ -742,9 +827,11 @@ async function directUpload<T>(args: {
     });
   }
   const sign = (await signRes.json()) as SignUploadResponse;
+  args.onSigned?.(sign.documentId);
 
   // 2. PUT the bytes straight to Supabase Storage.
   await putToSignedUrl({
+    kind: args.kind,
     uploadUrl: sign.uploadUrl,
     body: blob,
     onProgress: args.onProgress,
@@ -780,6 +867,7 @@ async function directUpload<T>(args: {
 // the empty key, plus a cacheControl field), so we replicate that shape
 // exactly — a raw binary PUT would be rejected by the storage server.
 function putToSignedUrl(args: {
+  kind: UploadKind;
   uploadUrl: string;
   body: Blob;
   onProgress?: UploadProgress;
@@ -816,7 +904,7 @@ function putToSignedUrl(args: {
         body?.statusCode === "413" ||
         body?.code === "EntityTooLarge"
       ) {
-        reject(fileTooLargeError());
+        reject(fileTooLargeError(args.kind));
       } else if (body?.message) {
         reject(
           apiError(
@@ -835,6 +923,12 @@ function putToSignedUrl(args: {
     };
     xhr.onerror = () =>
       reject(apiError("uploadNetworkFailed", "Upload failed (network)"));
+    // Without these the promise would hang forever on an aborted or
+    // timed-out request and the queue would never advance.
+    xhr.onabort = () =>
+      reject(apiError("uploadNetworkFailed", "Upload failed (aborted)"));
+    xhr.ontimeout = () =>
+      reject(apiError("uploadNetworkFailed", "Upload failed (timeout)"));
     xhr.send(form);
   });
 }

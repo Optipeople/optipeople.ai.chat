@@ -11,10 +11,40 @@
 // assertAccountAccess, assertMachineAccess, assertDocumentAccess or
 // assertConversationAccess from the route handler.
 
+import { createHash } from "node:crypto";
 import { getSupabaseServerClient } from "./supabase";
+
+// Fail closed in production: the staging default exists for local dev
+// only. A production deploy that silently authenticates against staging
+// would accept staging tokens for production data, so refuse to boot
+// instead. `next build` also runs with NODE_ENV=production and imports
+// route modules to collect their config, which is why the build phase is
+// exempt — the check belongs to the runtime, not the compiler.
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build" &&
+  !process.env.OPTIPEOPLE_API_TARGET
+) {
+  throw new Error(
+    "OPTIPEOPLE_API_TARGET must be set in production (refusing to fall back to staging)",
+  );
+}
 
 const TARGET =
   process.env.OPTIPEOPLE_API_TARGET ?? "https://api-staging.optipeople.dk";
+
+// Upstream auth lookups must not hang a chat request. The Optipeople
+// API answers GetCurrentUser in well under a second; anything past this
+// is an outage, and the operator is better served by a fast 502.
+const UPSTREAM_TIMEOUT_MS = 5000;
+
+// Cross-request cache of resolved users, keyed by a hash of the bearer
+// token (never the token itself — a heap dump must not yield sessions).
+// The chat UI fires several authenticated requests per turn (chat,
+// signed URLs, drawer), each of which used to round-trip to Optipeople.
+// 60 s is short enough that a revoked token stops working promptly.
+const USER_CACHE_TTL_MS = 60_000;
+const USER_CACHE_MAX = 500;
 
 const USER_ME_PATH = "/api/User/GetCurrentUser";
 // Stable code-style identifiers from Optipeople's role catalog. The
@@ -102,12 +132,49 @@ type CurrentUser = {
 // which is a fresh instance per incoming request.
 const requestCache = new WeakMap<Request, Promise<CurrentUser>>();
 
+const userCache = new Map<string, { user: CurrentUser; expiresAt: number }>();
+
+function tokenCacheKey(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function readUserCache(key: string): CurrentUser | null {
+  const hit = userCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    userCache.delete(key);
+    return null;
+  }
+  return hit.user;
+}
+
+function writeUserCache(key: string, user: CurrentUser): void {
+  // Map iterates in insertion order, so the first key is the oldest
+  // entry — a cheap FIFO eviction that keeps the cache bounded without
+  // tracking access times.
+  if (userCache.size >= USER_CACHE_MAX) {
+    const oldest = userCache.keys().next().value;
+    if (oldest !== undefined) userCache.delete(oldest);
+  }
+  userCache.set(key, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+}
+
 async function fetchCurrentUser(token: string): Promise<CurrentUser> {
+  const cacheKey = tokenCacheKey(token);
+  const cached = readUserCache(cacheKey);
+  if (cached) return cached;
+  const user = await fetchCurrentUserUncached(token);
+  writeUserCache(cacheKey, user);
+  return user;
+}
+
+async function fetchCurrentUserUncached(token: string): Promise<CurrentUser> {
   let upstream: Response;
   try {
     upstream = await fetch(new URL(USER_ME_PATH, TARGET), {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   } catch (err) {
     console.error("requireAdmin: upstream unreachable:", err);
@@ -224,6 +291,41 @@ export function assertAccountAccess(admin: Admin, accountId: string): void {
   if (admin.accountId !== accountId) {
     throw new AuthError(403, "Not authorised for this account");
   }
+}
+
+// Operator-route counterpart of assertAccountAccess: takes the plain
+// CurrentUserDetails every bearer route already resolves, not an Admin.
+// Full-access users (super admins, partners) pass; everyone else must
+// belong to the account they are asking about. Operators are exactly as
+// tenant-bound as account admins — a valid portal token for account A is
+// not a licence to read account B's manuals.
+export function assertOperatorAccountAccess(
+  user: CurrentUserDetails,
+  accountId: string,
+): void {
+  if (hasFullAccess(user.permissionName)) return;
+  if (!user.accountId || user.accountId !== accountId) {
+    throw new AuthError(403, "Not authorised for this account");
+  }
+}
+
+// machine_kb.account_id for a machine, or null when the machine is not
+// onboarded. Throws AuthError(500) on a database error so callers can
+// .toResponse() it like the other helpers.
+export async function resolveMachineAccountId(
+  machineId: string,
+): Promise<string | null> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("machine_kb")
+    .select("account_id")
+    .eq("machine_id", machineId)
+    .maybeSingle();
+  if (error) {
+    console.error("resolveMachineAccountId lookup failed:", error);
+    throw new AuthError(500, "Database error");
+  }
+  return data ? (data as { account_id: string }).account_id : null;
 }
 
 // Looks up the machine's account_id and checks it against the admin.

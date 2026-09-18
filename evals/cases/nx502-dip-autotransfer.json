@@ -15,6 +15,6 @@
       ],
       "label": "identifies it as automatic transfer from the SD card"
     },
-    { "type": "notMatches", "pattern": "\bbackup\b[^.\n]{0,40}pin\s*2", "label": "does not describe pin 2 as backup" }
+    { "type": "notMatches", "pattern": "\\bbackup\\b[^.\\n]{0,40}pin\\s*2", "label": "does not describe pin 2 as backup" }
   ]
 }

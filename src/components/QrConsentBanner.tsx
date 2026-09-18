@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 // master contract. The banner is therefore just a notice — read once,
 // dismiss, persisted per (qr-token, terms-version) so a bumped version
 // re-prompts the same device.
+//
+// Rendered inline at the top of the chat footer (ChatApp's
+// `footerNotice` slot) so it never floats over the composer.
 
 const STORAGE_PREFIX = "optiai_qr_consent_ack__";
 
@@ -59,13 +62,11 @@ export function QrConsentBanner() {
       role="dialog"
       aria-live="polite"
       aria-label={t("ariaLabel")}
-      className={cn(
-        "fixed inset-x-0 bottom-0 z-40 px-3 pb-3 sm:px-6 sm:pb-6",
-      )}
+      className="msg-in mb-3"
     >
       <div
         className={cn(
-          "mx-auto flex max-w-3xl flex-col gap-3 rounded-[4px] p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5",
+          "flex flex-col gap-3 rounded-[4px] p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5",
           "border-2 border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-[var(--ds-shadow-destructive)]",
         )}
       >

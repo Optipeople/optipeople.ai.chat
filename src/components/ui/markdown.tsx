@@ -283,6 +283,9 @@ const baseComponents: Components = {
     <em className={cn("italic", className)} {...props} />
   ),
   a: ({ className, href, children, ...props }) => {
+    // No escalation handler in this context (fleet scope, legal pages):
+    // the sentinel must not become a dead link — keep the label as prose.
+    if (href === CALL_SERVICE_HREF) return <span>{children}</span>;
     const docRef = parseOptiDocHref(href);
     if (docRef) {
       return (
@@ -311,15 +314,23 @@ const baseComponents: Components = {
     if (assetRef) {
       return <InlineAssetImage assetId={assetRef.id} alt={alt ?? ""} />;
     }
+    // Anything that isn't one of our signed assets is a URL the model
+    // made up or copied from a manual. Never hot-load it as an <img>
+    // (tracking / mixed content / broken boxes) — surface it as a plain
+    // link the operator can choose to open.
+    const href = typeof src === "string" ? src : "";
+    if (!href) return null;
+    void className;
+    void props;
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        className={cn("my-3 h-auto max-w-full rounded-[6px]", className)}
-        src={typeof src === "string" ? src : undefined}
-        alt={alt ?? ""}
-        loading="lazy"
-        {...props}
-      />
+      <a
+        className="font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]"
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {alt || href}
+      </a>
     );
   },
   code: ({ className, children, ...props }) => {

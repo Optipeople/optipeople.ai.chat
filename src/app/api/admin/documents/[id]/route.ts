@@ -7,7 +7,13 @@ import {
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
-import { deleteSidecar, ensureFolderPath } from "@/lib/ingestion";
+import {
+  deleteSidecar,
+  ensureFolderPath,
+  fenceDocument,
+  IngestRequestError,
+  normalizeFolderPath,
+} from "@/lib/ingestion";
 import { regenerateSuggestedQuestionsSafe } from "@/lib/suggestions";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -55,8 +61,14 @@ export async function PATCH(
   if (body.folderPath === null) {
     update.folder_path = null;
   } else if (typeof body.folderPath === "string") {
-    const cleaned = body.folderPath.trim();
-    update.folder_path = cleaned || null;
+    try {
+      update.folder_path = normalizeFolderPath(body.folderPath);
+    } catch (err) {
+      if (err instanceof IngestRequestError) {
+        return Response.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
   }
   if (typeof body.operatorVisible === "boolean") {
     update.operator_visible = body.operatorVisible;
@@ -128,6 +140,12 @@ export async function DELETE(
   if (!doc) {
     return Response.json({ error: "Document not found" }, { status: 404 });
   }
+
+  // A pipeline invocation may still be running on this document. Rotate
+  // run_id first so its next ownership check fails and it stops writing;
+  // otherwise its late chunk inserts could land after the cascade and
+  // fail on the FK, or worse, its status flip could race the delete.
+  await fenceDocument(id);
 
   const {
     storage_path: storagePath,

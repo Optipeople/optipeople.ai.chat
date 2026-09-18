@@ -273,13 +273,22 @@
     "toolFetchingMachineDataNamed": "Henter maskindata ({name})",
     "toolRunningNamed": "Kører {name}",
     "restoredPhoto": "[Foto]",
-    "historyLoadFailed": "Kunne ikke åbne den samtale. Tjek din forbindelse, og prøv igen."
+    "historyLoadFailed": "Kunne ikke åbne den samtale. Tjek din forbindelse, og prøv igen.",
+    "stoppedTitle": "Stoppet",
+    "stoppedBody": "Du stoppede svaret, før det gik i gang.",
+    "errorCutOffBody": "Svaret blev afbrudt. Prøv igen.",
+    "errorRequestTitle": "Beskeden kunne ikke sendes",
+    "unansweredTitle": "Ikke besvaret",
+    "unansweredBody": "Dette spørgsmål fik aldrig et svar — prøv igen.",
+    "truncatedNotice": "Svaret blev forkortet. Bed mig om at fortsætte."
   },
   "viewer": {
     "openInNewTab": "Åbn i ny fane",
     "openFailed": "Kunne ikke åbne filen",
     "missingUrl": "Manglende URL i svaret",
-    "cannotPreview": "Denne filtype kan ikke vises her."
+    "cannotPreview": "Denne filtype kan ikke vises her.",
+    "notFound": "Dokumentet blev ikke fundet — det er muligvis blevet fjernet.",
+    "sessionExpired": "Din session er udløbet. Log ind igen for at åbne filen."
   },
   "knowledgeDrawer": {
     "openAria": "Åbn sidepanel",
@@ -555,7 +564,15 @@
       "folderLabelAll": "Mappe (filer lander her; trukne mapper beholder deres struktur i den)",
       "failedReasonAria": "Fejlårsag",
       "moveDocFailed": "Kunne ikke flytte \"{title}\"",
-      "deleteFolderFailed": "Kunne ikke slette mappen \"{name}\""
+      "deleteFolderFailed": "Kunne ikke slette mappen \"{name}\"",
+      "maxFileSizeByKind": "Maks. {max} pr. fil ({imageMax} for billeder)",
+      "reindexTitle": "Genindekser — serveren vælger bedste udtræksmetode; kører i den fælles kø",
+      "reindexAria": "Genindekser dokument",
+      "reindexConfirmTitle": "Genindekser \"{title}\"?",
+      "reindexConfirmBody": "Eksisterende chunks slettes, og dokumentet behandles igen. Serveren vælger udtræksmetoden automatisk; Claude OCR bruges kun hvis nødvendigt.",
+      "reindexConfirmLabel": "Genindekser",
+      "processingLockedHint": "Dokumentet behandles på serveren. Genbehandling og sletning bliver tilgængelige, når det er færdigt.",
+      "processingLockedAria": "Hvorfor handlinger ikke er tilgængelige"
     },
     "machineEscalation": {
       "heading": "Service-eskalering",
@@ -752,7 +769,30 @@
       "ocrAria": "Claude vision OCR",
       "tablesTooltip": "Tabeller genlæst med Claude vision, så kolonnerne blev bevaret",
       "failed": "Fejlede",
-      "retryAllFailed": "Prøv alle fejlede igen"
+      "retryAllFailed": "Prøv alle fejlede igen",
+      "sessionExpired": "Din session udløb, før dette element blev færdigt",
+      "sessionExpiredBanner": "Din session er udløbet. Log ind igen for at fortsætte køen — elementer, der ikke er startet, venter.",
+      "sessionExpiredAction": "Log ind igen",
+      "skippedEmpty": "Sprang {count, plural, one {# tom fil} other {# tomme filer}} over",
+      "duplicateTitle": "Dublet",
+      "duplicateTitleHint": "Et dokument med dette navn findes allerede — det uploades alligevel",
+      "reindexTag": "Genindekser",
+      "reindexing": "Genindekserer…",
+      "resume": "Fortsæt",
+      "resumeTitle": "Filen er allerede uploadet — kun behandlingen genstartes",
+      "resumeHint": "filen er uploadet, behandlingen kan fortsættes",
+      "phase": {
+        "reading_pdf": "Læser PDF",
+        "ocr": "Læser med Claude vision (OCR)",
+        "tables": "Genlæser tabeller",
+        "chunking": "Opdeler ({pages, plural, one {# side} other {# sider}})",
+        "embedding": "Embedder {done} af {total}",
+        "figures": "Beskriver figurer",
+        "reading_file": "Læser fil",
+        "describing_image": "Beskriver billede (Claude vision)",
+        "embedding_caption": "Embedder beskrivelse",
+        "metadata": "Læser dokumentoplysninger"
+      }
     },
     "escalationsInbox": {
       "heading": "Eskaleringer",
@@ -1045,5 +1085,9 @@
     "backToChat": "Tilbage til chatten",
     "notFoundTitle": "Siden blev ikke fundet",
     "notFoundDescription": "Siden du leder efter findes ikke eller er blevet flyttet."
+  },
+  "noMachineAccess": {
+    "heading": "Ingen adgang til maskiner",
+    "body": "Dit login har ingen maskiner i Opti Assist. Bed din administrator om adgang, eller scan QR-koden på maskinen."
   }
 }

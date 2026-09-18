@@ -8,7 +8,13 @@
 // to the machine they came from — cross-machine asset lookups return
 // 404 even if the operator knows a UUID.
 
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+  type CurrentUserDetails,
+} from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -27,9 +33,10 @@ export async function GET(
     readQrTokenFromRequest(req, null) ?? url.searchParams.get("qrToken");
 
   let qrMachineId: string | null = null;
+  let bearerUser: CurrentUserDetails | null = null;
   if (hasBearer) {
     try {
-      await resolveCurrentUser(req);
+      bearerUser = await resolveCurrentUser(req);
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -76,6 +83,24 @@ export async function GET(
   };
   if (qrMachineId && row.machine_id !== qrMachineId) {
     return Response.json({ error: "Asset not found" }, { status: 404 });
+  }
+  // Bearer users are tenant-bound too: the asset's machine must belong
+  // to their account. Cross-tenant reads as 404, never 403, so a guessed
+  // UUID is not confirmed to exist.
+  if (bearerUser) {
+    try {
+      const assetAccountId = await resolveMachineAccountId(row.machine_id);
+      if (!assetAccountId) {
+        return Response.json({ error: "Asset not found" }, { status: 404 });
+      }
+      assertOperatorAccountAccess(bearerUser, assetAccountId);
+    } catch (err) {
+      if (err instanceof AuthError && err.status === 403) {
+        return Response.json({ error: "Asset not found" }, { status: 404 });
+      }
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
   }
 
   const { data: signed, error: signErr } = await supabase.storage

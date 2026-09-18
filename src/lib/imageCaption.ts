@@ -93,6 +93,12 @@ export async function captionImage(
     });
   }
 
+  if (res.stop_reason === "max_tokens") {
+    // parseCaption's fallback would store the truncated blob as the
+    // caption. A loud failure is the better outcome for a one-shot call.
+    throw new Error("image caption exceeded the output token limit");
+  }
+
   const text = res.content
     .map((b) => (b.type === "text" ? b.text : ""))
     .join("")
@@ -220,6 +226,14 @@ export async function extractPdfFigures(
       operation: "figure_extraction",
       ...fromAnthropicUsage(final.usage),
     });
+  }
+
+  if (final.stop_reason === "max_tokens") {
+    // A cut-off JSON array fails to parse and would silently become "no
+    // figures". Throwing lets attachPdfFigures log a real cause instead.
+    throw new Error(
+      `figure inventory exceeded ${8000} output tokens (${payload.byteLength} bytes of PDF)`,
+    );
   }
 
   const text = final.content

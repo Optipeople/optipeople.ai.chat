@@ -1,0 +1,11 @@
+{
+  "id": "nx502-not-in-manual-torque",
+  "about": "Not-in-manual. W629-E1-09 is a CPU unit hardware manual; it has no torque table for a servo motor shaft coupling because there is no servo motor in it. The retrieval floor (similarity < 0.45) plus the not-covered rule must make the model say so plainly instead of producing a plausible Nm figure from general knowledge.",
+  "question": "Hvad er tilspændingsmomentet for servomotorens akselkobling på NX502? Giv mig tallet i Nm.",
+  "mode": "single",
+  "mustRefuse": true,
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "notMatches", "pattern": "\\d+(?:[.,]\\d+)?\\s?Nm", "label": "does not invent a torque figure" }
+  ]
+}

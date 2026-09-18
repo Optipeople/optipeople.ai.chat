@@ -15,7 +15,12 @@ import {
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
-import { IngestTimeoutError, ingestPdfFromStorage } from "@/lib/ingestion";
+import {
+  IngestRequestError,
+  IngestTimeoutError,
+  ingestPdfFromStorage,
+  normalizeFolderPath,
+} from "@/lib/ingestion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +35,9 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
+  // Captured first: the pipeline's time budget counts auth and the
+  // Storage download too, since they share the same 300 s.
+  const requestStartedAt = Date.now();
   let admin;
   try {
     admin = await requireAdmin(req);
@@ -73,15 +81,22 @@ export async function POST(req: Request) {
   // match what /sign minted for this document.
   const storagePath = `${machineId}/${documentId}.pdf`;
   const fileName =
-    typeof body.fileName === "string" && body.fileName ? body.fileName : "upload.pdf";
+    typeof body.fileName === "string" && body.fileName.trim()
+      ? body.fileName.trim()
+      : "upload.pdf";
   const summary =
     typeof body.summary === "string" && body.summary.trim()
       ? body.summary.trim()
       : null;
-  const folderPath =
-    typeof body.folderPath === "string" && body.folderPath.trim()
-      ? body.folderPath.trim()
-      : null;
+  let folderPath: string | null;
+  try {
+    folderPath = normalizeFolderPath(body.folderPath);
+  } catch (err) {
+    if (err instanceof IngestRequestError) {
+      return Response.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 
   try {
     const outcome = await ingestPdfFromStorage({
@@ -93,12 +108,17 @@ export async function POST(req: Request) {
       summary,
       folderPath,
       createdBy: admin.email,
+      requestStartedAt,
     });
     if (!outcome.done) {
       return Response.json(outcome, { status: 202 });
     }
     return Response.json(outcome);
   } catch (err) {
+    if (err instanceof IngestRequestError) {
+      // 400 (not a PDF), 403 (someone else's document), 409 (wrong state).
+      return Response.json({ error: err.message }, { status: err.status });
+    }
     if (err instanceof IngestTimeoutError) {
       // The doc row is already flipped to 'failed' with the same label
       // by withIngestBudget — the queue panel will pick it up on the

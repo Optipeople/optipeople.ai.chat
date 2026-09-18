@@ -1,0 +1,13 @@
+{
+  "id": "nx502-crosslingual-dip-safe-mode",
+  "about": "Cross-lingual retrieval. The manual is English, the operator asks in Danish with no English keywords at all (no 'DIP', no 'safe mode'). The BM25 branch gets nothing useful here, so this is a pure test of the vector branch surfacing W629-E1-09 section 3-1-3 and of the model answering from it. Safe mode is pin 4 ON, pins 3, 2, 1 OFF.",
+  "question": "Hvilken kontaktstilling skal jeg bruge for at starte styringen i sikker tilstand, hvor brugerprogrammet ikke kører?",
+  "mode": "single",
+  "expectedPageInRetrieval": [88, 89, 90, 91],
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "matches", "pattern": "pin\\s*4|SW4|switch\\s*4", "label": "names pin 4 for Safe Mode" },
+    { "type": "notMatches", "pattern": "(safe|sikker)[^.\\n]{0,80}pin\\s*3\\b(?![^.\\n]{0,30}(off|fra))", "label": "does not assign safe mode to pin 3" },
+    { "type": "quotesSource", "label": "quotes the switch table verbatim from a retrieved chunk" }
+  ]
+}

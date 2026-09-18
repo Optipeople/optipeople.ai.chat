@@ -4,6 +4,8 @@
 // once on first load, then is stripped — sessionStorage carries it
 // from that point on.
 
+import { clearChatStashes } from "./storage";
+
 const QR_TOKEN_KEY = "optiai_qr_token";
 const QR_MACHINE_KEY = "optiai_qr_machine";
 
@@ -39,4 +41,6 @@ export function clearQrSession(): void {
   if (typeof window === "undefined") return;
   window.sessionStorage.removeItem(QR_TOKEN_KEY);
   window.sessionStorage.removeItem(QR_MACHINE_KEY);
+  // The anonymous operator's chat must not outlive their QR session.
+  clearChatStashes();
 }

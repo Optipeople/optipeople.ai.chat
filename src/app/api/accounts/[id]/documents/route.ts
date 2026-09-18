@@ -5,10 +5,14 @@
 // machines, each row carrying the machine's display name so the
 // knowledge drawer can group per machine. Bearer auth only — fleet
 // scope is unreachable from QR sessions, which are machine-pinned.
-// Same trust model as /api/chat: a bearer user may query any accountId
-// they hold (the portal token is the gate).
+// Same trust model as /api/chat: the caller must belong to the account
+// they ask about (super admins and partners are cross-account).
 
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+} from "@/lib/auth";
 import { getFleetMachines } from "@/lib/fleet";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import type { OperatorDocument } from "@/app/api/machines/[id]/documents/route";
@@ -35,7 +39,8 @@ export async function GET(
   }
 
   try {
-    await resolveCurrentUser(req);
+    const user = await resolveCurrentUser(req);
+    assertOperatorAccountAccess(user, id);
   } catch (err) {
     if (err instanceof AuthError) return err.toResponse();
     throw err;

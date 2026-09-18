@@ -66,6 +66,14 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+  // The filename becomes the document title; a multi-kilobyte one is
+  // never legitimate and only makes the admin tree unreadable.
+  if (fileName.length > 200) {
+    return Response.json(
+      { error: "fileName is longer than 200 characters" },
+      { status: 400 },
+    );
+  }
 
   try {
     await assertMachineAccess(admin, machineId);
@@ -79,6 +87,8 @@ export async function POST(req: Request) {
   let storagePath: string;
 
   if (kind === "pdf") {
+    // Empty is allowed: some browsers report no type for a drag-dropped
+    // file. The finalize endpoint checks the bytes' %PDF- header anyway.
     if (contentType && contentType !== "application/pdf") {
       return Response.json(
         { error: "Only application/pdf files are accepted" },
