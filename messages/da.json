@@ -742,7 +742,7 @@
       "scanAndAsk": "Scan & spørg",
       "noName": "(uden navn)",
       "scanInstruction": "Scan koden med kameraet på din telefon og stil dit spørgsmål direkte til Opti Assist for denne maskine.",
-      "pngHint": "PNG'en er 1200×1500 px — egnet til print på A6 etiket eller indsætning i Word-dokumenter inden printet."
+      "pngHint": "PNG'en er 1200×1500 px og egnet til print på A6 etiket eller indsætning i Word-dokumenter inden printet."
     },
     "uploadQueue": {
       "heading": "Behandlingskø",

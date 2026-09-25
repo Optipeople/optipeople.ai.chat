@@ -742,7 +742,7 @@
       "scanAndAsk": "Scan & ask",
       "noName": "(no name)",
       "scanInstruction": "Scan the code with the camera on your phone and ask your question directly to Opti Assist for this machine.",
-      "pngHint": "The PNG is 1200×1500 px — suitable for printing on an A6 label or pasting into Word documents before printing."
+      "pngHint": "The PNG is 1200×1500 px, suitable for printing on an A6 label or pasting into Word documents before printing."
     },
     "uploadQueue": {
       "heading": "Processing queue",
