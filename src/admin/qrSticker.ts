@@ -26,7 +26,6 @@ const FONT_STACK = `"${FONT_FAMILY}", "IBM Plex Sans", Arial, sans-serif`;
 
 const COLOR = {
   primary: "#024343",
-  primaryDeep: "#013636",
   mint: "#A3EEC8",
   foreground: "#0A0A0A",
   secondary: "#364646",
