@@ -25,7 +25,7 @@ const FONT_FAMILY = "OptiPeople Sticker Plex";
 const FONT_STACK = `"${FONT_FAMILY}", "IBM Plex Sans", Arial, sans-serif`;
 
 const COLOR = {
-  primary: "#024343",
+  primary: "#163B40",
   mint: "#A3EEC8",
   foreground: "#0A0A0A",
   secondary: "#364646",
@@ -45,7 +45,7 @@ export type QrStickerArgs = {
   eyebrow: string;
   // Instruction under the QR code. Wrapped to the card width.
   instruction: string;
-  // Lead-in above the support contacts, e.g. "Problemer? Kontakt …".
+  // Short lead-in above the support contacts, e.g. "Brug for hjælp?".
   supportLabel: string;
   supportPhone: string;
   supportEmail: string;
@@ -212,7 +212,11 @@ function drawQr(
 ): void {
   const qr = QRCode.create(text, { errorCorrectionLevel: "M" });
   const n = qr.modules.size;
-  const cell = size / n;
+  // Whole-pixel cells keep module edges crisp; any remainder is split
+  // evenly around the code.
+  const cell = Math.floor(size / n);
+  x += Math.floor((size - cell * n) / 2);
+  y += Math.floor((size - cell * n) / 2);
   const inFinder = (r: number, c: number) =>
     (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
 
@@ -273,9 +277,9 @@ async function renderQrStickerCanvas(
   const contentW = W - 2 * M;
   const headerH = 700;
   const cardTop = 452;
-  const cardH = 780;
+  const cardH = 768;
   const cardR = 40;
-  const qrSize = 560;
+  const qrSize = 600;
   const qrTop = cardTop + 56;
 
   const [, logoImg] = await Promise.all([ensureFonts(), loadImage(LOGO_URL)]);
@@ -342,12 +346,12 @@ async function renderQrStickerCanvas(
   // supplies the quiet zone.
   drawQr(ctx, args.qrUrl, (W - qrSize) / 2, qrTop, qrSize, COLOR.primary);
 
-  // Instruction, centred under the code.
+  // One-line instruction, centred under the code.
   ctx.textAlign = "center";
   ctx.fillStyle = COLOR.secondary;
   ctx.font = `400 36px ${FONT_STACK}`;
   wrapLines(ctx, args.instruction, contentW - 160)
-    .slice(0, 2)
+    .slice(0, 1)
     .forEach((line, i) => {
       ctx.fillText(line, W / 2, qrTop + qrSize + 66 + i * 48);
     });
