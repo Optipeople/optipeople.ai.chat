@@ -29,7 +29,7 @@ const FONT_STACK = `"${FONT_FAMILY}", "IBM Plex Sans", Arial, sans-serif`;
 const CAP = 0.7;
 
 const COLOR = {
-  primary: "#163B40",
+  primary: "#031818",
   mint: "#A3EEC8",
   foreground: "#0A0A0A",
   secondary: "#364646",
