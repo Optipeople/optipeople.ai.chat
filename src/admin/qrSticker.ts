@@ -303,6 +303,9 @@ async function renderQrStickerCanvas(
   const fieldH = cardTop + card / 2;
   const barH = 12;
   const barsTop = H - barH * 3;
+  // Corner radius of the die-cut sticker, 4 mm at about 11.4 px/mm.
+  // Everything is clipped to it, so the PNG corners are transparent.
+  const cornerR = 46;
 
   const [, logoImg] = await Promise.all([ensureFonts(), loadImage(LOGO_URL)]);
 
@@ -311,6 +314,10 @@ async function renderQrStickerCanvas(
   canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context unavailable");
+
+  ctx.beginPath();
+  ctx.roundRect(0, 0, W, H, cornerR);
+  ctx.clip();
 
   ctx.fillStyle = "#FFFFFF";
   ctx.fillRect(0, 0, W, H);
@@ -419,7 +426,9 @@ async function renderQrStickerCanvas(
   // can still be cut out cleanly.
   ctx.strokeStyle = COLOR.border;
   ctx.lineWidth = 3;
-  ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
+  ctx.beginPath();
+  ctx.roundRect(1.5, 1.5, W - 3, H - 3, cornerR - 1.5);
+  ctx.stroke();
 
   // Brand lines, flush to the bottom edge, full width.
   ctx.fillStyle = COLOR.lineAmber;

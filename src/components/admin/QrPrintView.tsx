@@ -197,7 +197,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           <img
             src={previewUrl}
             alt={machineName}
-            className="h-auto w-full max-w-[500px] rounded-[4px] bg-white shadow-sm"
+            className="h-auto w-full max-w-[500px] drop-shadow-sm"
           />
         ) : previewError ? (
           <p className="text-[13px] text-red-600">{previewError}</p>
