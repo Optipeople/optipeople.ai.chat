@@ -32,8 +32,6 @@ const COLOR = {
   primary: "#031818",
   mint: "#A3EEC8",
   foreground: "#0A0A0A",
-  secondary: "#364646",
-  muted: "#5D6B6B",
   border: "#E5E5E5",
   cardBorder: "#DCE3E3",
   chip: "#EAEEEE",
@@ -45,12 +43,8 @@ const COLOR = {
 export type QrStickerArgs = {
   machineName: string;
   qrUrl: string;
-  // Small label above the machine name, e.g. "Scan & spørg".
+  // Small label above the machine name, e.g. "Scan & spørg Opti Assist".
   eyebrow: string;
-  // Instruction under the QR code. Wrapped to the card width.
-  instruction: string;
-  // Short lead-in above the support contacts, e.g. "Brug for hjælp?".
-  supportLabel: string;
   supportPhone: string;
   supportEmail: string;
 };
@@ -217,7 +211,7 @@ const QUIET_MODULES = 3.5;
 
 // Draws the QR from its module matrix instead of a library bitmap, so the
 // data modules can be soft rounded squares and the three finder patterns
-// rounded frames. Modules fill 88% of a cell and the finders keep their
+// rounded frames. Modules fill 92% of a cell and the finders keep their
 // 1:1:3:1:1 ratio, which keeps the code easy for phone cameras to read.
 // The code is centred in the square `box`, so its margin is the same on
 // every side whatever the module count.
@@ -240,7 +234,7 @@ function drawQr(
     (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
 
   ctx.fillStyle = color;
-  const dot = cell * 0.88;
+  const dot = cell * 0.92;
   const inset = (cell - dot) / 2;
   ctx.beginPath();
   for (let r = 0; r < n; r++) {
@@ -300,10 +294,11 @@ async function renderQrStickerCanvas(
   // field ends at its midline, so the code sits half on green, half on
   // white. Text blocks are positioned by cap height so the optical gaps
   // match the numbers here.
-  const logoTop = 88;
+  const logoTop = 72;
   const logoH = 48;
-  const card = 688;
-  const cardTop = 408;
+  const card = 880;
+  const cardTop = 384;
+  const gap = 64;
   const cardR = 44;
   const fieldH = cardTop + card / 2;
   const barH = 12;
@@ -383,29 +378,12 @@ async function renderQrStickerCanvas(
   // QR in the primary green, with an equal margin on all four sides.
   drawQr(ctx, args.qrUrl, cardX, cardTop, card, COLOR.primary);
 
-  // One-line instruction, belonging to the card above it.
-  const cardBottom = cardTop + card;
-  const instructionSize = 34;
-  ctx.fillStyle = COLOR.secondary;
-  ctx.font = `400 ${instructionSize}px ${FONT_STACK}`;
-  const instruction = wrapLines(ctx, args.instruction, contentW)[0] ?? "";
-  ctx.fillText(
-    instruction,
-    cx,
-    cardBottom + 64 + Math.round(instructionSize * CAP),
-  );
-
-  // Support: a muted lead-in over phone and email, centred together and
-  // anchored to the brand lines so the bottom margin matches the side
-  // margin.
+  // Support phone and email, centred together, one rhythm step below
+  // the card.
   const chip = 56;
   const chipGap = 16;
   const itemGap = 48;
-  const rowTop = barsTop - M + 16 - chip;
-  const labelSize = 28;
-  ctx.fillStyle = COLOR.muted;
-  ctx.font = `500 ${labelSize}px ${FONT_STACK}`;
-  ctx.fillText(args.supportLabel, cx, rowTop - 28);
+  const rowTop = cardTop + card + gap;
 
   ctx.font = `500 32px ${FONT_STACK}`;
   const contacts: [string[], string][] = [

@@ -41,8 +41,6 @@ export function QrPrintView({ machineId }: { machineId: string }) {
   const qrToken = data?.qrToken ?? null;
   const machineName = data?.displayName ?? t("noName");
   const eyebrow = t("scanAndAsk");
-  const instruction = t("scanInstruction");
-  const supportLabel = t("supportLabel");
   const supportPhone = tc("supportPhone");
   const supportEmail = tc("supportEmail");
   const url =
@@ -67,8 +65,6 @@ export function QrPrintView({ machineId }: { machineId: string }) {
       machineName,
       qrUrl: url,
       eyebrow,
-      instruction,
-      supportLabel,
       supportPhone,
       supportEmail,
     })
@@ -95,8 +91,6 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     url,
     machineName,
     eyebrow,
-    instruction,
-    supportLabel,
     supportPhone,
     supportEmail,
     tc,
@@ -170,8 +164,6 @@ export function QrPrintView({ machineId }: { machineId: string }) {
         machineName,
         qrUrl: url,
         eyebrow,
-        instruction,
-        supportLabel,
         supportPhone,
         supportEmail,
       });

@@ -741,10 +741,8 @@
       "backToMachine": "Back to the machine",
       "back": "Back",
       "download": "Download",
-      "scanAndAsk": "Scan & ask",
+      "scanAndAsk": "Scan & ask Opti Assist",
       "noName": "(no name)",
-      "scanInstruction": "Scan with your phone and ask Opti Assist",
-      "supportLabel": "Need help?",
       "pngHint": "The PNG is 1200×1500 px, suitable for printing on an A6 label or pasting into Word documents before printing."
     },
     "uploadQueue": {

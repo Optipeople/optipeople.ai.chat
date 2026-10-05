@@ -741,10 +741,8 @@
       "backToMachine": "Tilbage til maskinen",
       "back": "Tilbage",
       "download": "Download",
-      "scanAndAsk": "Scan & spørg",
+      "scanAndAsk": "Scan & spørg Opti Assist",
       "noName": "(uden navn)",
-      "scanInstruction": "Scan med telefonen og spørg Opti Assist",
-      "supportLabel": "Brug for hjælp?",
       "pngHint": "PNG'en er 1200×1500 px og egnet til print på A6 etiket eller indsætning i Word-dokumenter inden printet."
     },
     "uploadQueue": {
