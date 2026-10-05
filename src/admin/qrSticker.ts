@@ -5,10 +5,11 @@
 // window.print() flow, which is why this renders to canvas.
 //
 // Styled in the OptiPeople sales language (optipeople-design skill):
-// IBM Plex Sans, headings at weight 400, the official wordmark top-left,
-// a deep green header field, and the three brand lines along the bottom
-// edge. The QR sits on a white card that overlaps the header, drawn with
-// rounded modules and finder patterns. Below it, OptiPeople's support
+// IBM Plex Sans, headings at weight 400, the official wordmark,
+// a deep green field, and the three brand lines along the bottom edge.
+// Everything sits on one centre axis. The QR sits on a square white card
+// that straddles the field edge, with an equal margin on all four sides,
+// drawn with rounded modules and finder patterns. Below it, OptiPeople's support
 // phone and email give the operator somewhere to turn if the scan fails.
 // At this canvas scale one CSS px is about 3 canvas px, so the 4px brand
 // lines become 12px here.
@@ -23,6 +24,9 @@ const LOGO_ASPECT = 1886 / 353;
 
 const FONT_FAMILY = "OptiPeople Sticker Plex";
 const FONT_STACK = `"${FONT_FAMILY}", "IBM Plex Sans", Arial, sans-serif`;
+// IBM Plex Sans cap height as a share of the font size, for placing text
+// by its visible top rather than its baseline.
+const CAP = 0.7;
 
 const COLOR = {
   primary: "#163B40",
@@ -120,21 +124,30 @@ function layoutMachineName(
     tracking: trackingFor(size),
   });
 
-  for (let size = 96; size >= 72; size -= 4) {
+  for (let size = 88; size >= 64; size -= 4) {
     applyNameFont(ctx, size);
     if (ctx.measureText(text).width <= maxWidth) return result([text], size);
   }
 
-  for (let size = 68; size >= 48; size -= 4) {
+  // Two lines, split where the lines come out closest in width. Centred
+  // text with one long and one short line looks like an accident.
+  const words = text.split(/\s+/).filter(Boolean);
+  for (let size = 60; size >= 44 && words.length > 1; size -= 4) {
     applyNameFont(ctx, size);
-    const lines = wrapLines(ctx, text, maxWidth);
-    const fits =
-      lines.length <= 2 &&
-      lines.every((l) => ctx.measureText(l).width <= maxWidth);
-    if (fits) return result(lines, size);
+    let best: string[] | null = null;
+    let bestWidth = Infinity;
+    for (let k = 1; k < words.length; k++) {
+      const lines = [words.slice(0, k).join(" "), words.slice(k).join(" ")];
+      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      if (widest < bestWidth) {
+        best = lines;
+        bestWidth = widest;
+      }
+    }
+    if (best && bestWidth <= maxWidth) return result(best, size);
   }
 
-  const size = 48;
+  const size = 44;
   applyNameFont(ctx, size);
   const lines = wrapLines(ctx, text, maxWidth);
   const first = lines[0] ?? "";
@@ -198,25 +211,31 @@ function drawIcon(
   ctx.restore();
 }
 
+// Quiet zone on each side of the code, in modules. The card around the
+// code is exactly this wide on all four sides.
+const QUIET_MODULES = 3.5;
+
 // Draws the QR from its module matrix instead of a library bitmap, so the
 // data modules can be soft rounded squares and the three finder patterns
 // rounded frames. Modules fill 88% of a cell and the finders keep their
 // 1:1:3:1:1 ratio, which keeps the code easy for phone cameras to read.
+// The code is centred in the square `box`, so its margin is the same on
+// every side whatever the module count.
 function drawQr(
   ctx: CanvasRenderingContext2D,
   text: string,
-  x: number,
-  y: number,
-  size: number,
+  boxX: number,
+  boxY: number,
+  box: number,
   color: string,
 ): void {
   const qr = QRCode.create(text, { errorCorrectionLevel: "M" });
   const n = qr.modules.size;
-  // Whole-pixel cells keep module edges crisp; any remainder is split
-  // evenly around the code.
-  const cell = Math.floor(size / n);
-  x += Math.floor((size - cell * n) / 2);
-  y += Math.floor((size - cell * n) / 2);
+  // Whole-pixel cells keep module edges crisp.
+  const cell = Math.floor(box / (n + QUIET_MODULES * 2));
+  const offset = Math.round((box - cell * n) / 2);
+  const x = boxX + offset;
+  const y = boxY + offset;
   const inFinder = (r: number, c: number) =>
     (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
 
@@ -273,14 +292,22 @@ async function renderQrStickerCanvas(
 ): Promise<HTMLCanvasElement> {
   const W = 1200;
   const H = 1500;
-  const M = 96; // outer margin and the one shared left line
+  const M = 96; // outer margin; nothing is set closer to the edge
+  const cx = W / 2; // the one shared centre line
   const contentW = W - 2 * M;
-  const headerH = 700;
-  const cardTop = 452;
-  const cardH = 768;
-  const cardR = 40;
-  const qrSize = 600;
-  const qrTop = cardTop + 56;
+
+  // Vertical rhythm, top to bottom. The card is square and the green
+  // field ends at its midline, so the code sits half on green, half on
+  // white. Text blocks are positioned by cap height so the optical gaps
+  // match the numbers here.
+  const logoTop = 88;
+  const logoH = 48;
+  const card = 688;
+  const cardTop = 408;
+  const cardR = 44;
+  const fieldH = cardTop + card / 2;
+  const barH = 12;
+  const barsTop = H - barH * 3;
 
   const [, logoImg] = await Promise.all([ensureFonts(), loadImage(LOGO_URL)]);
 
@@ -293,94 +320,122 @@ async function renderQrStickerCanvas(
   ctx.fillStyle = "#FFFFFF";
   ctx.fillRect(0, 0, W, H);
 
-  // Deep green header field.
+  // Deep green field.
   ctx.fillStyle = COLOR.primary;
-  ctx.fillRect(0, 0, W, headerH);
+  ctx.fillRect(0, 0, W, fieldH);
 
-  // Sender mark, top-left, white on the dark field.
-  const logoH = 56;
-  ctx.drawImage(logoImg, M, 88, logoH * LOGO_ASPECT, logoH);
+  // Wordmark, centred on the shared axis, white on the dark field.
+  const logoW = logoH * LOGO_ASPECT;
+  ctx.drawImage(logoImg, cx - logoW / 2, logoTop, logoW, logoH);
 
-  ctx.textAlign = "left";
+  ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
-  // Machine name: weight 400 with tight tracking. Size carries the
-  // hierarchy, never bold. Its last baseline is fixed above the card, so
-  // a two-line name grows upwards and pushes the eyebrow up with it.
+  // Eyebrow and machine name form one block, centred in the space
+  // between the wordmark and the card, so one- and two-line names both
+  // sit balanced. Weight 400 with tight tracking; size carries the
+  // hierarchy, never bold.
   const name = layoutMachineName(ctx, args.machineName, contentW);
-  const nameBottom = 372;
-  const firstBaseline = nameBottom - (name.lines.length - 1) * name.lineHeight;
+  const eyebrowSize = 34;
+  const eyebrowCap = Math.round(eyebrowSize * CAP);
+  const eyebrowGap = 28;
+  const nameCap = Math.round(name.size * CAP);
+  const blockH =
+    eyebrowCap +
+    eyebrowGap +
+    nameCap +
+    (name.lines.length - 1) * name.lineHeight;
+  const slotTop = logoTop + logoH;
+  const blockTop = Math.round(slotTop + (cardTop - slotTop - blockH) / 2);
 
-  // Eyebrow: sentence case, medium weight, mint on the dark field.
   ctx.fillStyle = COLOR.mint;
-  ctx.font = `500 36px ${FONT_STACK}`;
+  ctx.font = `500 ${eyebrowSize}px ${FONT_STACK}`;
   setTracking(ctx, "0px");
-  ctx.fillText(args.eyebrow, M, firstBaseline - name.size - 8);
+  ctx.fillText(args.eyebrow, cx, blockTop + eyebrowCap);
 
   ctx.fillStyle = "#FFFFFF";
   ctx.font = `400 ${name.size}px ${FONT_STACK}`;
   setTracking(ctx, name.tracking);
+  const firstBaseline = blockTop + eyebrowCap + eyebrowGap + nameCap;
   name.lines.forEach((line, i) => {
-    ctx.fillText(line, M, firstBaseline + i * name.lineHeight);
+    ctx.fillText(line, cx, firstBaseline + i * name.lineHeight);
   });
   setTracking(ctx, "0px");
 
-  // White card straddling the header edge. A soft shadow lifts it off
-  // the green; the hairline keeps its edge visible on the white half.
+  // Square white card straddling the field edge. A soft shadow lifts it
+  // off the green; the hairline keeps its edge visible on the white half.
+  const cardX = cx - card / 2;
   ctx.save();
-  ctx.shadowColor = "rgba(1, 54, 54, 0.22)";
-  ctx.shadowBlur = 56;
-  ctx.shadowOffsetY = 20;
+  ctx.shadowColor = "rgba(10, 30, 32, 0.20)";
+  ctx.shadowBlur = 48;
+  ctx.shadowOffsetY = 16;
   ctx.fillStyle = "#FFFFFF";
   ctx.beginPath();
-  ctx.roundRect(M, cardTop, contentW, cardH, cardR);
+  ctx.roundRect(cardX, cardTop, card, card, cardR);
   ctx.fill();
   ctx.restore();
   ctx.strokeStyle = COLOR.cardBorder;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(M + 1, cardTop + 1, contentW - 2, cardH - 2, cardR - 1);
+  ctx.roundRect(cardX + 1, cardTop + 1, card - 2, card - 2, cardR - 1);
   ctx.stroke();
 
-  // QR in the primary green, centred in the card. The card padding
-  // supplies the quiet zone.
-  drawQr(ctx, args.qrUrl, (W - qrSize) / 2, qrTop, qrSize, COLOR.primary);
+  // QR in the primary green, with an equal margin on all four sides.
+  drawQr(ctx, args.qrUrl, cardX, cardTop, card, COLOR.primary);
 
-  // One-line instruction, centred under the code.
-  ctx.textAlign = "center";
+  // One-line instruction, belonging to the card above it.
+  const cardBottom = cardTop + card;
+  const instructionSize = 34;
   ctx.fillStyle = COLOR.secondary;
-  ctx.font = `400 36px ${FONT_STACK}`;
-  wrapLines(ctx, args.instruction, contentW - 160)
-    .slice(0, 1)
-    .forEach((line, i) => {
-      ctx.fillText(line, W / 2, qrTop + qrSize + 66 + i * 48);
-    });
-  ctx.textAlign = "left";
+  ctx.font = `400 ${instructionSize}px ${FONT_STACK}`;
+  const instruction = wrapLines(ctx, args.instruction, contentW)[0] ?? "";
+  ctx.fillText(
+    instruction,
+    cx,
+    cardBottom + 64 + Math.round(instructionSize * CAP),
+  );
 
-  // Support contacts: a muted lead-in, then phone and email side by side,
-  // each behind a round icon chip.
+  // Support: a muted lead-in over phone and email, centred together and
+  // anchored to the brand lines so the bottom margin matches the side
+  // margin.
+  const chip = 56;
+  const chipGap = 16;
+  const itemGap = 48;
+  const rowTop = barsTop - M + 16 - chip;
+  const labelSize = 28;
   ctx.fillStyle = COLOR.muted;
-  ctx.font = `500 30px ${FONT_STACK}`;
-  ctx.fillText(args.supportLabel, M, 1312);
+  ctx.font = `500 ${labelSize}px ${FONT_STACK}`;
+  ctx.fillText(args.supportLabel, cx, rowTop - 28);
 
-  const rowY = 1344;
-  const chip = 64;
-  ctx.font = `500 34px ${FONT_STACK}`;
-  let cx = M;
+  ctx.font = `500 32px ${FONT_STACK}`;
   const contacts: [string[], string][] = [
     [PHONE_PATHS, args.supportPhone],
     [MAIL_PATHS, args.supportEmail],
   ];
-  for (const [paths, label] of contacts) {
+  const itemW = contacts.map(
+    ([, label]) => chip + chipGap + ctx.measureText(label).width,
+  );
+  const rowW = itemW.reduce((a, b) => a + b, 0) + itemGap * (contacts.length - 1);
+  let x = cx - rowW / 2;
+  ctx.textAlign = "left";
+  contacts.forEach(([paths, label], i) => {
     ctx.fillStyle = COLOR.chip;
     ctx.beginPath();
-    ctx.arc(cx + chip / 2, rowY + chip / 2, chip / 2, 0, Math.PI * 2);
+    ctx.arc(x + chip / 2, rowTop + chip / 2, chip / 2, 0, Math.PI * 2);
     ctx.fill();
-    drawIcon(ctx, paths, cx + 18, rowY + 18, 28, COLOR.primary);
+    const icon = 26;
+    drawIcon(
+      ctx,
+      paths,
+      x + (chip - icon) / 2,
+      rowTop + (chip - icon) / 2,
+      icon,
+      COLOR.primary,
+    );
     ctx.fillStyle = COLOR.foreground;
-    ctx.fillText(label, cx + chip + 20, rowY + chip / 2 + 12);
-    cx += chip + 20 + ctx.measureText(label).width + 56;
-  }
+    ctx.fillText(label, x + chip + chipGap, rowTop + chip / 2 + 11);
+    x += itemW[i] + itemGap;
+  });
 
   // Hairline at the trim edge so a white sticker printed on white paper
   // can still be cut out cleanly.
@@ -389,14 +444,12 @@ async function renderQrStickerCanvas(
   ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
 
   // Brand lines, flush to the bottom edge, full width.
-  const bar = 12;
-  const barsTop = H - bar * 3;
   ctx.fillStyle = COLOR.lineAmber;
-  ctx.fillRect(0, barsTop, W, bar);
+  ctx.fillRect(0, barsTop, W, barH);
   ctx.fillStyle = COLOR.lineSignal;
-  ctx.fillRect(0, barsTop + bar, W, bar);
+  ctx.fillRect(0, barsTop + barH, W, barH);
   ctx.fillStyle = COLOR.lineGreen;
-  ctx.fillRect(0, barsTop + bar * 2, W, bar);
+  ctx.fillRect(0, barsTop + barH * 2, W, barH);
 
   return canvas;
 }
