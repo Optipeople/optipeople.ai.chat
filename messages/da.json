@@ -15,6 +15,7 @@
     "noResults": "Ingen resultater.",
     "unknownError": "Ukendt fejl",
     "supportEmail": "support@optipeople.dk",
+    "supportPhone": "+45 23 74 47 05",
     "page": "s. {n}",
     "openInNewTab": "Åbn {title} i ny fane",
     "ok": "OK",
@@ -177,6 +178,7 @@
   },
   "qrError": {
     "heading": "QR-koden virker ikke",
+    "supportHint": "Bliver det ved? Kontakt OptiPeople support:",
     "askAdmin": "Bed en super-admin om at generere en ny QR-kode for maskinen.",
     "invalid": "QR-koden er ugyldig eller er blevet inaktiveret.",
     "lookupFailed": "Fejl ved QR-opslag ({status})",
@@ -742,6 +744,7 @@
       "scanAndAsk": "Scan & spørg",
       "noName": "(uden navn)",
       "scanInstruction": "Scan koden med kameraet på din telefon og stil dit spørgsmål direkte til Opti Assist for denne maskine.",
+      "supportLabel": "Problemer? Kontakt OptiPeople support",
       "pngHint": "PNG'en er 1200×1500 px og egnet til print på A6 etiket eller indsætning i Word-dokumenter inden printet."
     },
     "uploadQueue": {

@@ -524,6 +524,23 @@ function QrErrorScreen({
         ) : (
           <p className="mt-4 text-[12px] text-red-700/80">{t("askAdmin")}</p>
         )}
+        <div className="mt-5 border-t border-red-200 pt-4 text-[13px] text-red-800">
+          <p className="text-red-700/80">{t("supportHint")}</p>
+          <p className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 font-medium">
+            <a
+              href={`tel:${tCommon("supportPhone").replace(/\s+/g, "")}`}
+              className="hover:underline"
+            >
+              {tCommon("supportPhone")}
+            </a>
+            <a
+              href={`mailto:${tCommon("supportEmail")}`}
+              className="hover:underline"
+            >
+              {tCommon("supportEmail")}
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );

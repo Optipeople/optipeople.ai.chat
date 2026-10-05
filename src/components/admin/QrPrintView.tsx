@@ -42,6 +42,9 @@ export function QrPrintView({ machineId }: { machineId: string }) {
   const machineName = data?.displayName ?? t("noName");
   const eyebrow = t("scanAndAsk");
   const instruction = t("scanInstruction");
+  const supportLabel = t("supportLabel");
+  const supportPhone = tc("supportPhone");
+  const supportEmail = tc("supportEmail");
   const url =
     qrToken && typeof window !== "undefined"
       ? `${window.location.origin}/?qr=${encodeURIComponent(qrToken)}`
@@ -60,7 +63,15 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     let cancelled = false;
     setPreviewError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    renderQrStickerPngUrl({ machineName, qrUrl: url, eyebrow, instruction })
+    renderQrStickerPngUrl({
+      machineName,
+      qrUrl: url,
+      eyebrow,
+      instruction,
+      supportLabel,
+      supportPhone,
+      supportEmail,
+    })
       .then((objectUrl) => {
         if (cancelled) {
           URL.revokeObjectURL(objectUrl);
@@ -80,7 +91,16 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [url, machineName, eyebrow, instruction, tc]);
+  }, [
+    url,
+    machineName,
+    eyebrow,
+    instruction,
+    supportLabel,
+    supportPhone,
+    supportEmail,
+    tc,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -151,6 +171,9 @@ export function QrPrintView({ machineId }: { machineId: string }) {
         qrUrl: url,
         eyebrow,
         instruction,
+        supportLabel,
+        supportPhone,
+        supportEmail,
       });
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : tc("unknownError"));
