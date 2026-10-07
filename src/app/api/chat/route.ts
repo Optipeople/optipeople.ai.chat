@@ -57,14 +57,14 @@ export const dynamic = "force-dynamic";
 // wall-clock, so a generous ceiling costs nothing when unused.
 export const maxDuration = 300;
 
-// Claude Sonnet 5. Chat is a rounding error in the AI bill (ingestion
+// Claude Sonnet 5.5. Chat is a rounding error in the AI bill (ingestion
 // vision dominates it), so this tier buys better Danish, better
-// multi-step tool use, and a 1024-token minimum cacheable prefix for a
-// few cents a day. That last point is a real fix, not a nicety: Haiku's
+// multi-step tool use, and a small minimum cacheable prefix for a few
+// cents a day. That last point is a real fix, not a nicety: Haiku's
 // minimum was 4096 tokens, so machines with a small doc manifest were
 // silently skipping the system-prompt cache altogether.
 //
-// Three Sonnet 5 behaviours this file depends on:
+// Sonnet 5.5 behaviours this file depends on:
 //   - Omitting `thinking` runs ADAPTIVE thinking, where on Haiku omitting
 //     it meant no thinking at all. Thinking also shares MAX_TOKENS with
 //     the visible reply. Both are set explicitly below so neither is a
@@ -74,10 +74,16 @@ export const maxDuration = 300;
 //     Haiku or Sonnet 4.6. trimHistory() caps by message count rather
 //     than tokens so nothing breaks, but per-turn figures are not
 //     directly comparable to older usage_events rows.
-const MODEL = "claude-sonnet-5";
+//   - Thinking blocks are bound to the conversation: editing an earlier
+//     turn invalidates them. The tool loop below only ever appends, and
+//     prior turns come back from the database as plain text, so nothing
+//     here edits history. Keep it that way.
+//   - `thinking: { type: "disabled" }` and forced `tool_choice` ("any" or
+//     "tool") are rejected with a 400. `tool_choice: none` still works.
+const MODEL = "claude-sonnet-5-5";
 
-// "medium" lands around Sonnet 4.6 at "high" — a clear step up from Haiku
-// for grounded technical Q&A. It is also the main latency dial: operators
+// "medium" is the recommended starting point for multistep tool use on
+// Sonnet 5.5, whose effort levels are recalibrated from Sonnet 5. It is also the main latency dial: operators
 // are standing at a machine, and thinking happens before the first
 // tool_use event reaches them, so the UI is briefly idle. Drop to "low"
 // if the floor reports the wait; that keeps thinking on (which is what
@@ -1940,9 +1946,9 @@ export async function POST(req: Request) {
             const s = anthropic.beta.messages.stream({
               model: MODEL,
               max_tokens: MAX_TOKENS,
-              // Adaptive is Sonnet 5's default when `thinking` is omitted;
-              // stated explicitly so it is clear this is a choice. Left on
-              // deliberately — with thinking disabled Sonnet 5 reaches for
+              // Adaptive is the default when `thinking` is omitted; stated
+              // explicitly so it is clear this is a choice. Left on
+              // deliberately: with thinking off the model reaches for
               // tools noticeably less, and every answer here has to come
               // from a search_kb call.
               thinking: { type: "adaptive" },
