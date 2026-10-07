@@ -97,7 +97,7 @@ administrator", since onboarding is on Optipeople.
 | Database | Supabase project `wnswhzitolcfbfulchra` in eu-central-1. RLS on; service role bypasses. **11 migrations applied** — see [supabase/migrations/](../supabase/migrations/). |
 | Storage | Supabase bucket `kb-documents` (private, 100 MB, PDF only). PDFs stored under `<machine_id>/<doc_id>.pdf`. |
 | Embeddings | Voyage `voyage-4-large` @ 1024d (Matryoshka). Now on a paid plan — free-tier 3 RPM ceiling no longer applies; helper still retries on 429 defensively. |
-| OCR fallback | Claude Sonnet 4.6 vision via streaming. Fires automatically when pdf-parse yields <500 chars or <400/page. Per-doc "Reprocess (OCR)" button on each document row. |
+| OCR fallback | Claude Sonnet 5.5 vision via streaming. Fires automatically when pdf-parse yields <500 chars or <400/page. Per-doc "Reprocess (OCR)" button on each document row. |
 | Auth | Optipeople OAuth2 via dev proxy → real `/auth-api/[...]` route handler. Bearer token resolved server-side via `/api/User/GetCurrentUser` → `resolveCurrentUser()` in `src/lib/auth.ts`. |
 | Admin UI | `/admin/machines` list + `/admin/machines/[id]` detail with: **"Tilføj maskine"** dialog (account/machine comboboxes pulling from Optipeople, dedup against existing `machine_kb` rows), machine-name edit, **"Slet maskine"** (wipes storage + cascades `kb_documents`/chunks/folders, keeps audit history), drag-drop folder upload (full tree preserved, multi-file queue), folder tree view with DnD reorganise, "+ Ny mappe" + delete-empty-folder, view/download original PDF (signed URL), inline summary edit, document delete. **ScanEye** icon marks OCR-extracted docs; **MessageSquareQuote** marks feedback-promoted docs (PDF actions hidden for those rows — only delete is offered, which acts as demote). |
 | Operator picker filter | `GET /api/registered` returns the `machine_id` / `account_id` sets from `machine_kb`. The auth context intersects Optipeople's account + machine lists with these sets so operators only see what this Opti Assist instance is actually onboarded for. Public endpoint — IDs only, no names. |
@@ -357,7 +357,7 @@ browser. Everything below is in production code on `main`:
   `kb_documents.progress` / `progress_label`. Polls every 3s while any
   doc is non-terminal. Sequential queue handles uploads + reprocess
   through a single Voyage rate-limit budget.
-- Image-only PDFs auto-fall-back to **Claude Sonnet 4.6 vision**
+- Image-only PDFs auto-fall-back to **Claude Sonnet 5.5 vision**
   (streaming). Threshold: `< 500 chars total OR < 400 chars/page`.
   Existing docs can be reprocessed via the per-row button.
 - Admin → chat deep-link from the list rows + detail header.

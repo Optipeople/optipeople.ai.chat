@@ -54,7 +54,11 @@ const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 // Sonnet handles complex layouts (tables, multi-column technical docs)
 // noticeably better than Haiku, and worth the extra cost on the rare paths
 // where OCR actually runs.
-const OCR_MODEL = "claude-sonnet-4-6";
+const OCR_MODEL = "claude-sonnet-5-5";
+
+// Sonnet 5.5 thinks by default. Transcription needs little reasoning, so
+// "low" keeps thinking tokens out of the shared max_tokens budget.
+const OCR_EFFORT = "low" as const;
 
 const OCR_MAX_TOKENS = 32000;
 
@@ -185,6 +189,8 @@ async function ocrSliceOnce(
   const stream = anthropic.messages.stream({
     model: OCR_MODEL,
     max_tokens: OCR_MAX_TOKENS,
+    thinking: { type: "adaptive" },
+    output_config: { effort: OCR_EFFORT },
     messages: [
       {
         role: "user",

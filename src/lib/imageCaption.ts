@@ -31,7 +31,15 @@ import {
 // Captioning a single operator-uploaded image. Sonnet is a noticeable
 // accuracy step up from Haiku here and it runs once per image, so the
 // cost is negligible.
-const CAPTION_MODEL = "claude-sonnet-4-6";
+const CAPTION_MODEL = "claude-sonnet-5-5";
+
+// Sonnet 5.5 thinks by default and thinking shares max_tokens with the
+// reply. Describing what is on screen needs little reasoning, so effort is
+// held at "low" and the budgets leave room for the ~30% larger token
+// counts of the newer tokenizer.
+const VISION_EFFORT = "low" as const;
+const CAPTION_MAX_TOKENS = 2000;
+const FIGURE_MAX_TOKENS = 12000;
 
 // Figure inventory over a (now page-sliced) PDF. Kept on Sonnet for the
 // moment: these captions are what search_kb matches operator questions
@@ -41,7 +49,7 @@ const CAPTION_MODEL = "claude-sonnet-4-6";
 // one constant and compare captions on real vendor manuals before
 // committing. Page gating already removed most of the cost, so measure
 // that first.
-const FIGURE_MODEL = "claude-sonnet-4-6";
+const FIGURE_MODEL = "claude-sonnet-5-5";
 
 export type ImageMime = "image/png" | "image/jpeg" | "image/webp";
 
@@ -60,7 +68,9 @@ export async function captionImage(
 
   const res = await anthropic.messages.create({
     model: CAPTION_MODEL,
-    max_tokens: 800,
+    max_tokens: CAPTION_MAX_TOKENS,
+    thinking: { type: "adaptive" },
+    output_config: { effort: VISION_EFFORT },
     messages: [
       {
         role: "user",
@@ -190,7 +200,9 @@ export async function extractPdfFigures(
 
   const stream = anthropic.messages.stream({
     model: FIGURE_MODEL,
-    max_tokens: 8000,
+    max_tokens: FIGURE_MAX_TOKENS,
+    thinking: { type: "adaptive" },
+    output_config: { effort: VISION_EFFORT },
     messages: [
       {
         role: "user",
@@ -232,7 +244,7 @@ export async function extractPdfFigures(
     // A cut-off JSON array fails to parse and would silently become "no
     // figures". Throwing lets attachPdfFigures log a real cause instead.
     throw new Error(
-      `figure inventory exceeded ${8000} output tokens (${payload.byteLength} bytes of PDF)`,
+      `figure inventory exceeded ${FIGURE_MAX_TOKENS} output tokens (${payload.byteLength} bytes of PDF)`,
     );
   }
 

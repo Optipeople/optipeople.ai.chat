@@ -30,7 +30,11 @@ import {
 // Same tier as OCR and figure extraction. Table transcription is a
 // layout-reading task, which is where Sonnet is already known to beat
 // Haiku by a wide margin, and Opus buys nothing on transcription.
-const TABLE_MODEL = "claude-sonnet-4-6";
+const TABLE_MODEL = "claude-sonnet-5-5";
+
+// Sonnet 5.5 thinks by default. Transcription needs little reasoning, so
+// "low" keeps thinking tokens out of the shared max_tokens budget.
+const TABLE_EFFORT = "low" as const;
 
 // Pages per request. Small batches cost slightly more per page in prompt
 // overhead but bound three things that matter more: the output-token
@@ -156,6 +160,8 @@ export async function extractPageTables(
       const stream = anthropic.messages.stream({
         model: TABLE_MODEL,
         max_tokens: MAX_TOKENS,
+        thinking: { type: "adaptive" },
+        output_config: { effort: TABLE_EFFORT },
         messages: [
           {
             role: "user",
