@@ -97,6 +97,14 @@ export async function appendAssistantTurn(args: {
   tokensIn?: number;
   tokensOut?: number;
   cacheHit?: boolean;
+  // Grounding audit (migration 20260918100000_messages_grounding). Set on
+  // the final assistant turn only: `grounded` = at least one search_kb
+  // call ran before this answer; `maxSimilarity` = the best cosine
+  // similarity any of those searches saw. Together they let the audit
+  // separate "answered from the manual" from "answered from memory".
+  // Undefined leaves the columns null (intermediate tool-calling turns).
+  grounded?: boolean | null;
+  maxSimilarity?: number | null;
 }): Promise<void> {
   const supabase = getSupabaseServerClient();
   // No text + no tool calls = nothing meaningful to record.
@@ -120,6 +128,8 @@ export async function appendAssistantTurn(args: {
     tokens_in: args.tokensIn ?? null,
     tokens_out: args.tokensOut ?? null,
     cache_hit: args.cacheHit ?? null,
+    grounded: args.grounded ?? null,
+    max_similarity: args.maxSimilarity ?? null,
   });
   if (error) throw new Error(`appendAssistantTurn failed: ${error.message}`);
 }

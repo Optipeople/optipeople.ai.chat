@@ -758,3 +758,29 @@ cause of this incident. Its suggested order (page markers, then summaries, then
 heading-aware chunker, then structured extraction) would not have fixed the DIP
 switch answer, because the column binding is already gone before the chunker
 runs.
+
+---
+
+## 9. Retrieval hardening, implemented 2026-09-18
+
+Follow-up to §2.6 and §2.8 after the eval harness showed correct answers
+coming from weak evidence. All in
+[supabase/migrations/20260918120000_search_v2.sql](../supabase/migrations/20260918120000_search_v2.sql)
+unless noted.
+
+| Change | What it fixes |
+|---|---|
+| `kb_documents.status = 'ready'` join in both candidate branches of `search_kb` and `search_kb_multi` | Chunks of failed or half-ingested documents could surface mid-reprocess |
+| `hnsw.ef_search = 200` at function level; `hnsw.iterative_scan = relaxed_order` attached by a DO block only where pgvector >= 0.8 | Default ef_search 40 loses recall once the machine/model/status filters discard most of the HNSW neighbourhood |
+| Keyword branch: OR of the query's `simple` lexemes via `to_tsquery`, ranked with `ts_rank_cd(..., 1 \| 32)` | `plainto_tsquery` AND-ed every word, so a five-word question needed all five in one chunk; length normalisation stops short caption chunks dominating |
+| `p_query_embedding` nullable; vector CTE empty when null | Voyage outage degrades to keyword-only search instead of a 500 |
+| New `similarity` return column (`1 - cosine distance`, null in keyword-only mode) | The chat route reads it, persists the per-turn max on `messages.max_similarity`, and the preamble treats < 0.45 as "the manual does not cover this". RRF scores are rank-based and useless for that |
+| Diversity caps before the final limit: 3 chunks per document, 2 figure-caption chunks (`asset_id` not null), and in fleet search `greatest(2, p_match_count / #machines)` per machine when several are searched | One long table or one machine's manual could fill all six slots |
+| `similarity` passed through `SearchKbHit` in [src/lib/searchKb.ts](../src/lib/searchKb.ts) | Voice path gets the same signal |
+| Evals: `quotesSource` now requires the quoted line to exist in a retrieved chunk (read back via `messages.tool_chunks`); new `pageInRetrieval`, `mustRefuse`, `infraFailure` support; three new cases (not-in-manual, cross-lingual, Voyage-down) | A well-formatted table that exists nowhere in the manual used to pass |
+
+Order of operations: apply the migration (it drops and recreates both
+functions because the return type gained a column), deploy the chat route
+that reads `similarity`, then run the deterministic evals; the infra pass
+needs `EVAL_FORCE_VOYAGE_FAIL=1` on both server and harness (see
+[evals/README.md](../evals/README.md)).

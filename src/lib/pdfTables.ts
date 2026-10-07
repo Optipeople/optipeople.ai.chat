@@ -185,6 +185,18 @@ export async function extractPageTables(
         });
       }
 
+      if (final.stop_reason === "max_tokens") {
+        // A truncated answer has a page whose table is cut mid-row, and
+        // splicing that in would be worse than the linearized text it
+        // replaces. Skip the whole batch; the pages keep their pdf-parse
+        // text and show up in `missing` like any other failed batch.
+        console.warn(
+          `extractPageTables: batch ${batch.join(",")} hit max_tokens, ` +
+            "keeping pdf-parse text for those pages",
+        );
+        continue;
+      }
+
       const text = stripOuterFence(
         final.content
           .map((b) => (b.type === "text" ? b.text : ""))

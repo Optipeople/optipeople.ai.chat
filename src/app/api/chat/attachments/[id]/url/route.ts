@@ -5,7 +5,13 @@
 // Auth: bearer OR QR token. QR sessions are scoped to a single machine
 // — cross-machine reads return 404.
 
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+  type CurrentUserDetails,
+} from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -24,9 +30,10 @@ export async function GET(
     readQrTokenFromRequest(req, null) ?? url.searchParams.get("qrToken");
 
   let qrMachineId: string | null = null;
+  let bearerUser: CurrentUserDetails | null = null;
   if (hasBearer) {
     try {
-      await resolveCurrentUser(req);
+      bearerUser = await resolveCurrentUser(req);
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -68,6 +75,23 @@ export async function GET(
   };
   if (qrMachineId && r.machine_id !== qrMachineId) {
     return Response.json({ error: "Attachment not found" }, { status: 404 });
+  }
+  // Bearer users: the attachment's machine must be on their account.
+  // Cross-tenant reads as 404 so a guessed UUID is never confirmed.
+  if (bearerUser) {
+    try {
+      const attAccountId = await resolveMachineAccountId(r.machine_id);
+      if (!attAccountId) {
+        return Response.json({ error: "Attachment not found" }, { status: 404 });
+      }
+      assertOperatorAccountAccess(bearerUser, attAccountId);
+    } catch (err) {
+      if (err instanceof AuthError && err.status === 403) {
+        return Response.json({ error: "Attachment not found" }, { status: 404 });
+      }
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
   }
 
   const { data: signed, error: signErr } = await supabase.storage

@@ -13,7 +13,13 @@
 // conversation_id once the conversation exists.
 
 import { randomUUID } from "node:crypto";
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+  type CurrentUserDetails,
+} from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -41,11 +47,13 @@ export async function POST(req: Request) {
 
   let uploaderUserId: string;
   let qrMachineId: string | null = null;
+  let bearerUser: CurrentUserDetails | null = null;
 
   if (hasBearer) {
     try {
       const u = await resolveCurrentUser(req);
       uploaderUserId = u.userId;
+      bearerUser = u;
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -89,6 +97,25 @@ export async function POST(req: Request) {
     machineId = machineIdRaw;
   } else {
     return Response.json({ error: "machineId is required" }, { status: 400 });
+  }
+
+  // Bearer uploads: the target machine must be on the caller's account.
+  // Without this an attachment could be parked on another tenant's
+  // machine and later pulled into that tenant's chat by id.
+  if (bearerUser) {
+    try {
+      const machineAccountId = await resolveMachineAccountId(machineId);
+      if (!machineAccountId) {
+        return Response.json({ error: "Machine not found" }, { status: 404 });
+      }
+      assertOperatorAccountAccess(bearerUser, machineAccountId);
+    } catch (err) {
+      if (err instanceof AuthError && err.status === 403) {
+        return Response.json({ error: "Machine not found" }, { status: 404 });
+      }
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
   }
 
   if (!(file instanceof File)) {

@@ -21,7 +21,14 @@ import {
   type ImageMime,
   type PdfFigure,
 } from "./imageCaption";
-import { ensureFolderPath, ensureMachineKb } from "./ingestion";
+import {
+  ensureFolderPath,
+  ensureMachineKb,
+  markFailedOnError,
+  normalizeFolderPath,
+  phaseLabel,
+  withIngestBudget,
+} from "./ingestion";
 import { regenerateSuggestedQuestionsSafe } from "./suggestions";
 import { getSupabaseServerClient } from "./supabase";
 import { embedDocuments, VOYAGE_MODEL } from "./voyage";
@@ -97,6 +104,9 @@ export type IngestImageFromStorageInput = {
   summary?: string | null;
   folderPath?: string | null;
   createdBy?: string;
+  // ms epoch when the HTTP request arrived; the time budget counts from
+  // here. Defaults to now.
+  requestStartedAt?: number;
 };
 
 // Storage-based entry point. The admin UI uploads the image directly to
@@ -125,17 +135,27 @@ export async function ingestImageFromStorage(
   }
   const fileBuffer = Buffer.from(await blob.arrayBuffer());
 
-  return runImagePipeline({
-    documentId: input.documentId,
-    machineId: input.machineId,
-    storagePath: input.storagePath,
-    mimeType: input.mimeType,
-    fileBuffer,
-    fileName: input.fileName,
-    summary: input.summary,
-    folderPath: input.folderPath,
-    createdBy: input.createdBy,
-  });
+  // Same hard budget + failure marking as the PDF pipeline, so a caption
+  // call that hangs flips the row to failed instead of leaving it in
+  // 'embedding' until the watchdog notices.
+  return markFailedOnError(
+    input.documentId,
+    withIngestBudget(
+      input.documentId,
+      runImagePipeline({
+        documentId: input.documentId,
+        machineId: input.machineId,
+        storagePath: input.storagePath,
+        mimeType: input.mimeType,
+        fileBuffer,
+        fileName: input.fileName,
+        summary: input.summary,
+        folderPath: input.folderPath,
+        createdBy: input.createdBy,
+      }),
+      { startedAt: input.requestStartedAt },
+    ),
+  );
 }
 
 // Shared after-upload pipeline: insert the doc row, caption with Claude
@@ -156,12 +176,9 @@ async function runImagePipeline(args: {
   const { documentId, machineId, storagePath, mimeType, fileBuffer } = args;
   const assetId = randomUUID();
   const byteSize = fileBuffer.byteLength;
-  const title = args.fileName.replace(/\.[^.]+$/, "") || "Image";
+  const title = args.fileName.replace(/\.[^.]+$/, "").trim() || "Image";
 
-  const folderPath =
-    typeof args.folderPath === "string" && args.folderPath.trim()
-      ? args.folderPath.trim()
-      : null;
+  const folderPath = normalizeFolderPath(args.folderPath);
   if (folderPath) {
     await ensureFolderPath(machineId, folderPath);
   }
@@ -181,7 +198,7 @@ async function runImagePipeline(args: {
     created_by: args.createdBy ?? "admin",
     folder_path: folderPath,
     progress: 20,
-    progress_label: "Beskriver billede (Claude vision)…",
+    progress_label: phaseLabel("describing_image"),
   });
   if (docErr) throw new Error(`kb_documents insert failed: ${docErr.message}`);
 
@@ -194,7 +211,7 @@ async function runImagePipeline(args: {
       .from("kb_documents")
       .update({
         progress: 70,
-        progress_label: "Embedder beskrivelse",
+        progress_label: phaseLabel("embedding_caption"),
         updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);
@@ -267,7 +284,7 @@ async function runImagePipeline(args: {
         status: "failed",
         progress: null,
         progress_label:
-          err instanceof Error ? err.message.slice(0, 200) : "Fejlede",
+          err instanceof Error ? err.message.slice(0, 200) : "Failed",
         updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);

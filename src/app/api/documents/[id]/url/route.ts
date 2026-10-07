@@ -4,7 +4,13 @@
 // in (no SuperAdministrator gate). Used by the chat UI to turn source
 // citations into clickable links opening in a new tab.
 
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+  type CurrentUserDetails,
+} from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -19,16 +25,18 @@ export async function GET(
 ) {
   // Either Optipeople bearer or a QR token (header X-QR-Token, or
   // ?qrToken=… on the URL). For QR sessions we additionally restrict
-  // access to documents on the operator's resolved machine.
+  // access to documents on the operator's resolved machine; bearer
+  // users are restricted to documents on their own account.
   const hasBearer = !!req.headers.get("authorization");
   const url = new URL(req.url);
   const qrToken =
     readQrTokenFromRequest(req, null) ?? url.searchParams.get("qrToken");
 
   let qrMachineId: string | null = null;
+  let bearerUser: CurrentUserDetails | null = null;
   if (hasBearer) {
     try {
-      await resolveCurrentUser(req);
+      bearerUser = await resolveCurrentUser(req);
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -75,6 +83,24 @@ export async function GET(
   // lookups even if the operator guesses a UUID.
   if (qrMachineId && row.machine_id !== qrMachineId) {
     return Response.json({ error: "Document not found" }, { status: 404 });
+  }
+  // Bearer users: the document's machine must belong to their account.
+  // Cross-tenant reads as "not found" rather than "forbidden" so a
+  // guessed UUID is never confirmed to exist.
+  if (bearerUser) {
+    try {
+      const docAccountId = await resolveMachineAccountId(row.machine_id);
+      if (!docAccountId) {
+        return Response.json({ error: "Document not found" }, { status: 404 });
+      }
+      assertOperatorAccountAccess(bearerUser, docAccountId);
+    } catch (err) {
+      if (err instanceof AuthError && err.status === 403) {
+        return Response.json({ error: "Document not found" }, { status: 404 });
+      }
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
   }
   if (!row.storage_path) {
     return Response.json(

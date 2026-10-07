@@ -40,6 +40,9 @@ export function QrPrintView({ machineId }: { machineId: string }) {
 
   const qrToken = data?.qrToken ?? null;
   const machineName = data?.displayName ?? t("noName");
+  const eyebrow = t("scanAndAsk");
+  const supportPhone = tc("supportPhone");
+  const supportEmail = tc("supportEmail");
   const url =
     qrToken && typeof window !== "undefined"
       ? `${window.location.origin}/?qr=${encodeURIComponent(qrToken)}`
@@ -58,7 +61,13 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     let cancelled = false;
     setPreviewError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    renderQrStickerPngUrl({ machineName, qrUrl: url })
+    renderQrStickerPngUrl({
+      machineName,
+      qrUrl: url,
+      eyebrow,
+      supportPhone,
+      supportEmail,
+    })
       .then((objectUrl) => {
         if (cancelled) {
           URL.revokeObjectURL(objectUrl);
@@ -78,7 +87,14 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [url, machineName, tc]);
+  }, [
+    url,
+    machineName,
+    eyebrow,
+    supportPhone,
+    supportEmail,
+    tc,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -144,7 +160,13 @@ export function QrPrintView({ machineId }: { machineId: string }) {
     setDownloading(true);
     setDownloadError(null);
     try {
-      await downloadQrStickerPng({ machineName, qrUrl: url });
+      await downloadQrStickerPng({
+        machineName,
+        qrUrl: url,
+        eyebrow,
+        supportPhone,
+        supportEmail,
+      });
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : tc("unknownError"));
     } finally {
@@ -175,7 +197,7 @@ export function QrPrintView({ machineId }: { machineId: string }) {
           <img
             src={previewUrl}
             alt={machineName}
-            className="h-auto w-full max-w-[500px] rounded-[4px] bg-white shadow-sm"
+            className="h-auto w-full max-w-[500px] drop-shadow-sm"
           />
         ) : previewError ? (
           <p className="text-[13px] text-red-600">{previewError}</p>

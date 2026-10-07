@@ -16,7 +16,13 @@ import {
   listEnabledAccountAiRules,
   renderRulesSection,
 } from "@/lib/aiRules";
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+  type CurrentUserDetails,
+} from "@/lib/auth";
 import { containsTable } from "@/lib/chunking";
 import { missingReferencedManuals, readDocumentMeta } from "@/lib/docMeta";
 import {
@@ -45,6 +51,11 @@ import { embedQuery, VOYAGE_MODEL } from "@/lib/voyage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// A turn with thinking, several tool calls and a page lookup can run
+// well past Vercel's default function timeout; the stream would be cut
+// mid-answer with no error event. Fluid compute bills active CPU, not
+// wall-clock, so a generous ceiling costs nothing when unused.
+export const maxDuration = 300;
 
 // Claude Sonnet 5. Chat is a rounding error in the AI bill (ingestion
 // vision dominates it), so this tier buys better Danish, better
@@ -159,6 +170,10 @@ Tool & formatting rules:
 - If the question is ambiguous, ask one clarifying question before searching or guessing.
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the operator to follow site safety procedures.
 
+When the manual search is unavailable or weak:
+- If **search_kb** returns an \`error\`, or its result carries a \`degraded\` field, the manual search is down or only partially working. Do NOT answer the technical question from memory as if you had checked the manual. Say plainly that the manual search is temporarily unavailable (or partial), give at most generic safety-neutral guidance clearly labelled as general knowledge, and offer \`[label](opti:call-service)\` so the operator can reach a human.
+- Every **search_kb** result carries a \`max_similarity\` score (0–1) — how closely the best hit matches the question. If it is below 0.45, or there are no results, the manual does not appear to cover the question. Say that plainly FIRST, before any general guidance, and never present general knowledge as if it came from the manual.
+
 Answering with a specific value (switch positions, parameters, torques):
 - A **value answer** is any answer whose payload is a specific setting: a switch or DIP pin position, a parameter number or value, a torque, pressure, temperature, voltage or timing figure, a part number, or a menu path. The operator is going to act on it physically, so it is right or it is damage.
 - Before you state such a value, quote the source row VERBATIM in a fenced code block, then give your reading of it underneath. The operator has to be able to check your reading against the manual's own words.
@@ -218,6 +233,10 @@ Tool & formatting rules:
 - When a **search_kb** result has \`is_image: true\` AND an \`asset_id\`, you can **embed the figure inline** in your reply using this exact form: \`![short alt text](opti:asset/<asset_id>)\`. Place it on its own line, ideally right where you reference the figure in the prose. The renderer fetches the actual image. Same rules as for documents: only use \`asset_id\` values from tool results, never invent them, never paste raw URLs. If you embed a figure inline you can skip mentioning it again — the chip rail below still renders the same thumbnail for navigation.
 - When you conclude the user needs a human technician (the manuals don't cover it, the fix requires service intervention, or the issue is safety-critical), offer the escalation button inline using this exact form: \`[label](opti:call-service)\` with a short action label in the user's language (e.g. "Tilkald service" / "Call service"). It renders as a button that starts the escalation flow. Only emit it when you are genuinely recommending human help — never as decoration on ordinary uses of the word "service".
 - For safety-critical procedures (lockout/tagout, high voltage, etc.), always remind the user to follow site safety procedures.
+
+When the manual search is unavailable or weak:
+- If **search_kb** returns an \`error\`, or its result carries a \`degraded\` field, the manual search is down or only partially working. Do NOT answer the technical question from memory as if you had checked the manuals. Say plainly that the manual search is temporarily unavailable (or partial), give at most generic safety-neutral guidance clearly labelled as general knowledge, and offer \`[label](opti:call-service)\` so the user can reach a human.
+- Every **search_kb** result carries a \`max_similarity\` score (0–1) — how closely the best hit matches the question. If it is below 0.45, or there are no results, the manuals do not appear to cover the question. Say that plainly FIRST, before any general guidance, and never present general knowledge as if it came from a manual.
 
 Answering with a specific value (switch positions, parameters, torques):
 - A **value answer** is any answer whose payload is a specific setting: a switch or DIP pin position, a parameter number or value, a torque, pressure, temperature, voltage or timing figure, a part number, or a menu path. Someone is going to act on it physically, so it is right or it is damage.
@@ -430,6 +449,73 @@ type ChatRequest = {
 const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 const ATTACHMENT_SIGNED_URL_TTL = 600;
 
+// Request-body limits. The client never legitimately exceeds these; they
+// exist so a hand-crafted request cannot push an arbitrarily large prompt
+// through our API key or crash the route with a malformed shape.
+const MAX_MESSAGES = 200;
+const MAX_MESSAGE_CHARS = 20_000;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Normalizes the wire messages into a well-typed ChatMessage[] or returns
+// a reason to 400. Assistant content may arrive as null (the client
+// stores an aborted turn that way) and is coerced to ""; user content
+// must be a real string. attachmentIds are dropped when not a UUID list.
+function validateMessages(
+  raw: unknown,
+): { messages: ChatMessage[] } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { error: "messages must be a non-empty array" };
+  }
+  if (raw.length > MAX_MESSAGES) {
+    return { error: `messages must contain at most ${MAX_MESSAGES} entries` };
+  }
+  const messages: ChatMessage[] = [];
+  for (const [i, m] of raw.entries()) {
+    if (!m || typeof m !== "object") {
+      return { error: `messages[${i}] must be an object` };
+    }
+    const { role, content, attachmentIds } = m as Record<string, unknown>;
+    if (role !== "user" && role !== "assistant") {
+      return { error: `messages[${i}].role must be "user" or "assistant"` };
+    }
+    let text: string;
+    if (typeof content === "string") {
+      text = content;
+    } else if (role === "assistant" && (content === null || content === undefined)) {
+      text = "";
+    } else {
+      return { error: `messages[${i}].content must be a string` };
+    }
+    if (text.length > MAX_MESSAGE_CHARS) {
+      return {
+        error: `messages[${i}].content exceeds ${MAX_MESSAGE_CHARS} characters`,
+      };
+    }
+    let ids: string[] | undefined;
+    if (attachmentIds !== undefined && attachmentIds !== null) {
+      if (
+        !Array.isArray(attachmentIds) ||
+        attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE ||
+        !attachmentIds.every(
+          (id) => typeof id === "string" && UUID_RE.test(id),
+        )
+      ) {
+        return {
+          error: `messages[${i}].attachmentIds must be up to ${MAX_ATTACHMENTS_PER_MESSAGE} UUIDs`,
+        };
+      }
+      ids = attachmentIds as string[];
+    }
+    messages.push(
+      role === "user"
+        ? { role, content: text, ...(ids ? { attachmentIds: ids } : {}) }
+        : { role, content: text },
+    );
+  }
+  return { messages };
+}
+
 // History cap for the model call. Input cost grows linearly with the
 // history the client re-sends every turn, so past HISTORY_TRIGGER
 // messages we only forward a recent window to the model. The window's
@@ -514,6 +600,11 @@ async function buildConversation(
 
   for (const [i, m] of messages.entries()) {
     if (m.role !== "user") {
+      // An assistant turn with no text (aborted stream, tool-only turn
+      // the client stored as empty) is a 400 from the API — empty text
+      // blocks are rejected. Dropping it leaves two consecutive user
+      // turns, which the API merges, so that is the safe shape.
+      if (!m.content.trim()) continue;
       out.push({ role: "assistant", content: m.content });
       continue;
     }
@@ -561,7 +652,12 @@ async function buildConversation(
       out.push({ role: "user", content: blocks });
     }
   }
-  return out;
+  // The API requires the first message to be a user turn. trimHistory
+  // guarantees that on its input, but the empty-assistant skip above
+  // cannot break it either — it only ever removes assistant turns. Kept
+  // as a belt-and-braces check so a future edit cannot regress it.
+  const firstUser = out.findIndex((m) => m.role === "user");
+  return firstUser > 0 ? out.slice(firstUser) : out;
 }
 
 // Clone the outgoing messages with a cache breakpoint on the very last
@@ -866,7 +962,21 @@ type ToolExecResult = {
   // row. Surfaced separately so the client can render thumbnails
   // alongside the document chips.
   images: ImageHit[];
+  // search_kb only: best cosine similarity among the hits, null when
+  // nothing matched or the vector branch was skipped. Rolled up per turn
+  // into the grounding audit on the final assistant row.
+  maxSimilarity?: number | null;
 };
+
+// Similarity as sent to the model: two decimals is enough to judge a hit
+// against the 0.45 floor in the system prompt, and it keeps every hit's
+// re-billed token footprint small. Non-numbers (keyword-only hits,
+// skipped vector branch) become null rather than NaN.
+function roundSimilarity(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value * 100) / 100
+    : null;
+}
 
 // Machines a tool call may touch, resolved from the scope and (in fleet
 // scope) the model-supplied machine_id. Returns an error string instead
@@ -924,15 +1034,33 @@ async function executeSearchKb(
   const { machineIds, nameById } = resolved;
   const isFleet = scope.kind === "fleet";
   const topK = Math.min(
-    Math.max(typeof input.top_k === "number" ? input.top_k : 6, 1),
+    Math.max(
+      typeof input.top_k === "number" && Number.isFinite(input.top_k)
+        ? Math.trunc(input.top_k)
+        : 6,
+      1,
+    ),
     12,
   );
   const query = input.query.trim();
 
   const supabase = getSupabaseServerClient();
-  const queryEmbedding = await embedQuery(query, {
-    machineId: machineIds.length === 1 ? machineIds[0] : null,
-  });
+  // Chat must keep working when Voyage does not. The fast policy gives
+  // up within ~10 s; on failure we run the RPC keyword-only (null
+  // embedding skips the vector branch) and tell the model the search is
+  // degraded, so it hedges instead of answering from memory.
+  let queryEmbedding: number[] | null = null;
+  let degraded: "embedding_unavailable" | null = null;
+  try {
+    queryEmbedding = await embedQuery(
+      query,
+      { machineId: machineIds.length === 1 ? machineIds[0] : null },
+      { fast: true },
+    );
+  } catch (err) {
+    console.error("search_kb: embedQuery failed, falling back to keyword search:", err);
+    degraded = "embedding_unavailable";
+  }
   // search_kb_multi is the array generalization of search_kb (same RRF
   // formula) and additionally returns each chunk's machine_id. Machine
   // scope passes a one-element array — results are identical to the old
@@ -947,10 +1075,14 @@ async function executeSearchKb(
   if (error) {
     console.error("search_kb_multi rpc error:", error);
     return {
-      modelPayload: { error: error.message },
+      modelPayload: {
+        error: "The manual search is temporarily unavailable.",
+        ...(degraded ? { degraded } : {}),
+      },
       chunkIds: [],
       documents: [],
       images: [],
+      maxSimilarity: null,
     };
   }
 
@@ -963,7 +1095,18 @@ async function executeSearchKb(
     page_to: number | null;
     text: string;
     rrf_score: number;
+    // Cosine similarity of the chunk to the query; null when the vector
+    // branch was skipped or the chunk only surfaced via keywords.
+    similarity: number | null;
   }>;
+
+  let maxSimilarity: number | null = null;
+  for (const r of rows) {
+    if (typeof r.similarity === "number" && Number.isFinite(r.similarity)) {
+      maxSimilarity =
+        maxSimilarity === null ? r.similarity : Math.max(maxSimilarity, r.similarity);
+    }
+  }
 
   // Look up document titles + each chunk's asset_id in parallel. The
   // RPC doesn't return asset_id (would require a SQL change), so we
@@ -1103,6 +1246,9 @@ async function executeSearchKb(
           ...(catalogByDoc.has(r.document_id)
             ? { catalog_no: catalogByDoc.get(r.document_id) }
             : {}),
+          // Two decimals: enough for the model to rank hits against the
+          // 0.45 floor in the system prompt, cheap in tokens.
+          similarity: roundSimilarity(r.similarity),
           text: snippetForModel(r.text),
           // Image hits carry these three extra fields so the model can
           // spot them and optionally embed the figure inline via
@@ -1120,10 +1266,15 @@ async function executeSearchKb(
             : {}),
         };
       }),
+      // Top-level so the model can check the floor without scanning
+      // every hit. Null when the vector branch did not run.
+      max_similarity: roundSimilarity(maxSimilarity),
+      ...(degraded ? { degraded } : {}),
     },
     chunkIds: rows.map((r) => r.chunk_id),
     documents: Array.from(hitsByDoc.values()),
     images: imageHits,
+    maxSimilarity,
   };
 }
 
@@ -1443,16 +1594,20 @@ export async function POST(req: Request) {
     return Response.json({ error: t("invalidJson") }, { status: 400 });
   }
 
-  const userMessages = body.messages;
   const machineId = body.machineId;
   const accountId = body.accountId ?? null;
 
-  if (!Array.isArray(userMessages) || userMessages.length === 0) {
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return Response.json(
       { error: t("missingField", { field: "messages" }) },
       { status: 400 },
     );
   }
+  const validated = validateMessages(body.messages);
+  if ("error" in validated) {
+    return Response.json({ error: validated.error }, { status: 400 });
+  }
+  const userMessages = validated.messages;
 
   // Two auth paths. Optipeople bearer takes precedence if present; the
   // QR token (header X-QR-Token or body.qrToken) is the fallback for
@@ -1472,10 +1627,12 @@ export async function POST(req: Request) {
   let scopeKind: "machine" | "fleet" =
     body.scope === "fleet" ? "fleet" : "machine";
 
+  let bearerUser: CurrentUserDetails | null = null;
   if (hasBearer) {
     try {
       const u = await resolveCurrentUser(req);
       user = { userId: u.userId, email: u.email, name: u.name };
+      bearerUser = u;
     } catch (err) {
       if (err instanceof AuthError) return err.toResponse();
       throw err;
@@ -1520,6 +1677,30 @@ export async function POST(req: Request) {
       { error: t("missingField", { field: "machineId" }) },
       { status: 400 },
     );
+  }
+
+  // Tenant isolation for bearer callers. The client sends accountId and
+  // machineId, and a valid portal token proves who the caller is — not
+  // that they belong to the account they named. Full-access users are
+  // cross-account; everyone else must match, and in machine scope the
+  // machine must actually sit on that account. QR sessions skip this:
+  // the token already pinned both ids server-side above.
+  if (bearerUser) {
+    try {
+      assertOperatorAccountAccess(bearerUser, resolvedAccountId);
+      if (scopeKind === "machine") {
+        const machineAccountId = await resolveMachineAccountId(resolvedMachineId!);
+        if (!machineAccountId) {
+          return Response.json({ error: t("machineNotFound") }, { status: 404 });
+        }
+        if (machineAccountId !== resolvedAccountId) {
+          throw new AuthError(403, "Not authorised for this machine");
+        }
+      }
+    } catch (err) {
+      if (err instanceof AuthError) return err.toResponse();
+      throw err;
+    }
   }
 
   // Fleet scope spans every machine onboarded for the account. The set
@@ -1568,14 +1749,43 @@ export async function POST(req: Request) {
     );
   }
 
+  // Keep-alive interval for the SSE stream. Thinking and MCP calls can
+  // leave the wire silent for tens of seconds, long enough for proxies to
+  // drop an idle connection; a comment line every 15 s keeps it open and
+  // is ignored by every EventSource parser.
+  const HEARTBEAT_MS = 15_000;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+      // The operator can navigate away mid-turn; the controller is then
+      // closed and enqueue() throws. That must not surface inside the
+      // agent loop as a chat error, so writes are best-effort and the
+      // loop checks req.signal to stop doing work nobody will read.
+      let closed = false;
+      const write = (chunk: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(enc.encode(chunk));
+        } catch {
+          closed = true;
+        }
       };
+      const send = (event: string, data: unknown) => {
+        write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      const heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
+      const close = () => {
+        clearInterval(heartbeat);
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the consumer — nothing left to do.
+        }
+      };
+      const aborted = () => req.signal.aborted;
 
       // Audit persistence is best-effort: any failure logs but doesn't
       // break the live chat for the operator.
@@ -1684,8 +1894,28 @@ export async function POST(req: Request) {
         // Shared across every iteration of this turn's loop, so the cap on
         // page lookups is a per-turn cap rather than a per-iteration one.
         const toolBudget: ToolBudget = { pageLookups: 0 };
+        // Grounding audit for this turn: did any search_kb call run, and
+        // how strong was the best hit. Written onto the final assistant
+        // row so the audit can separate manual-backed answers from
+        // answers given from memory.
+        let searchRan = false;
+        let turnMaxSimilarity: number | null = null;
 
-        for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        // The loop runs at most MAX_TOOL_ITERATIONS tool rounds. When the
+        // model is still asking for tools on the last round, its pending
+        // tools are executed and one extra call is made with tool use
+        // disabled, so the turn always ends in text rather than a dangling
+        // tool_use the operator never sees resolved.
+        let finalAssistant: Message | null = null;
+        for (let iter = 0; iter <= MAX_TOOL_ITERATIONS; iter++) {
+          // Operator left mid-turn: stop quietly. Nothing written so far is
+          // lost (audit rows are appended as they happen), and there is no
+          // one to stream the rest to.
+          if (aborted()) {
+            console.log("chat: request aborted by client, ending turn");
+            return;
+          }
+          const forceText = iter === MAX_TOOL_ITERATIONS;
           // Retry the stream on overloaded/5xx/connection errors. We
           // only retry if no tokens have streamed yet — once the client
           // has started rendering text we can't cleanly restart.
@@ -1729,6 +1959,10 @@ export async function POST(req: Request) {
                 : scopeKind === "fleet"
                   ? FLEET_TOOLS
                   : TOOLS,
+              // Last round: the tools stay in the request so the cached
+              // prefix holds, but the model may not call them — it has to
+              // answer with what it has.
+              ...(forceText ? { tool_choice: { type: "none" as const } } : {}),
               messages: withCacheBreakpoint(conversation),
               ...(mcpAccess
                 ? {
@@ -1748,7 +1982,11 @@ export async function POST(req: Request) {
                     ],
                   }
                 : {}),
-            });
+            },
+            // Tie the upstream stream to the incoming request: when the
+            // operator disconnects, the Anthropic call is cancelled too
+            // instead of generating (and billing) tokens into the void.
+            { signal: req.signal });
 
             let streamed = false;
             s.on("text", (delta) => {
@@ -1792,6 +2030,12 @@ export async function POST(req: Request) {
               final = await s.finalMessage();
               break;
             } catch (err) {
+              // A cancelled request surfaces as an abort error from the
+              // SDK; that is the operator leaving, not a failure.
+              if (aborted()) {
+                console.log("chat: request aborted by client during stream");
+                return;
+              }
               if (
                 !streamed &&
                 attempt < MAX_STREAM_RETRIES &&
@@ -1836,6 +2080,11 @@ export async function POST(req: Request) {
           const toolUses = final.content.filter(
             (c): c is ToolUseBlock => c.type === "tool_use",
           );
+          // Final turn = no more tool rounds follow. With tool_choice none
+          // the model cannot emit tool_use, so the last-round call is
+          // always final; earlier rounds are final when the model stops
+          // asking for tools.
+          const isFinalTurn = toolUses.length === 0 || forceText;
 
           // Concatenate assistant text blocks for the audit row.
           const assistantText = final.content
@@ -1854,14 +2103,26 @@ export async function POST(req: Request) {
               tokensIn: usageIn,
               tokensOut: usageOut,
               cacheHit,
+              // Grounding columns only on the answer the operator reads;
+              // intermediate tool-calling rows keep them null.
+              ...(isFinalTurn
+                ? { grounded: searchRan, maxSimilarity: turnMaxSimilarity }
+                : {}),
             }),
           );
 
-          if (toolUses.length === 0) {
+          if (isFinalTurn) {
             // Model is done — no more tools requested. (tool_use SSE
             // events were already emitted via the contentBlock listener
             // above, so the UI already knows what fired this turn.)
+            finalAssistant = final;
             break;
+          }
+
+          // Don't run tools for an operator who has already left.
+          if (aborted()) {
+            console.log("chat: request aborted by client before tool execution");
+            return;
           }
 
           const toolResults: ToolResultBlockParam[] = await Promise.all(
@@ -1873,6 +2134,15 @@ export async function POST(req: Request) {
                   toolScope,
                   toolBudget,
                 );
+                if (tu.name === "search_kb") {
+                  searchRan = true;
+                  if (typeof exec.maxSimilarity === "number") {
+                    turnMaxSimilarity =
+                      turnMaxSimilarity === null
+                        ? exec.maxSimilarity
+                        : Math.max(turnMaxSimilarity, exec.maxSimilarity);
+                  }
+                }
                 for (const d of exec.documents) {
                   const cur = docHits.get(d.id);
                   if (!cur || d.score > cur.score) docHits.set(d.id, d);
@@ -1890,6 +2160,8 @@ export async function POST(req: Request) {
                     toolChunks: exec.chunkIds,
                     // Truncate the audit copy — full chunk text is
                     // already in kb_chunks via tool_chunks references.
+                    // search_kb's max_similarity sits at the front of
+                    // the payload, so it survives the cut.
                     contentSummary:
                       payloadStr.length > 4000
                         ? payloadStr.slice(0, 4000) + "…[truncated]"
@@ -1931,6 +2203,33 @@ export async function POST(req: Request) {
           ];
         }
 
+        if (aborted()) return;
+
+        // The turn ended without a readable answer: a safety refusal, or
+        // a message with neither text nor tool_use (which the API should
+        // never produce, but a silent `done` would leave the operator
+        // staring at an empty bubble). Report it as an error so the
+        // client renders a retry affordance instead.
+        const hasText = (finalAssistant?.content ?? []).some(
+          (b) => b.type === "text" && b.text.trim().length > 0,
+        );
+        if (
+          !finalAssistant ||
+          finalAssistant.stop_reason === "refusal" ||
+          !hasText
+        ) {
+          console.error(
+            `chat: turn ended without an answer (stop_reason=${finalAssistant?.stop_reason ?? "none"})`,
+          );
+          send("error", {
+            kind: "error" as const,
+            title: t("aiErrorTitle" as never),
+            message: t("aiError" as never),
+          });
+          close();
+          return;
+        }
+
         if (docHits.size > 0 || imageHits.size > 0) {
           send("sources", {
             sources: Array.from(docHits.values())
@@ -1959,9 +2258,20 @@ export async function POST(req: Request) {
               })),
           });
         }
+        // The reply hit MAX_TOKENS and stops mid-sentence. We deliberately
+        // do not auto-continue (a second call re-bills the whole prefix
+        // and can still be cut); the client renders a notice instead.
+        if (finalAssistant.stop_reason === "max_tokens") {
+          send("truncated", {});
+        }
         send("done", { stop_reason: lastStopReason, usage: totalUsage });
-        controller.close();
+        close();
       } catch (err) {
+        if (aborted()) {
+          // The operator left; whatever failed, failed for nobody.
+          close();
+          return;
+        }
         console.error("Chat error:", err);
         // For Anthropic API errors, surface a clean translated message
         // (and a status-page link when it points at an upstream outage)
@@ -1978,13 +2288,20 @@ export async function POST(req: Request) {
             statusUrl: c.statusUrl,
           });
         } else {
+          // Anything else is ours (Supabase, storage, a bug). The raw
+          // message can carry table names, storage paths or stack
+          // details — logged above, never shown to the operator.
           send("error", {
             kind: "error" as const,
             title: t("aiErrorTitle" as never),
-            message: err instanceof Error ? err.message : "Unknown error",
+            message: t("aiError" as never),
           });
         }
-        controller.close();
+        close();
+      } finally {
+        // Every exit — including the quiet early returns on abort — must
+        // stop the heartbeat, or the interval keeps the function alive.
+        clearInterval(heartbeat);
       }
     },
   });

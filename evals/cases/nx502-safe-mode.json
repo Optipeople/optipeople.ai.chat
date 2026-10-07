@@ -5,7 +5,7 @@
   "mode": "single",
   "assert": [
     { "type": "toolCalled", "name": "search_kb" },
-    { "type": "matches", "pattern": "pin\s*4|SW4|switch\s*4", "label": "names pin 4" },
+    { "type": "matches", "pattern": "pin\\s*4|SW4|switch\\s*4", "label": "names pin 4" },
     { "type": "quotesSource", "label": "quotes the switch table verbatim" }
   ]
 }

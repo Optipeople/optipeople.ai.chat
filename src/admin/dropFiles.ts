@@ -87,16 +87,25 @@ async function walk(
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
 
-// Returns null only for entries that can't be uploaded at all (a folder
-// the browser surfaced as a zero-byte file). Everything with real bytes
-// classifies to one of the three kinds.
+// Returns null only for entries that can't be uploaded at all: a
+// zero-byte file (a folder the browser surfaced as a file, or a genuinely
+// empty document — nothing to extract or embed either way). Everything
+// with real bytes classifies to one of the three kinds.
 export function classifyFile(file: File): DroppedKind | null {
+  if (file.size === 0) return null;
   if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) return "pdf";
   if (IMAGE_MIMES.has(file.type) || IMAGE_EXTS.test(file.name)) return "image";
   return "file";
 }
 
-export async function filesFromDrop(dt: DataTransfer): Promise<DroppedFile[]> {
+export type DropResult = {
+  files: DroppedFile[];
+  // Zero-byte entries that were dropped on the floor, so the UI can tell
+  // the operator why fewer items than expected landed in the queue.
+  skippedEmpty: number;
+};
+
+export async function filesFromDrop(dt: DataTransfer): Promise<DropResult> {
   const entries: FileSystemEntryLike[] = [];
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
@@ -118,10 +127,12 @@ export async function filesFromDrop(dt: DataTransfer): Promise<DroppedFile[]> {
     pairs = Array.from(dt.files).map((file) => ({ file, folderPath: null }));
   }
 
-  const out: DroppedFile[] = [];
+  const files: DroppedFile[] = [];
+  let skippedEmpty = 0;
   for (const p of pairs) {
     const kind = classifyFile(p.file);
-    if (kind) out.push({ file: p.file, folderPath: p.folderPath, kind });
+    if (kind) files.push({ file: p.file, folderPath: p.folderPath, kind });
+    else skippedEmpty++;
   }
-  return out;
+  return { files, skippedEmpty };
 }

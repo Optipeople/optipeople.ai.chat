@@ -15,6 +15,13 @@ export type SearchKbHit = {
   page_from: number | null;
   page_to: number | null;
   score: number;
+  /**
+   * Cosine similarity (0..1) of this chunk to the query, from the RPC's
+   * `similarity` column. Null in keyword-only mode (no query embedding).
+   * Unlike `score` (rank-based RRF) it is comparable across queries, so
+   * callers can tell "the manual covers this" from "least bad chunk".
+   */
+  similarity: number | null;
   text: string;
   is_image: boolean;
   image_alt: string | null;
@@ -61,6 +68,7 @@ export async function searchKb(args: {
     page_to: number | null;
     text: string;
     rrf_score: number;
+    similarity: number | null;
   }>;
 
   const docIds = [...new Set(rows.map((r) => r.document_id))];
@@ -121,6 +129,10 @@ export async function searchKb(args: {
         page_from: r.page_from,
         page_to: r.page_to,
         score: r.rrf_score,
+        similarity:
+          typeof r.similarity === "number" && Number.isFinite(r.similarity)
+            ? r.similarity
+            : null,
         text: r.text,
         is_image: !!assetId,
         image_alt: assetId ? altByAsset.get(assetId) ?? null : null,

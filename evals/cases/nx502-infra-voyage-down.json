@@ -1,0 +1,13 @@
+{
+  "id": "nx502-infra-voyage-down",
+  "about": "Infra failure. With the embedding API down the chat route passes p_query_embedding = null and search_kb_multi runs keyword-only. The question is written with the manual's own English terms so the OR-ed lexeme query has something to bite on. The answer must still be correct (backup is pin 3 ON) and the turn must not error out. Requires EVAL_FORCE_VOYAGE_FAIL=1 on both the dev server and the harness.",
+  "question": "DIP switch setting for SD Memory Card backup on the NX502 CPU Unit: which pin is ON?",
+  "mode": "single",
+  "infraFailure": "voyage",
+  "expectedPageInRetrieval": [88, 89, 90, 91],
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "matches", "pattern": "pin\\s*3|SW3|switch\\s*3", "label": "names pin 3 for backup even without vector search" },
+    { "type": "notMatches", "pattern": "backup[^.\\n]{0,80}pin\\s*2", "label": "does not call pin 2 the backup setting" }
+  ]
+}

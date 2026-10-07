@@ -129,3 +129,22 @@ export function saveFleetSelected(): void {
 export function clearFleetSelected(): void {
   localStorage.removeItem(KEYS.fleetMode);
 }
+
+// Live-chat stash slots (see src/app/page.tsx). Keyed per identity and
+// machine so one operator's transcript can never surface for the next
+// user on a shared device — and wiped wholesale on logout / QR clear.
+export const CHAT_STASH_PREFIX = "optiai_chat_";
+
+export function clearChatStashes(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (key && key.startsWith(CHAT_STASH_PREFIX)) doomed.push(key);
+    }
+    for (const key of doomed) window.sessionStorage.removeItem(key);
+  } catch {
+    // Storage unavailable — nothing to clear.
+  }
+}

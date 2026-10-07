@@ -7,7 +7,12 @@
 // token (header / query param). QR sessions are pinned to one machine —
 // reject any cross-machine probe.
 
-import { AuthError, resolveCurrentUser } from "@/lib/auth";
+import {
+  AuthError,
+  assertOperatorAccountAccess,
+  resolveCurrentUser,
+  resolveMachineAccountId,
+} from "@/lib/auth";
 import { readQrTokenFromRequest, resolveQrToken } from "@/lib/qrAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -42,9 +47,20 @@ export async function GET(
     readQrTokenFromRequest(req, null) ?? url.searchParams.get("qrToken");
 
   if (hasBearer) {
+    // Bearer users may only browse machines on their own account. A
+    // machine on another tenant (or one that isn't onboarded) reads as
+    // "not found" so the id is never confirmed to exist.
     try {
-      await resolveCurrentUser(req);
+      const user = await resolveCurrentUser(req);
+      const machineAccountId = await resolveMachineAccountId(id);
+      if (!machineAccountId) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      assertOperatorAccountAccess(user, machineAccountId);
     } catch (err) {
+      if (err instanceof AuthError && err.status === 403) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
       if (err instanceof AuthError) return err.toResponse();
       throw err;
     }

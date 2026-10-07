@@ -8,8 +8,8 @@
     {
       "type": "anyOf",
       "patterns": [
-        "pin\s*1[^.\n]{0,60}OFF",
-        "OFF[^.\n]{0,60}pin\s*1",
+        "pin\\s*1[^.\\n]{0,60}OFF",
+        "OFF[^.\\n]{0,60}pin\\s*1",
         "not used",
         "ikke brugt",
         "ingen af de",

@@ -31,6 +31,7 @@ import { getLocalMachinesForAccount } from "./localMachinesApi";
 import { getRegisteredSets } from "./registeredApi";
 import { fetchStoredLocale, persistLocale } from "@/i18n/localeApi";
 import {
+  clearChatStashes,
   clearCurrentAccount,
   clearCurrentMachine,
   clearFleetSelected,
@@ -207,6 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     clearSession();
+    // A shared tablet must not hand the next user the previous one's
+    // conversation — drop every stashed chat along with the session.
+    clearChatStashes();
     permissionRef.current = null;
     setUser(null);
     setAccounts([]);

@@ -31,10 +31,38 @@ type VoyageResponse = {
   usage?: { total_tokens?: number };
 };
 
+// Two retry/timeout policies. Ingest runs offline and can afford to wait
+// out Voyage's free-tier rate limit; a chat query cannot — an operator is
+// standing at the machine, and a search that takes two minutes is a
+// search that never happened. The fast policy fails within ~10 s so the
+// caller can fall back to keyword-only retrieval instead.
+type EmbedPolicy = {
+  maxAttempts: number;
+  backoffMs: (attempt: number) => number;
+  timeoutMs: number | null;
+};
+
+const INGEST_POLICY: EmbedPolicy = {
+  // Free-tier Voyage accounts (no payment method) are capped at 3 RPM /
+  // 10k TPM, so we accept up to 4 retries with exponential backoff on 429.
+  maxAttempts: 5,
+  // Linear-ish backoff that's tuned for the 3 RPM free-tier ceiling:
+  // 25s, 30s, 35s, 40s. Total worst-case wait ~2.2 minutes per batch.
+  backoffMs: (attempt) => 20_000 + attempt * 5_000,
+  timeoutMs: null,
+};
+
+const FAST_POLICY: EmbedPolicy = {
+  maxAttempts: 2,
+  backoffMs: () => 1_500,
+  timeoutMs: 8_000,
+};
+
 async function embedBatch(
   inputs: string[],
   inputType: VoyageInputType,
   usage?: UsageAttribution,
+  policy: EmbedPolicy = INGEST_POLICY,
 ): Promise<number[][]> {
   if (!process.env.VOYAGE_API_KEY) {
     throw new Error("VOYAGE_API_KEY not set");
@@ -46,28 +74,42 @@ async function embedBatch(
     );
   }
 
-  // Free-tier Voyage accounts (no payment method) are capped at 3 RPM /
-  // 10k TPM, so we accept up to 4 retries with exponential backoff on 429.
-  // Other 5xx errors get the same treatment; 4xx (other than 429) are
-  // surfaced immediately because retry won't fix them.
-  const MAX_ATTEMPTS = 5;
+  // 429 and 5xx are retried per the policy; other 4xx are surfaced
+  // immediately because retry won't fix them. A timeout (fast policy
+  // only) counts as a retryable failure, same as a 5xx.
+  const MAX_ATTEMPTS = policy.maxAttempts;
   let attempt = 0;
   while (true) {
     attempt++;
-    const res = await fetch(VOYAGE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        input: inputs,
-        model: VOYAGE_MODEL,
-        input_type: inputType,
-        output_dimension: VOYAGE_DIMS,
-        truncation: true,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(VOYAGE_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
+        },
+        body: JSON.stringify({
+          input: inputs,
+          model: VOYAGE_MODEL,
+          input_type: inputType,
+          output_dimension: VOYAGE_DIMS,
+          truncation: true,
+        }),
+        ...(policy.timeoutMs
+          ? { signal: AbortSignal.timeout(policy.timeoutMs) }
+          : {}),
+      });
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS) throw err;
+      const delayMs = policy.backoffMs(attempt);
+      console.warn(
+        `  Voyage request failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${delayMs}ms:`,
+        err instanceof Error ? err.message : err,
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+      continue;
+    }
 
     if (res.ok) {
       const body = (await res.json()) as VoyageResponse;
@@ -91,9 +133,7 @@ async function embedBatch(
       throw new Error(`Voyage ${res.status}: ${text}`);
     }
 
-    // Linear-ish backoff that's tuned for the 3 RPM free-tier ceiling:
-    // 25s, 30s, 35s, 40s. Total worst-case wait ~2.2 minutes per batch.
-    const delayMs = 20_000 + attempt * 5_000;
+    const delayMs = policy.backoffMs(attempt);
     console.warn(
       `  Voyage ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}); sleeping ${Math.round(delayMs / 1000)}s`,
     );
@@ -165,11 +205,25 @@ export async function embedDocuments(
   return out;
 }
 
+// `fast` selects the chat-time policy (8 s timeout, one retry). Leave it
+// off for offline callers that would rather wait than fail.
 export async function embedQuery(
   text: string,
   usage?: UsageAttribution,
+  opts: { fast?: boolean } = {},
 ): Promise<number[]> {
-  const [vec] = await embedBatch([text], "query", usage);
+  // Eval kill-switch: lets scripts/eval.ts exercise the keyword-only
+  // fallback in the chat route without taking Voyage down for real.
+  // Never set in production.
+  if (process.env.EVAL_FORCE_VOYAGE_FAIL === "1") {
+    throw new Error("Voyage disabled by EVAL_FORCE_VOYAGE_FAIL");
+  }
+  const [vec] = await embedBatch(
+    [text],
+    "query",
+    usage,
+    opts.fast ? FAST_POLICY : INGEST_POLICY,
+  );
   return vec;
 }
 
