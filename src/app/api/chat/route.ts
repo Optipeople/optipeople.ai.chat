@@ -30,9 +30,11 @@ import {
   appendToolMessage,
   appendUserMessage,
   createConversation,
+  isConversationStale,
   validateConversation,
   type ConversationScope,
 } from "@/lib/conversations";
+import { closeConversation, CONVERSATION_STALE_MS } from "@/lib/distill";
 import {
   getFleetMachines,
   resolveFleetMachine,
@@ -1820,7 +1822,14 @@ export async function POST(req: Request) {
         // Conversation lifecycle: client sends conversationId on
         // follow-ups; we validate it. Otherwise we create a fresh row
         // and stream the id back so the client can include it next time.
+        //
+        // A follow-up on a conversation idle past CONVERSATION_STALE_MS
+        // is a new problem on a screen left open: close the old row (the
+        // distill sweep picks it up) and start fresh, forwarding only the
+        // latest turn so the model doesn't answer it with yesterday's
+        // context. The client trims its thread on `rolledOver`.
         let conversationId: string | null = null;
+        let rolledOver = false;
         if (body.conversationId) {
           const ok = await validateConversation(
             body.conversationId,
@@ -1828,7 +1837,18 @@ export async function POST(req: Request) {
             conversationScope,
             resolvedAccountId,
           );
-          if (ok) conversationId = body.conversationId;
+          if (ok) {
+            if (
+              await isConversationStale(body.conversationId, CONVERSATION_STALE_MS)
+            ) {
+              rolledOver = true;
+              await safe("closeStaleConversation", () =>
+                closeConversation(body.conversationId!),
+              );
+            } else {
+              conversationId = body.conversationId;
+            }
+          }
         }
         if (!conversationId) {
           conversationId = await createConversation({
@@ -1839,8 +1859,11 @@ export async function POST(req: Request) {
             userName: user.name,
             entryMode,
           });
-          send("conversation", { id: conversationId });
+          send("conversation", { id: conversationId, rolledOver });
         }
+        const historyMessages = rolledOver
+          ? userMessages.slice(-1)
+          : userMessages;
 
         // Persist the latest user turn (the rest of `userMessages` is
         // history we already wrote on previous requests).
@@ -1884,7 +1907,7 @@ export async function POST(req: Request) {
         // URLs expire after a few minutes, which is fine for the
         // synchronous request lifetime.
         let conversation: MessageParam[] = await buildConversation(
-          trimHistory(userMessages),
+          trimHistory(historyMessages),
           allowedMachineIds,
         );
         const totalUsage = { input_tokens: 0, output_tokens: 0 };

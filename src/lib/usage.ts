@@ -26,6 +26,7 @@ export type UsageOperation =
   | "doc_metadata"
   | "suggestions"
   | "auto_organize"
+  | "conversation_distill"
   // Voice. `voice` is a realtime assistant response; `transcription` is
   // the speech-to-text pass over the operator's microphone, which bills
   // separately and runs both inside a voice session and behind the

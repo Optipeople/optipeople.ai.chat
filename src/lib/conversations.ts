@@ -156,3 +156,24 @@ export async function appendToolMessage(args: {
   });
   if (error) throw new Error(`appendToolMessage failed: ${error.message}`);
 }
+
+// True when the conversation's last message is older than maxIdleMs. The
+// chat route uses it to roll a follow-up on a long-idle screen into a
+// fresh conversation instead of piling a new problem onto an old one.
+// last_message_at is kept by a trigger on messages (migration
+// 20261021120000); a lookup failure counts as "not stale" so the chat
+// keeps working.
+export async function isConversationStale(
+  conversationId: string,
+  maxIdleMs: number,
+): Promise<boolean> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("last_message_at, started_at")
+    .eq("id", conversationId)
+    .maybeSingle<{ last_message_at: string | null; started_at: string }>();
+  if (error || !data) return false;
+  const last = Date.parse(data.last_message_at ?? data.started_at);
+  return Number.isFinite(last) && Date.now() - last > maxIdleMs;
+}

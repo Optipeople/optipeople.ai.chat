@@ -39,6 +39,7 @@ const OPERATION_KEYS: Record<string, string> = {
   doc_metadata: "opDocMetadata",
   suggestions: "opSuggestions",
   auto_organize: "opAutoOrganize",
+  conversation_distill: "opConversationDistill",
   voice: "opVoice",
   transcription: "opTranscription",
   tts: "opTts",

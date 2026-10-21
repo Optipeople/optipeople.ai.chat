@@ -159,6 +159,9 @@ export async function POST(req: Request) {
     .update({
       resolution: resolved ? "resolved" : "unresolved",
       ended_at: new Date().toISOString(),
+      // The verdict changes what the distill sweep does with this
+      // conversation (publish vs queue for review), so owe it a new pass.
+      distilled_at: null,
     })
     .eq("id", conversationId);
   if (updErr) {

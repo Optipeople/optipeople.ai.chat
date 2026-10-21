@@ -40,9 +40,22 @@ import type {
   AdminEscalationInboxResponse,
 } from "@/app/api/admin/escalations/route";
 import type { AdminEscalationStatusResponse } from "@/app/api/admin/escalations/[id]/route";
+import type {
+  AdminInsight,
+  AdminInsightStatus,
+  AdminInsightStatusFilter,
+} from "@/app/api/admin/machines/[id]/insights/route";
+import type {
+  AdminInsightAction,
+  AdminInsightPatchResponse,
+} from "@/app/api/admin/insights/[id]/route";
 
 export type {
   AdminEscalationInboxItem,
+  AdminInsight,
+  AdminInsightAction,
+  AdminInsightStatus,
+  AdminInsightStatusFilter,
   AdminAccountUsageResponse,
   AdminUsageOverviewRow,
   AdminUsageRow,
@@ -474,6 +487,66 @@ export async function setAdminEscalationStatus(
   }
   const out = (await res.json()) as AdminEscalationStatusResponse;
   return out.escalation;
+}
+
+export async function listAdminInsights(
+  machineId: string,
+  query: {
+    page?: number;
+    perPage?: number;
+    status?: AdminInsightStatusFilter;
+  } = {},
+): Promise<{
+  insights: AdminInsight[];
+  page: number;
+  perPage: number;
+  total: number;
+  hasMore: boolean;
+}> {
+  const params = new URLSearchParams({
+    page: String(query.page ?? 0),
+    perPage: String(query.perPage ?? 25),
+    status: query.status ?? "pending",
+  });
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${machineId}/insights?${params.toString()}`,
+  );
+  if (!res.ok) {
+    throw apiError("fetchInsightsFailed", `Kunne ikke hente læring (${res.status})`, {
+      status: res.status,
+    });
+  }
+  return (await res.json()) as {
+    insights: AdminInsight[];
+    page: number;
+    perPage: number;
+    total: number;
+    hasMore: boolean;
+  };
+}
+
+export async function reviewAdminInsight(
+  id: string,
+  action: AdminInsightAction,
+  edits: Partial<
+    Pick<AdminInsight, "title" | "problem" | "cause" | "solution" | "facts">
+  > = {},
+): Promise<AdminInsight> {
+  const res = await fetchWithAuth(`/api/admin/insights/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...edits }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw apiError(
+      "updateInsightFailed",
+      `Kunne ikke opdatere læringen (${res.status})`,
+      { status: res.status, serverMessage: body.error },
+    );
+  }
+  const out = (await res.json()) as AdminInsightPatchResponse;
+  return out.insight;
 }
 
 export async function getAdminConversation(

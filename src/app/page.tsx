@@ -551,6 +551,12 @@ function QrErrorScreen({
 // nagged mid-task; short enough that the prompt still has context.
 const IDLE_FEEDBACK_MS = 10 * 60 * 1000;
 
+// 30 minutes with no activity at all resets the screen to a fresh chat.
+// Shop-floor screens stay open for days, and the next operator to walk up
+// should not inherit (or append to) the last person's conversation. The
+// old one is closed server-side and distilled into knowledge from there.
+const CHAT_RESET_MS = 30 * 60 * 1000;
+
 type FeedbackState =
   | { phase: "hidden" }
   | { phase: "prompt" }
@@ -676,6 +682,20 @@ function saveChatStash(
 function clearChatStash(key: string): void {
   try {
     window.sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+// Tell the server a conversation is over after a screen reset, so it is
+// stamped ended and distilled. Best-effort: the distill sweep closes
+// long-idle conversations on its own if this never lands.
+async function closeConversationOnServer(conversationId: string): Promise<void> {
+  try {
+    await fetchWithAuth(
+      `/api/conversations/${encodeURIComponent(conversationId)}/close`,
+      { method: "POST" },
+    );
   } catch {
     // ignore
   }
@@ -815,6 +835,7 @@ function ChatApp({
   const rafRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Bumped whenever the chat context moves on (machine switch, history
   // open, new chat, Stop). A stream started under an older id must not
   // touch `messages` any more — they may belong to a different chat.
@@ -896,7 +917,16 @@ function ChatApp({
     // A reply still streaming for the previous machine must not keep
     // landing in the new chat — kill it first.
     cancelActiveStream();
-    const stash = loadChatStash(stashKey);
+    let stash = loadChatStash(stashKey);
+    // A stash older than CHAT_RESET_MS is a screen that slept through its
+    // reset (tablet asleep, tab discarded). Treat it as reset rather than
+    // resurrecting yesterday's chat for whoever wakes the screen.
+    const stashLast = stash?.messages[stash.messages.length - 1];
+    if (stashLast && Date.now() - stashLast.createdAt > CHAT_RESET_MS) {
+      if (stash?.conversationId) void closeConversationOnServer(stash.conversationId);
+      clearChatStash(stashKey);
+      stash = null;
+    }
     const restored = stash?.messages ?? [];
     // The stash never holds errored/empty assistant turns, so a chat
     // that was interrupted mid-answer restores ending on the user's
@@ -1029,6 +1059,7 @@ function ChatApp({
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       abortRef.current?.abort();
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     };
   }, []);
 
@@ -1305,6 +1336,30 @@ function ChatApp({
     setHistoryError(null);
   }
 
+  // Screen reset (CHAT_RESET_MS). Any change to the thread, the input or
+  // the cards re-arms the timer; a live reply or dictation holds it off.
+  // The ref keeps the timer calling the current render's closure.
+  const resetScreenRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    resetScreenRef.current = () => {
+      if (conversationId) void closeConversationOnServer(conversationId);
+      startNewConversation();
+    };
+  });
+  useEffect(() => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = null;
+    if (!conversationId || streaming || voiceState !== "idle") return undefined;
+    resetTimerRef.current = setTimeout(
+      () => resetScreenRef.current(),
+      CHAT_RESET_MS,
+    );
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    };
+  }, [conversationId, streaming, voiceState, messages, input, feedback, escalate]);
+
   async function submitFeedback(resolved: boolean, solutionText?: string) {
     if (!conversationId) return;
     setFeedback(
@@ -1553,6 +1608,21 @@ function ChatApp({
             });
           } else if (event === "conversation") {
             if (typeof data.id === "string") setConversationId(data.id);
+            // The server found the old conversation idle past its limit
+            // and started a new one with only this question. Drop the old
+            // turns so the screen matches what the model is answering.
+            if (data.rolledOver === true && owns()) {
+              setMessages((prev) => {
+                let lastUser = -1;
+                for (let i = prev.length - 1; i >= 0; i--) {
+                  if (prev[i].role === "user") {
+                    lastUser = i;
+                    break;
+                  }
+                }
+                return lastUser > 0 ? prev.slice(lastUser) : prev;
+              });
+            }
           } else if (event === "done") {
             sawDone = true;
           } else if (event === "truncated") {

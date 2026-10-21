@@ -7,18 +7,26 @@ import { SectionExpander } from "@/components/ui/section-expander";
 import { MachineDetail, MachineSettings } from "@/components/admin/MachineDetail";
 import { ConversationsList } from "@/components/admin/ConversationsList";
 import { EscalationsList } from "@/components/admin/EscalationsList";
+import { InsightsList } from "@/components/admin/InsightsList";
 
-type SectionKey = "knowledge" | "settings" | "conversations" | "escalations";
+type SectionKey =
+  | "knowledge"
+  | "settings"
+  | "conversations"
+  | "insights"
+  | "escalations";
 
 const SECTIONS: readonly SectionKey[] = [
   "knowledge",
   "settings",
   "conversations",
+  "insights",
   "escalations",
 ];
 
 // Machine hub. Replaces the old Knowledge / Settings / Conversations /
-// Escalations sub-tabs with four collapsible sections on one page.
+// Escalations sub-tabs with collapsible sections on one page (plus
+// Learnings, the distilled insights awaiting review).
 // Settings is open by default; the other sections start collapsed.
 //
 // `?section=...` (set by the legacy sub-route redirects and by deep
@@ -39,12 +47,14 @@ export function MachineSections({ machineId }: { machineId: string }) {
     knowledge: target === "knowledge",
     settings: target === null || target === "settings",
     conversations: target === "conversations",
+    insights: target === "insights",
     escalations: target === "escalations",
   }));
 
   const knowledgeRef = useRef<HTMLDivElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const conversationsRef = useRef<HTMLDivElement | null>(null);
+  const insightsRef = useRef<HTMLDivElement | null>(null);
   const escalationsRef = useRef<HTMLDivElement | null>(null);
   const refs: Record<
     SectionKey,
@@ -53,6 +63,7 @@ export function MachineSections({ machineId }: { machineId: string }) {
     knowledge: knowledgeRef,
     settings: settingsRef,
     conversations: conversationsRef,
+    insights: insightsRef,
     escalations: escalationsRef,
   };
 
@@ -142,6 +153,25 @@ export function MachineSections({ machineId }: { machineId: string }) {
           }
         >
           <span id="section-conversations">{tn("conversations")}</span>
+        </SectionExpander>
+      </section>
+
+      <section
+        ref={insightsRef}
+        aria-labelledby="section-insights"
+        className="scroll-mt-4"
+      >
+        <SectionExpander
+          expanded={open.insights}
+          onToggle={() => toggle("insights")}
+          keepMounted
+          panel={
+            <div className="pt-5 sm:pt-6">
+              <InsightsList machineId={machineId} embedded />
+            </div>
+          }
+        >
+          <span id="section-insights">{tn("insights")}</span>
         </SectionExpander>
       </section>
 

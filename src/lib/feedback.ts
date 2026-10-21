@@ -79,42 +79,76 @@ export async function promoteFeedbackToKb(
     ? `Spørgsmål fra operatør:\n${question}\n\nLøsning (markeret som virkende af operatøren):\n${input.solutionText}`
     : `Løsning fra operatør (markeret som virkende):\n${input.solutionText}`;
 
+  const documentId = await publishExperienceDoc({
+    machineId: input.machineId,
+    title,
+    summary,
+    content: chunkContent,
+    createdBy: input.createdBy,
+  });
+
+  const { error: linkErr } = await supabase
+    .from("feedback")
+    .update({ promoted_doc_id: documentId })
+    .eq("id", input.feedbackId);
+  if (linkErr) {
+    // The document is in the KB; failing to link the feedback row is
+    // a soft error. Log and move on — admin can still demote via the
+    // tree, and re-submission will replace the doc.
+    console.warn("promote: feedback link failed:", linkErr);
+  }
+
+  return documentId;
+}
+
+// Write one operator-experience document (kb_documents + embedded
+// kb_chunks) into the machine's Experience folder. Shared by feedback
+// promotion and the conversation distiller (src/lib/distill.ts). Returns
+// the document id; throws on failure after rolling back the doc row.
+export async function publishExperienceDoc(args: {
+  machineId: string;
+  title: string;
+  summary: string;
+  content: string;
+  createdBy: string;
+}): Promise<string> {
+  const supabase = getSupabaseServerClient();
   const documentId = randomUUID();
 
   // Make sure the dedicated folder exists in kb_folders before the doc
   // references it — otherwise the tree won't render the folder until
   // someone manually re-creates it.
-  await ensureFolderPath(input.machineId, FEEDBACK_FOLDER);
+  await ensureFolderPath(args.machineId, FEEDBACK_FOLDER);
 
   const { error: docErr } = await supabase.from("kb_documents").insert({
     id: documentId,
-    machine_id: input.machineId,
-    title,
-    summary,
+    machine_id: args.machineId,
+    title: args.title,
+    summary: args.summary,
     source_type: "feedback",
     storage_path: null,
     byte_size: null,
     page_count: null,
     status: "ready",
-    created_by: input.createdBy,
+    created_by: args.createdBy,
     folder_path: FEEDBACK_FOLDER,
   });
   if (docErr) {
-    throw new Error(`promote: kb_documents insert failed: ${docErr.message}`);
+    throw new Error(`publishExperienceDoc: kb_documents insert failed: ${docErr.message}`);
   }
 
-  const chunks = chunkText(chunkContent);
-  // Solution text is short by construction; embedDocuments handles the
+  const chunks = chunkText(args.content);
+  // Experience text is short by construction; embedDocuments handles the
   // single-chunk case fine and we get one Voyage call here.
   const embeddings = await embedDocuments(
     chunks.map((c) => c.text),
-    { usage: { machineId: input.machineId } },
+    { usage: { machineId: args.machineId } },
   );
   if (embeddings.length !== chunks.length) {
     // Roll back the doc row so we don't leave an empty document hanging.
     await supabase.from("kb_documents").delete().eq("id", documentId);
     throw new Error(
-      `promote: embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
+      `publishExperienceDoc: embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
     );
   }
 
@@ -122,7 +156,7 @@ export async function promoteFeedbackToKb(
   // not an extract from a manual.
   const rows = chunks.map((chunk, i) => ({
     document_id: documentId,
-    machine_id: input.machineId,
+    machine_id: args.machineId,
     ordinal: i,
     page_from: chunk.pageFrom,
     page_to: chunk.pageTo,
@@ -134,18 +168,7 @@ export async function promoteFeedbackToKb(
   const { error: chunkErr } = await supabase.from("kb_chunks").insert(rows);
   if (chunkErr) {
     await supabase.from("kb_documents").delete().eq("id", documentId);
-    throw new Error(`promote: kb_chunks insert failed: ${chunkErr.message}`);
-  }
-
-  const { error: linkErr } = await supabase
-    .from("feedback")
-    .update({ promoted_doc_id: documentId })
-    .eq("id", input.feedbackId);
-  if (linkErr) {
-    // The document is in the KB; failing to link the feedback row is
-    // a soft error. Log and move on — admin can still demote via the
-    // tree, and re-submission will replace the doc.
-    console.warn("promote: feedback link failed:", linkErr);
+    throw new Error(`publishExperienceDoc: kb_chunks insert failed: ${chunkErr.message}`);
   }
 
   return documentId;
