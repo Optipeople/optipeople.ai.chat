@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { isAccountAdmin, useAuth } from "@/auth/AuthContext";
+import { isAccountAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
 
-// Top-level navigation for the admin zone: Machines · Accounts.
+// Top-level navigation for the admin zone: Machines, Accounts,
+// Escalations, plus QR stickers for super admins.
 // Lives inside AppHeader (admin only) and gives users a stable anchor
 // for jumping between the two trees regardless of how deep they are.
 //
@@ -40,6 +41,17 @@ export function SectionNav() {
       href: "/admin/escalations",
       match: "/admin/escalations",
     },
+    // Sticker batches span every account, so only super admins see them.
+    ...(isSuperAdmin(user)
+      ? [
+          {
+            id: "qrStickers",
+            label: t("qrStickers"),
+            href: "/admin/qr-stickers",
+            match: "/admin/qr-stickers",
+          },
+        ]
+      : []),
   ];
 
   return (

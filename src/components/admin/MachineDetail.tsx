@@ -68,6 +68,7 @@ import {
 import { MachineEscalationCard } from "@/components/admin/MachineEscalationCard";
 import { McpStatusBadge } from "@/components/admin/McpStatusBadge";
 import { AutoOrganizeDialog } from "@/components/admin/AutoOrganizeDialog";
+import { MachineQrStickers } from "@/components/admin/MachineQrStickers";
 
 const DOC_DRAG_MIME = "application/x-optipeople-doc-id";
 
@@ -731,6 +732,8 @@ function MachineQrCard({
       )}
 
       {err && <p className="mt-2 text-[13px] text-[var(--ds-red)]">{err}</p>}
+
+      <MachineQrStickers machineId={machine.machineId} />
     </section>
   );
 }

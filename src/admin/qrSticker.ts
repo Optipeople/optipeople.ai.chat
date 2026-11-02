@@ -11,6 +11,8 @@
 // that straddles the field edge, with an equal margin on all four sides,
 // drawn with rounded modules and finder patterns. Below it, OptiPeople's support
 // phone and email give the operator somewhere to turn if the scan fails.
+// Pre-printed pool stickers also carry a short code under the card, so an
+// admin can link a sticker by hand; the card shrinks a little to fit it.
 // At this canvas scale one CSS px is about 3 canvas px, so the 4px brand
 // lines become 12px here.
 
@@ -47,6 +49,9 @@ export type QrStickerArgs = {
   eyebrow: string;
   supportPhone: string;
   supportEmail: string;
+  // Human code for pre-printed pool stickers, e.g. "7F3K-9PQX", drawn
+  // under the QR card. Without it the sticker is unchanged.
+  code?: string;
 };
 
 let fontsReady: Promise<void> | null = null;
@@ -74,6 +79,20 @@ function ensureFonts(): Promise<void> {
     })();
   }
   return fontsReady;
+}
+
+let logoReady: Promise<HTMLImageElement> | null = null;
+
+// Batch printing renders hundreds of stickers, so the wordmark is fetched
+// and decoded once. A failed load is not cached, so the next call retries.
+function loadLogo(): Promise<HTMLImageElement> {
+  if (!logoReady) {
+    logoReady = loadImage(LOGO_URL).catch((err: unknown) => {
+      logoReady = null;
+      throw err;
+    });
+  }
+  return logoReady;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -271,6 +290,31 @@ function drawQr(
   }
 }
 
+// The sticker code, set in fixed-width cells so it reads like a serial
+// number: every character, hyphen included, is centred in a cell of the
+// same width, which keeps 8 and B or 0 and D clearly apart.
+function drawCode(
+  ctx: CanvasRenderingContext2D,
+  code: string,
+  cx: number,
+  baseline: number,
+  size: number,
+  color: string,
+): void {
+  ctx.save();
+  ctx.font = `500 ${size}px ${FONT_STACK}`;
+  setTracking(ctx, "0px");
+  ctx.textAlign = "center";
+  ctx.fillStyle = color;
+  const chars = Array.from(code);
+  const cellW = Math.round(size * 0.95);
+  const left = cx - (chars.length * cellW) / 2;
+  chars.forEach((ch, i) => {
+    ctx.fillText(ch, left + i * cellW + cellW / 2, baseline);
+  });
+  ctx.restore();
+}
+
 function slug(name: string): string {
   return name
     .normalize("NFKD")
@@ -281,7 +325,10 @@ function slug(name: string): string {
     .slice(0, 50);
 }
 
-async function renderQrStickerCanvas(
+// Renders the sticker to a fresh 1200 x 1500 canvas. Corners outside the
+// die-cut radius are transparent. Callers that render many stickers should
+// zero the canvas size when done so the browser can free its memory.
+export async function renderQrStickerCanvas(
   args: QrStickerArgs,
 ): Promise<HTMLCanvasElement> {
   const W = 1200;
@@ -296,9 +343,14 @@ async function renderQrStickerCanvas(
   // match the numbers here.
   const logoTop = 72;
   const logoH = 48;
-  const card = 880;
+  // With a code the card gives up 64 px (still top-anchored, so the
+  // header is untouched) and the code takes that room under it.
+  const code = args.code?.trim() ?? "";
+  const card = code ? 816 : 880;
   const cardTop = 384;
   const gap = 64;
+  const codeSize = 48;
+  const codeGap = 48;
   const cardR = 44;
   const fieldH = cardTop + card / 2;
   const barH = 12;
@@ -307,7 +359,7 @@ async function renderQrStickerCanvas(
   // Everything is clipped to it, so the PNG corners are transparent.
   const cornerR = 46;
 
-  const [, logoImg] = await Promise.all([ensureFonts(), loadImage(LOGO_URL)]);
+  const [, logoImg] = await Promise.all([ensureFonts(), loadLogo()]);
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -385,12 +437,21 @@ async function renderQrStickerCanvas(
   // QR in the primary green, with an equal margin on all four sides.
   drawQr(ctx, args.qrUrl, cardX, cardTop, card, COLOR.primary);
 
+  // Sticker code, one short step below the card, positioned by cap
+  // height like the header text.
+  let rowTop = cardTop + card + gap;
+  if (code) {
+    const codeBaseline =
+      cardTop + card + codeGap + Math.round(codeSize * CAP);
+    drawCode(ctx, code, cx, codeBaseline, codeSize, COLOR.primary);
+    rowTop = codeBaseline + codeGap;
+  }
+
   // Support phone and email, centred together, one rhythm step below
-  // the card.
+  // the card (or the code).
   const chip = 56;
   const chipGap = 16;
   const itemGap = 48;
-  const rowTop = cardTop + card + gap;
 
   ctx.font = `500 32px ${FONT_STACK}`;
   const contacts: [string[], string][] = [
@@ -441,12 +502,35 @@ async function renderQrStickerCanvas(
   return canvas;
 }
 
-async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+export async function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: "image/png" | "image/jpeg" = "image/png",
+  quality?: number,
+): Promise<Blob> {
   const blob: Blob | null = await new Promise((resolve) => {
-    canvas.toBlob((b) => resolve(b), "image/png");
+    canvas.toBlob((b) => resolve(b), type, quality);
   });
-  if (!blob) throw new Error("Kunne ikke generere PNG");
+  if (!blob) {
+    throw new Error(
+      type === "image/png"
+        ? "Kunne ikke generere PNG"
+        : "Kunne ikke generere billede",
+    );
+  }
   return blob;
+}
+
+// Saves a Blob through a temporary link. The object URL is revoked a
+// moment later, so large files are not cut off before the save starts.
+export function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function renderQrStickerPngUrl(
@@ -461,13 +545,5 @@ export async function downloadQrStickerPng(args: QrStickerArgs): Promise<void> {
   const canvas = await renderQrStickerCanvas(args);
   const blob = await canvasToBlob(canvas);
 
-  const fileName = `qr-${slug(args.machineName) || "maskine"}.png`;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  triggerDownload(blob, `qr-${slug(args.machineName) || "maskine"}.png`);
 }

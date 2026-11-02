@@ -9,10 +9,14 @@ import {
   ArrowUpDown,
   ChevronRight,
   MessageSquare,
+  QrCode,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import {
@@ -23,7 +27,13 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/components/ui/data-table";
-import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
+import {
+  adminErrorMessage,
+  bulkMachineQr,
+  getAdminMachines,
+  type AdminMachine,
+} from "@/admin/adminApi";
+import { downloadStickerPdf, machineQrUrl } from "@/admin/qrStickerPdf";
 import { getAccounts } from "@/auth/accountsApi";
 import {
   getAccountsHierarchy,
@@ -68,6 +78,10 @@ function SortButton({
 export function MachinesList() {
   const t = useTranslations("admin.machinesList");
   const tc = useTranslations("common");
+  const tb = useTranslations("admin.qrStickers.bulkPrint");
+  const tq = useTranslations("admin.qrPrint");
+  const tErr = useTranslations("admin.apiErrors");
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [accountNames, setAccountNames] = useState<Map<string, string>>(
@@ -91,6 +105,14 @@ export function MachinesList() {
   const [machineToFactory, setMachineToFactory] = useState<MachineFactoryMap>(
     () => new Map(),
   );
+  // Machines picked for bulk QR sticker printing. Kept across filter
+  // changes so an admin can build a selection from several searches.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [printProgress, setPrintProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const [printErr, setPrintErr] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const rows = await getAdminMachines();
@@ -214,6 +236,76 @@ export function MachinesList() {
     sort,
   ]);
 
+  const filteredIds = useMemo(
+    () => filtered.map((m) => m.machineId),
+    [filtered],
+  );
+  const selectedInView = filteredIds.filter((id) => selected.has(id)).length;
+  const allInViewSelected =
+    filteredIds.length > 0 && selectedInView === filteredIds.length;
+  const printing = printProgress !== null;
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllInView() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allInViewSelected) filteredIds.forEach((id) => next.delete(id));
+      else filteredIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  // Named stickers for the selected machines, one per page. The server
+  // mints a QR token for any machine that lacks one, so confirm first.
+  async function printStickers() {
+    const ids = machines
+      .map((m) => m.machineId)
+      .filter((id) => selected.has(id));
+    if (ids.length === 0 || printing) return;
+    const ok = await confirm({
+      title: tb("confirmTitle", { count: ids.length }),
+      description: tb("confirmBody"),
+      confirmLabel: tb("confirmLabel"),
+    });
+    if (!ok) return;
+    setPrintErr(null);
+    setPrintProgress({ done: 0, total: ids.length });
+    try {
+      // The bulk endpoint takes at most 500 machines per call.
+      const machines: Awaited<ReturnType<typeof bulkMachineQr>>["machines"] = [];
+      for (let i = 0; i < ids.length; i += 500) {
+        const res = await bulkMachineQr(ids.slice(i, i + 500));
+        machines.push(...res.machines);
+      }
+      const eyebrow = tq("scanAndAsk");
+      const supportPhone = tc("supportPhone");
+      const supportEmail = tc("supportEmail");
+      await downloadStickerPdf(
+        machines.map((m) => ({
+          machineName: m.displayName ?? tq("noName"),
+          qrUrl: machineQrUrl(m.token),
+          eyebrow,
+          supportPhone,
+          supportEmail,
+        })),
+        "qr-stickers-machines.pdf",
+        (done, total) => setPrintProgress({ done, total }),
+      );
+    } catch (e) {
+      setPrintErr(adminErrorMessage(e, tErr) ?? tc("unknownError"));
+    } finally {
+      setPrintProgress(null);
+    }
+  }
+
   function toggleSort(key: MachineSortKey) {
     setSort((s) =>
       s.key === key
@@ -282,6 +374,59 @@ export function MachinesList() {
 
       <hr className="my-2 border-0 border-t border-[var(--ds-grey-light-02)]" />
 
+      {(selected.size > 0 || printErr) && (
+        <div className="flex flex-col gap-2">
+          {selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] text-[var(--color-muted-foreground)]">
+                {tb("selectedCount", { count: selected.size })}
+              </span>
+              <Button
+                variant="ghost"
+                size="pill"
+                onClick={() => setSelected(new Set())}
+                disabled={printing}
+              >
+                {tb("clearSelection")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="pill"
+                onClick={() => void printStickers()}
+                disabled={printing}
+              >
+                {printing ? (
+                  <Spinner className="h-3.5 w-3.5" />
+                ) : (
+                  <QrCode className="h-3.5 w-3.5" />
+                )}
+                {tb("print", { count: selected.size })}
+              </Button>
+            </div>
+          )}
+          {printProgress && (
+            <div className="flex flex-col gap-1.5">
+              <ProgressBar
+                value={
+                  printProgress.total > 0
+                    ? (printProgress.done / printProgress.total) * 100
+                    : 0
+                }
+              />
+              <p className="text-[12px] text-[var(--color-muted-foreground)]">
+                {tb("progress", {
+                  done: printProgress.done,
+                  total: printProgress.total,
+                })}
+              </p>
+            </div>
+          )}
+          {printErr && (
+            <p className="text-[13px] text-[var(--ds-red)]">{printErr}</p>
+          )}
+        </div>
+      )}
+
       {addOpen && (
         <AddMachineDialog
           existingMachineIds={new Set(machines.map((m) => m.machineId))}
@@ -311,6 +456,14 @@ export function MachinesList() {
                 key={m.machineId}
                 className="group flex items-center gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
               >
+                <Checkbox
+                  checked={selected.has(m.machineId)}
+                  onChange={() => toggleSelected(m.machineId)}
+                  aria-label={tb("selectMachine", {
+                    name: m.displayName ?? t("noName"),
+                  })}
+                  disabled={printing}
+                />
                 {/* The chat shortcut is its own <a>, so the card body is
                     the link — nesting anchors is invalid HTML. */}
                 <Link
@@ -347,6 +500,17 @@ export function MachinesList() {
           <div className="hidden sm:block">
             <DataTable>
               <DataTableHead>
+                <DataTableHeader className="w-10">
+                  <Checkbox
+                    checked={allInViewSelected}
+                    indeterminate={!allInViewSelected && selectedInView > 0}
+                    onChange={toggleAllInView}
+                    aria-label={
+                      allInViewSelected ? tb("deselectAll") : tb("selectAll")
+                    }
+                    disabled={printing}
+                  />
+                </DataTableHeader>
                 <DataTableHeader>
                   <SortButton
                     active={sort.key === "name"}
@@ -379,6 +543,22 @@ export function MachinesList() {
                       key={m.machineId}
                       href={`/admin/machines/${m.machineId}`}
                     >
+                      <DataTableCell>
+                        {/* Stop the click before it reaches the row link. */}
+                        <span
+                          className="inline-flex"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Checkbox
+                            checked={selected.has(m.machineId)}
+                            onChange={() => toggleSelected(m.machineId)}
+                            aria-label={tb("selectMachine", {
+                              name: m.displayName ?? t("noName"),
+                            })}
+                            disabled={printing}
+                          />
+                        </span>
+                      </DataTableCell>
                       <DataTableCell className="group-hover:underline">
                         {m.displayName ?? t("noName")}
                       </DataTableCell>

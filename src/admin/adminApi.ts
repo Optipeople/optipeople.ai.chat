@@ -14,6 +14,19 @@ import type {
 } from "@/app/api/admin/conversations/[id]/route";
 import type { AdminQrTokenResponse } from "@/app/api/admin/machines/[id]/qr/route";
 import type {
+  BulkMachineQrResponse,
+  CreateQrStickerBatchRequest,
+  CreateQrStickerBatchResponse,
+  GetQrStickerBatchResponse,
+  LinkQrStickerRequest,
+  LinkQrStickerResponse,
+  ListQrStickerBatchesResponse,
+  LookupQrStickerResponse,
+  MachineQrStickersResponse,
+  UpdateQrStickerRequest,
+  UpdateQrStickerResponse,
+} from "@/lib/qrStickerTypes";
+import type {
   AdminEscalationTarget,
   AdminEscalationTargetResponse,
 } from "@/app/api/admin/accounts/[accountId]/escalation/route";
@@ -1089,6 +1102,169 @@ export async function revokeAdminMachineQr(machineId: string): Promise<void> {
       status: res.status,
     });
   }
+}
+
+// Pre-printed QR stickers (docs/qr-sticker-pool-plan.md).
+
+// Thrown by linkQrSticker when the sticker is already on another machine
+// and reassign was not set (HTTP 409, code "already_linked"). Callers
+// catch it to ask "move this sticker?" and retry with reassign: true.
+// machineId / machineName are null when the admin may not see that
+// machine.
+export class QrStickerAlreadyLinkedError extends AdminApiError {
+  readonly machineId: string | null;
+  readonly machineName: string | null;
+
+  constructor(
+    serverMessage: string | null,
+    machineId: string | null,
+    machineName: string | null,
+  ) {
+    super(
+      "qrStickerAlreadyLinked",
+      { status: 409 },
+      serverMessage,
+      "QR-mærkatet er allerede koblet til en anden maskine",
+    );
+    this.name = "QrStickerAlreadyLinkedError";
+    this.machineId = machineId;
+    this.machineName = machineName;
+  }
+}
+
+type QrStickerErrorBody = {
+  error?: string;
+  code?: string;
+  machineId?: string;
+  machineName?: string | null;
+};
+
+async function qrStickerError(
+  res: Response,
+  key: string,
+  fallback: string,
+): Promise<AdminApiError> {
+  const body = (await res.json().catch(() => ({}))) as QrStickerErrorBody;
+  if (res.status === 409 && body.code === "already_linked") {
+    return new QrStickerAlreadyLinkedError(
+      null,
+      body.machineId ?? null,
+      body.machineName ?? null,
+    );
+  }
+  // Server text is English only; leave it out so the translated key wins.
+  return apiError(key, `${fallback} (${res.status})`, { status: res.status });
+}
+
+export async function listQrStickerBatches(): Promise<ListQrStickerBatchesResponse> {
+  const res = await fetchWithAuth("/api/admin/qr-stickers/batches");
+  if (!res.ok) {
+    throw await qrStickerError(res, "fetchQrStickerBatchesFailed", "Kunne ikke hente QR-mærkater");
+  }
+  return (await res.json()) as ListQrStickerBatchesResponse;
+}
+
+export async function createQrStickerBatch(
+  req: CreateQrStickerBatchRequest,
+): Promise<CreateQrStickerBatchResponse> {
+  const res = await fetchWithAuth("/api/admin/qr-stickers/batches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw await qrStickerError(res, "createQrStickerBatchFailed", "Kunne ikke oprette QR-mærkater");
+  }
+  return (await res.json()) as CreateQrStickerBatchResponse;
+}
+
+export async function getQrStickerBatch(
+  id: string,
+): Promise<GetQrStickerBatchResponse> {
+  const res = await fetchWithAuth(
+    `/api/admin/qr-stickers/batches/${encodeURIComponent(id)}`,
+  );
+  if (!res.ok) {
+    throw await qrStickerError(res, "fetchQrStickerBatchFailed", "Kunne ikke hente QR-mærkater");
+  }
+  return (await res.json()) as GetQrStickerBatchResponse;
+}
+
+// 404 (params.status) when no sticker matches or the admin may not see it.
+export async function lookupQrSticker(query: {
+  code?: string;
+  token?: string;
+}): Promise<LookupQrStickerResponse> {
+  const params = new URLSearchParams();
+  if (query.code) params.set("code", query.code);
+  if (query.token) params.set("token", query.token);
+  const res = await fetchWithAuth(
+    `/api/admin/qr-stickers/lookup?${params.toString()}`,
+  );
+  if (!res.ok) {
+    throw await qrStickerError(res, "lookupQrStickerFailed", "Kunne ikke finde QR-mærkat");
+  }
+  return (await res.json()) as LookupQrStickerResponse;
+}
+
+// Throws QrStickerAlreadyLinkedError on a 409 already_linked; see above.
+export async function linkQrSticker(
+  req: LinkQrStickerRequest,
+): Promise<LinkQrStickerResponse> {
+  const res = await fetchWithAuth("/api/admin/qr-stickers/link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    throw await qrStickerError(res, "linkQrStickerFailed", "Kunne ikke koble QR-mærkat");
+  }
+  return (await res.json()) as LinkQrStickerResponse;
+}
+
+export async function updateQrSticker(
+  id: string,
+  action: UpdateQrStickerRequest["action"],
+): Promise<UpdateQrStickerResponse> {
+  const payload: UpdateQrStickerRequest = { action };
+  const res = await fetchWithAuth(
+    `/api/admin/qr-stickers/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    throw await qrStickerError(res, "updateQrStickerFailed", "Kunne ikke opdatere QR-mærkat");
+  }
+  return (await res.json()) as UpdateQrStickerResponse;
+}
+
+export async function listMachineQrStickers(
+  machineId: string,
+): Promise<MachineQrStickersResponse> {
+  const res = await fetchWithAuth(
+    `/api/admin/machines/${encodeURIComponent(machineId)}/qr-stickers`,
+  );
+  if (!res.ok) {
+    throw await qrStickerError(res, "fetchQrStickersFailed", "Kunne ikke hente QR-mærkater");
+  }
+  return (await res.json()) as MachineQrStickersResponse;
+}
+
+export async function bulkMachineQr(
+  machineIds: string[],
+): Promise<BulkMachineQrResponse> {
+  const res = await fetchWithAuth("/api/admin/machines/qr-bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ machineIds }),
+  });
+  if (!res.ok) {
+    throw await qrStickerError(res, "generateQrFailed", "Kunne ikke generere QR-koder");
+  }
+  return (await res.json()) as BulkMachineQrResponse;
 }
 
 export async function getAdminEscalationTarget(
