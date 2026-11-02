@@ -830,7 +830,7 @@
     },
     "escalationsInbox": {
       "heading": "Eskaleringer",
-      "description": "Service-tilkald på tværs af alle maskiner. Listen viser åbne eskaleringer som standard — markér dem som håndteret, når en tekniker har fulgt op.",
+      "description": "Service-tilkald på tværs af alle maskiner. Listen viser åbne eskaleringer som standard. Markér dem som håndteret, når en tekniker har fulgt op.",
       "empty": "Ingen eskaleringer matcher filteret.",
       "filterStatus": "Status",
       "filterOpen": "Åbne",

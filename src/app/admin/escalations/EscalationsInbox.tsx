@@ -9,6 +9,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tag, type TagVariant } from "@/components/ui/tag";
+import { getAccounts } from "@/auth/accountsApi";
 import {
   DataTable,
   DataTableBody,
@@ -59,6 +60,22 @@ export function EscalationsInbox() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [accountNames, setAccountNames] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+
+  // Resolve account display names; falls back to the raw id on failure.
+  useEffect(() => {
+    let cancelled = false;
+    getAccounts()
+      .then((rows) => {
+        if (!cancelled) setAccountNames(new Map(rows.map((a) => [a.id, a.name])));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,8 +193,11 @@ export function EscalationsInbox() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
-                      <Wrench className="mr-1 h-3 w-3" />
+                    <Tag
+                      variant={CHANNEL_VARIANT[e.channel]}
+                      size="small"
+                      leadingIcon={<Wrench className="h-3 w-3 shrink-0" />}
+                    >
                       {CHANNEL_LABEL[e.channel]}
                     </Tag>
                     <Tag
@@ -236,26 +256,29 @@ export function EscalationsInbox() {
                     key={e.id}
                     href={`/admin/machines/${encodeURIComponent(e.machineId)}?section=escalations`}
                   >
-                    <DataTableCell className="tabular-nums">
+                    <DataTableCell className="whitespace-nowrap tabular-nums">
                       {DA_DT.format(new Date(e.createdAt))}
                     </DataTableCell>
                     <DataTableCell>
                       <Link
                         href={`/admin/machines/${encodeURIComponent(e.machineId)}`}
                         onClick={(ev) => ev.stopPropagation()}
-                        className="font-medium hover:underline"
+                        className="whitespace-nowrap font-medium hover:underline"
                       >
                         {e.machineName ?? e.machineId}
                       </Link>
                     </DataTableCell>
                     <DataTableCell className="text-[13px] text-[var(--ds-grey-medium-05)]">
-                      <span className="block max-w-[140px] truncate" title={e.accountId}>
-                        {e.accountId}
+                      <span className="block max-w-[160px] truncate" title={e.accountId}>
+                        {accountNames.get(e.accountId) ?? e.accountId}
                       </span>
                     </DataTableCell>
                     <DataTableCell>
-                      <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
-                        <Wrench className="mr-1 h-3 w-3" />
+                      <Tag
+                        variant={CHANNEL_VARIANT[e.channel]}
+                        size="small"
+                        leadingIcon={<Wrench className="h-3 w-3 shrink-0" />}
+                      >
                         {CHANNEL_LABEL[e.channel]}
                       </Tag>
                     </DataTableCell>

@@ -190,8 +190,11 @@ export function EscalationsList({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
-                      <Wrench className="mr-1 h-3 w-3" />
+                    <Tag
+                      variant={CHANNEL_VARIANT[e.channel]}
+                      size="small"
+                      leadingIcon={<Wrench className="h-3 w-3 shrink-0" />}
+                    >
                       {CHANNEL_LABEL[e.channel]}
                     </Tag>
                     <Tag
@@ -262,12 +265,15 @@ export function EscalationsList({
                     key={e.id}
                     href={`/admin/machines/${machineId}/conversations/${e.conversationId}`}
                   >
-                    <DataTableCell className="tabular-nums">
+                    <DataTableCell className="whitespace-nowrap tabular-nums">
                       {DA_DT.format(new Date(e.createdAt))}
                     </DataTableCell>
                     <DataTableCell>
-                      <Tag variant={CHANNEL_VARIANT[e.channel]} size="small">
-                        <Wrench className="mr-1 h-3 w-3" />
+                      <Tag
+                        variant={CHANNEL_VARIANT[e.channel]}
+                        size="small"
+                        leadingIcon={<Wrench className="h-3 w-3 shrink-0" />}
+                      >
                         {CHANNEL_LABEL[e.channel]}
                       </Tag>
                     </DataTableCell>

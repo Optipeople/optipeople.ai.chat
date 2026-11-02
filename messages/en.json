@@ -830,7 +830,7 @@
     },
     "escalationsInbox": {
       "heading": "Escalations",
-      "description": "Service calls across all machines. The list shows open escalations by default — mark them handled when a technician has followed up.",
+      "description": "Service calls across all machines. The list shows open escalations by default. Mark them handled when a technician has followed up.",
       "empty": "No escalations match the filter.",
       "filterStatus": "Status",
       "filterOpen": "Open",
