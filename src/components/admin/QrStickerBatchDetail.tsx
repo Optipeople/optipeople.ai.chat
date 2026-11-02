@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, FileText } from "lucide-react";
+import { Ban, Download, FileText } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Breadcrumbs, type Crumb } from "@/components/admin/Breadcrumbs";
-import { adminErrorMessage, getQrStickerBatch } from "@/admin/adminApi";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  adminErrorMessage,
+  getQrStickerBatch,
+  retireQrStickers,
+} from "@/admin/adminApi";
 import { getAccounts } from "@/auth/accountsApi";
 import {
   downloadStickerCsv,
@@ -63,6 +68,12 @@ function BatchDetailInner({ batchId }: { batchId: string }) {
     total: number;
   } | null>(null);
   const [downloadErr, setDownloadErr] = useState<string | null>(null);
+  const tb = useTranslations("admin.qrStickers.bulkPrint");
+  const tr = useTranslations("admin.qrStickers.bulkRetire");
+  const confirm = useConfirm();
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [retiring, setRetiring] = useState(false);
+  const [retireErr, setRetireErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +137,32 @@ function BatchDetailInner({ batchId }: { batchId: string }) {
     setStickers((prev) =>
       prev.map((s) => (s.id === updated.id ? updated : s)),
     );
+  }
+
+  async function retireSelected() {
+    const ids = stickers
+      .filter((s) => selected.has(s.id) && s.status !== "retired")
+      .map((s) => s.id);
+    if (ids.length === 0 || retiring) return;
+    const ok = await confirm({
+      title: tr("confirmTitle", { count: ids.length }),
+      description: tr("confirmBody"),
+      confirmLabel: tr("confirmLabel"),
+      danger: true,
+    });
+    if (!ok) return;
+    setRetiring(true);
+    setRetireErr(null);
+    try {
+      const res = await retireQrStickers(ids);
+      const byId = new Map(res.stickers.map((s) => [s.id, s]));
+      setStickers((prev) => prev.map((s) => byId.get(s.id) ?? s));
+      setSelected(new Set());
+    } catch (e) {
+      setRetireErr(adminErrorMessage(e, tErr) ?? tc("unknownError"));
+    } finally {
+      setRetiring(false);
+    }
   }
 
   const busy = progress !== null;
@@ -290,12 +327,56 @@ function BatchDetailInner({ batchId }: { batchId: string }) {
         </Select>
       </div>
 
+      {(selected.size > 0 || retireErr) && (
+        <div className="flex flex-col gap-2">
+          {selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] text-[var(--color-muted-foreground)]">
+                {tb("selectedCount", { count: selected.size })}
+              </span>
+              <Button
+                variant="ghost"
+                size="pill"
+                onClick={() => setSelected(new Set())}
+                disabled={retiring}
+              >
+                {tb("clearSelection")}
+              </Button>
+              <Button
+                variant="ghostDanger"
+                size="pill"
+                onClick={() => void retireSelected()}
+                disabled={retiring}
+              >
+                {retiring ? (
+                  <Spinner className="h-3.5 w-3.5" />
+                ) : (
+                  <Ban className="h-3.5 w-3.5" />
+                )}
+                {tr("retireSelected", { count: selected.size })}
+              </Button>
+            </div>
+          )}
+          {retireErr && (
+            <p className="text-[13px] text-[var(--ds-red)]">{retireErr}</p>
+          )}
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div className="rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-10 text-center text-[14px] text-[var(--color-muted-foreground)]">
           {t("emptyStickers")}
         </div>
       ) : (
-        <StickerTable stickers={visible} onUpdated={onUpdated} />
+        <StickerTable
+          stickers={visible}
+          onUpdated={onUpdated}
+          selection={{
+            selected,
+            onChange: setSelected,
+            disabled: retiring,
+          }}
+        />
       )}
     </div>
   );

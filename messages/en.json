@@ -889,7 +889,8 @@
       "lookupQrStickerFailed": "Could not find the sticker ({status})",
       "linkQrStickerFailed": "Could not link the sticker ({status})",
       "updateQrStickerFailed": "Could not update the sticker ({status})",
-      "fetchQrStickersFailed": "Could not load stickers ({status})"
+      "fetchQrStickersFailed": "Could not load stickers ({status})",
+      "retireQrStickersFailed": "Could not retire stickers ({status})"
     },
     "aiRules": {
       "heading": "AI rules — {name}",
@@ -1133,6 +1134,12 @@
         "selectAll": "Select all",
         "deselectAll": "Deselect all",
         "selectMachine": "Select {name}"
+      },
+      "bulkRetire": {
+        "retireSelected": "Retire selected ({count})",
+        "confirmTitle": "Retire {count, plural, one {# sticker} other {# stickers}}?",
+        "confirmBody": "Retired stickers can never be linked or used again. Stickers on machines stop opening the chat at once. Use this for lost, damaged or misprinted stickers.",
+        "confirmLabel": "Retire"
       }
     }
   },

@@ -25,6 +25,8 @@ import type {
   MachineQrStickersResponse,
   UpdateQrStickerRequest,
   UpdateQrStickerResponse,
+  RetireQrStickersRequest,
+  RetireQrStickersResponse,
 } from "@/lib/qrStickerTypes";
 import type {
   AdminEscalationTarget,
@@ -1239,6 +1241,23 @@ export async function updateQrSticker(
     throw await qrStickerError(res, "updateQrStickerFailed", "Kunne ikke opdatere QR-mærkat");
   }
   return (await res.json()) as UpdateQrStickerResponse;
+}
+
+// Retires many stickers at once (super admins). Already retired ones are
+// left alone; the response carries every requested sticker as it is now.
+export async function retireQrStickers(
+  ids: string[],
+): Promise<RetireQrStickersResponse> {
+  const payload: RetireQrStickersRequest = { ids };
+  const res = await fetchWithAuth("/api/admin/qr-stickers/retire", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    throw await qrStickerError(res, "retireQrStickersFailed", "Kunne ikke kassere stickers");
+  }
+  return (await res.json()) as RetireQrStickersResponse;
 }
 
 export async function listMachineQrStickers(

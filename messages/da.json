@@ -889,7 +889,8 @@
       "lookupQrStickerFailed": "Kunne ikke finde stickeren ({status})",
       "linkQrStickerFailed": "Kunne ikke koble stickeren ({status})",
       "updateQrStickerFailed": "Kunne ikke opdatere stickeren ({status})",
-      "fetchQrStickersFailed": "Kunne ikke hente stickers ({status})"
+      "fetchQrStickersFailed": "Kunne ikke hente stickers ({status})",
+      "retireQrStickersFailed": "Kunne ikke kassere stickers ({status})"
     },
     "aiRules": {
       "heading": "AI-regler — {name}",
@@ -1133,6 +1134,12 @@
         "selectAll": "Vælg alle",
         "deselectAll": "Fravælg alle",
         "selectMachine": "Vælg {name}"
+      },
+      "bulkRetire": {
+        "retireSelected": "Kassér valgte ({count})",
+        "confirmTitle": "Kassér {count, plural, one {# sticker} other {# stickers}}?",
+        "confirmBody": "Kasserede stickers kan aldrig kobles eller bruges igen. Stickers på maskiner holder straks op med at åbne chatten. Brug det til stickers, der er bortkommet, beskadiget eller fejltrykt.",
+        "confirmLabel": "Kassér"
       }
     }
   },

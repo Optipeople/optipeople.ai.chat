@@ -86,6 +86,10 @@ export type LinkQrStickerResponse = { sticker: QrSticker };
 export type UpdateQrStickerRequest = { action: "unlink" | "retire" };
 export type UpdateQrStickerResponse = { sticker: QrSticker };
 
+// POST /api/admin/qr-stickers/retire (super admins). Up to 1000 ids.
+export type RetireQrStickersRequest = { ids: string[] };
+export type RetireQrStickersResponse = { stickers: QrSticker[] };
+
 // GET /api/admin/machines/[id]/qr-stickers
 export type MachineQrStickersResponse = { stickers: QrSticker[] };
 

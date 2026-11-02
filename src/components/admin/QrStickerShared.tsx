@@ -6,6 +6,7 @@ import { Ban, Unlink } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tag, type TagVariant } from "@/components/ui/tag";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
@@ -97,17 +98,28 @@ export function SuperAdminOnly({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// Row selection for bulk actions. Retired stickers cannot be selected,
+// since the only bulk action is retiring.
+export type StickerSelection = {
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  disabled?: boolean;
+};
+
 // Sticker table with unlink / retire actions. Used by the batch detail
 // screen and the "Find sticker by code" result.
 export function StickerTable({
   stickers,
   onUpdated,
   showBatch = false,
+  selection,
 }: {
   stickers: QrSticker[];
   onUpdated: (sticker: QrSticker) => void;
   showBatch?: boolean;
+  selection?: StickerSelection;
 }) {
+  const tb = useTranslations("admin.qrStickers.bulkPrint");
   const t = useTranslations("admin.qrStickers");
   const tErr = useTranslations("admin.apiErrors");
   const tc = useTranslations("common");
@@ -148,12 +160,52 @@ export function StickerTable({
     }
   }
 
+  const selectableIds = stickers
+    .filter((s) => s.status !== "retired")
+    .map((s) => s.id);
+  const selectedInView = selection
+    ? selectableIds.filter((id) => selection.selected.has(id)).length
+    : 0;
+  const allInViewSelected =
+    selectableIds.length > 0 && selectedInView === selectableIds.length;
+
+  function toggleOne(id: string) {
+    if (!selection) return;
+    const next = new Set(selection.selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selection.onChange(next);
+  }
+
+  function toggleAllInView() {
+    if (!selection) return;
+    const next = new Set(selection.selected);
+    for (const id of selectableIds) {
+      if (allInViewSelected) next.delete(id);
+      else next.add(id);
+    }
+    selection.onChange(next);
+  }
+
   return (
     <div className="flex flex-col gap-2">
       {err && <p className="text-[13px] text-[var(--ds-red)]">{err}</p>}
       <div className="overflow-x-auto">
         <DataTable className="min-w-[640px]">
           <DataTableHead>
+            {selection && (
+              <DataTableHeader className="w-10">
+                <Checkbox
+                  checked={allInViewSelected}
+                  indeterminate={!allInViewSelected && selectedInView > 0}
+                  onChange={toggleAllInView}
+                  aria-label={
+                    allInViewSelected ? tb("deselectAll") : tb("selectAll")
+                  }
+                  disabled={selection.disabled || selectableIds.length === 0}
+                />
+              </DataTableHeader>
+            )}
             <DataTableHeader>{t("colCode")}</DataTableHeader>
             <DataTableHeader>{t("colStatus")}</DataTableHeader>
             <DataTableHeader>{t("colMachine")}</DataTableHeader>
@@ -168,6 +220,20 @@ export function StickerTable({
               const busy = busyId === s.id;
               return (
                 <DataTableRow key={s.id}>
+                  {selection && (
+                    <DataTableCell className="w-10">
+                      {s.status !== "retired" && (
+                        <Checkbox
+                          checked={selection.selected.has(s.id)}
+                          onChange={() => toggleOne(s.id)}
+                          aria-label={tb("selectMachine", {
+                            name: formatStickerCode(s.code),
+                          })}
+                          disabled={selection.disabled}
+                        />
+                      )}
+                    </DataTableCell>
+                  )}
                   <DataTableCell className="font-mono tabular-nums">
                     {formatStickerCode(s.code)}
                   </DataTableCell>
