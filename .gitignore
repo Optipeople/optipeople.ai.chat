@@ -56,3 +56,6 @@ supabase/.branches/
 
 # Eval run reports (per-run output, not shared)
 evals/out/
+
+# Sysmac Studio project files
+*.smc2
