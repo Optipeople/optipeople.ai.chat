@@ -16,8 +16,19 @@ import {
   DataTableRow,
 } from "@/components/ui/data-table";
 import { getAccounts, type Account } from "@/auth/accountsApi";
-import { getAdminMachines, getAdminUsageOverview } from "@/admin/adminApi";
-import { isAccountAdmin, useAuth } from "@/auth/AuthContext";
+import {
+  getAdminMachines,
+  getAdminUsageOverview,
+  getAllAccountFlags,
+  type AccountFlags,
+} from "@/admin/adminApi";
+import {
+  isAccountAdmin,
+  isStrictSuperAdmin,
+  useAuth,
+} from "@/auth/AuthContext";
+import { Tag } from "@/components/ui/tag";
+import { TrialTag } from "@/components/admin/TrialTag";
 import { formatUsd } from "@/lib/pricing";
 import { formatCredits, summarizeCredits, type CreditSummary } from "@/lib/credits";
 
@@ -33,6 +44,9 @@ type AccountRow = Account & {
   // and the cost are both already on this row, and summarizeCredits is a
   // pure function of the two.
   credits: CreditSummary | null;
+  // Partner / trial flags; null when the account has none (the default:
+  // a paying, active customer).
+  flags: AccountFlags | null;
 };
 
 const TOKENS_FMT = new Intl.NumberFormat("en-US", {
@@ -94,6 +108,7 @@ export function AccountsList() {
   const t = useTranslations("admin.accountsList");
   const router = useRouter();
   const { user } = useAuth();
+  const showExpired = isStrictSuperAdmin(user);
   const [accounts, setAccounts] = useState<AccountRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -119,8 +134,9 @@ export function AccountsList() {
       // Usage is decoration on this list — never let it block or fail
       // the account picker.
       getAdminUsageOverview().catch(() => null),
+      getAllAccountFlags().catch(() => [] as AccountFlags[]),
     ])
-      .then(([rows, machines, usage]) => {
+      .then(([rows, machines, usage, flagRows]) => {
         if (cancelled) return;
         const counts = new Map<string, number>();
         for (const m of machines) {
@@ -136,6 +152,7 @@ export function AccountsList() {
           usage === null
             ? null
             : new Map(usage.map((u) => [u.accountId, u.costUsd]));
+        const flagsById = new Map(flagRows.map((f) => [f.accountId, f]));
         const merged: AccountRow[] = rows.map((a) => {
           const machineCount = counts.get(a.id) ?? 0;
           const cost30d = costs ? (costs.get(a.id) ?? 0) : null;
@@ -144,6 +161,7 @@ export function AccountsList() {
             machineCount,
             tokens30d: tokens ? (tokens.get(a.id) ?? 0) : null,
             cost30d,
+            flags: flagsById.get(a.id) ?? null,
             credits:
               cost30d === null
                 ? null
@@ -260,9 +278,12 @@ export function AccountsList() {
                 className="group flex items-center gap-3 rounded-[4px] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 transition-colors active:bg-[var(--color-muted)]/60"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[15px] font-medium text-[var(--color-foreground)]">
-                    {a.name}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="truncate text-[15px] font-medium text-[var(--color-foreground)]">
+                      {a.name}
+                    </p>
+                    <AccountFlagTags flags={a.flags} showExpired={showExpired} />
+                  </div>
                   <p className="mt-0.5 truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
                     {a.id}
                   </p>
@@ -356,8 +377,14 @@ export function AccountsList() {
                     key={a.id}
                     href={`/admin/accounts/${encodeURIComponent(a.id)}`}
                   >
-                    <DataTableCell className="group-hover:underline">
-                      {a.name}
+                    <DataTableCell>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="group-hover:underline">{a.name}</span>
+                        <AccountFlagTags
+                          flags={a.flags}
+                          showExpired={showExpired}
+                        />
+                      </span>
                     </DataTableCell>
                     <DataTableCell className="font-mono text-[12px]">
                       {a.id}
@@ -390,5 +417,30 @@ export function AccountsList() {
         </>
       )}
     </div>
+  );
+}
+
+function AccountFlagTags({
+  flags,
+  showExpired,
+}: {
+  flags: AccountFlags | null;
+  showExpired: boolean;
+}) {
+  const t = useTranslations("admin.accountStatus");
+  if (!flags) return null;
+  if (flags.isPartner) {
+    return (
+      <Tag size="small" className="shrink-0">
+        {t("badgePartner")}
+      </Tag>
+    );
+  }
+  return (
+    <TrialTag
+      trialEndsAt={flags.trialEndsAt}
+      showExpired={showExpired}
+      size="small"
+    />
   );
 }

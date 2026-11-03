@@ -20,10 +20,19 @@ import { McpList } from "@/components/admin/McpList";
 import { AccountUsageSection } from "@/components/admin/AccountUsageSection";
 import { ConversationsList } from "@/components/admin/ConversationsList";
 import { getAdminMachines, type AdminMachine } from "@/admin/adminApi";
+import { AccountStatusSection } from "@/components/admin/AccountStatusSection";
+import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 
-type SectionKey = "rules" | "mcp" | "usage" | "machines" | "fleetConversations";
+type SectionKey =
+  | "status"
+  | "rules"
+  | "mcp"
+  | "usage"
+  | "machines"
+  | "fleetConversations";
 
 const SECTIONS: readonly SectionKey[] = [
+  "status",
   "rules",
   "mcp",
   "usage",
@@ -43,12 +52,16 @@ export function AccountSections({ accountId }: { accountId: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Partner / trial flags are for super admins and partners only.
+  const { user } = useAuth();
+  const showStatus = isSuperAdmin(user);
   const raw = searchParams?.get("section") ?? null;
   const target = (SECTIONS as readonly string[]).includes(raw ?? "")
     ? (raw as SectionKey)
     : null;
 
   const [open, setOpen] = useState<Record<SectionKey, boolean>>(() => ({
+    status: target === "status",
     rules: target === "rules",
     mcp: target === "mcp",
     usage: target === "usage",
@@ -56,6 +69,7 @@ export function AccountSections({ accountId }: { accountId: string }) {
     fleetConversations: target === "fleetConversations",
   }));
 
+  const statusRef = useRef<HTMLDivElement | null>(null);
   const rulesRef = useRef<HTMLDivElement | null>(null);
   const mcpRef = useRef<HTMLDivElement | null>(null);
   const usageRef = useRef<HTMLDivElement | null>(null);
@@ -65,6 +79,7 @@ export function AccountSections({ accountId }: { accountId: string }) {
     SectionKey,
     React.RefObject<HTMLDivElement | null>
   > = {
+    status: statusRef,
     rules: rulesRef,
     mcp: mcpRef,
     usage: usageRef,
@@ -103,6 +118,27 @@ export function AccountSections({ accountId }: { accountId: string }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {showStatus && (
+        <section
+          ref={statusRef}
+          aria-labelledby="section-status"
+          className="scroll-mt-4"
+        >
+          <SectionExpander
+            expanded={open.status}
+            onToggle={() => toggle("status")}
+            keepMounted
+            panel={
+              <div className="pt-5 sm:pt-6">
+                <AccountStatusSection accountId={accountId} />
+              </div>
+            }
+          >
+            <span id="section-status">{t("status")}</span>
+          </SectionExpander>
+        </section>
+      )}
+
       <section ref={rulesRef} aria-labelledby="section-rules" className="scroll-mt-4">
         <SectionExpander
           expanded={open.rules}

@@ -1,4 +1,10 @@
 import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
+import type { AccountFlags } from "@/lib/accountFlags";
+import type {
+  AccountFlagsResponse,
+  UpdateAccountFlagsRequest,
+} from "@/app/api/admin/accounts/[accountId]/flags/route";
+import type { AccountFlagsListResponse } from "@/app/api/admin/account-flags/route";
 import type { AdminMachine } from "@/app/api/admin/machines/route";
 import type {
   AdminDocument,
@@ -1373,4 +1379,55 @@ export async function getAdminUsageOverview(
   }
   const body = (await res.json()) as AdminUsageOverviewResponse;
   return body.accounts;
+}
+
+// ── Account flags (partner / trial) ────────────────────────────────────
+
+export type { AccountFlags };
+
+export async function getAllAccountFlags(): Promise<AccountFlags[]> {
+  const res = await fetchWithAuth(`/api/admin/account-flags`);
+  if (!res.ok) {
+    throw apiError("fetchAccountFlagsFailed", `Kunne ikke hente kontostatus (${res.status})`, {
+      status: res.status,
+    });
+  }
+  const body = (await res.json()) as AccountFlagsListResponse;
+  return body.flags;
+}
+
+export async function getAccountFlags(accountId: string): Promise<AccountFlags> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/flags`,
+  );
+  if (!res.ok) {
+    throw apiError("fetchAccountFlagsFailed", `Kunne ikke hente kontostatus (${res.status})`, {
+      status: res.status,
+    });
+  }
+  const body = (await res.json()) as AccountFlagsResponse;
+  return body.flags;
+}
+
+export async function updateAccountFlags(
+  accountId: string,
+  patch: UpdateAccountFlagsRequest,
+): Promise<AccountFlags> {
+  const res = await fetchWithAuth(
+    `/api/admin/accounts/${encodeURIComponent(accountId)}/flags`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw apiError("saveAccountFlagsFailed", `Kunne ikke gemme kontostatus (${res.status})`, {
+      status: res.status,
+      serverMessage: body.error,
+    });
+  }
+  const body = (await res.json()) as AccountFlagsResponse;
+  return body.flags;
 }

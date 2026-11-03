@@ -261,6 +261,13 @@ export async function requireSuperAdmin(req: Request): Promise<SuperAdmin> {
   return user;
 }
 
+// True only for Optipeople's own super admins, not partners. For the
+// few things partners must not touch, such as marking an account as a
+// partner account.
+export function isStrictSuperAdmin(permissionName: string): boolean {
+  return permissionName === SUPER_ADMIN_PERMISSION;
+}
+
 // Allows SuperAdministrator / Partner (full access) or
 // AccountAdministrator (account-scoped — see assertAccountAccess and
 // friends). Throws AuthError on failure. Account admins without an

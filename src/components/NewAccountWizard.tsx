@@ -31,7 +31,9 @@ import {
   type PortalCountry,
   type PortalOption,
 } from "@/auth/portalSetupApi";
-import { createAdminMachine } from "@/admin/adminApi";
+import { createAdminMachine, updateAccountFlags } from "@/admin/adminApi";
+import { Checkbox } from "@/components/ui/checkbox";
+import { defaultTrialEnd } from "@/lib/trialDates";
 
 const TOTAL_STEPS = 4;
 
@@ -58,6 +60,10 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const [accountName, setAccountName] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
+  // Optional trial flag, saved here (not in the portal) once the
+  // account exists. Informational only; nothing is blocked when it ends.
+  const [trial, setTrial] = useState(false);
+  const [trialEndsAt, setTrialEndsAt] = useState(() => defaultTrialEnd());
 
   // Step 2 — factory.
   const [factoryName, setFactoryName] = useState("");
@@ -221,11 +227,24 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
         // would duplicate the account. Land on the done screen (with
         // the picker refreshed) and explain.
         await finish();
-        setError(t("accountCreatedButUnresolved"));
+        setError(
+          trial
+            ? `${t("accountCreatedButUnresolved")} ${t("trialSaveFailed")}`
+            : t("accountCreatedButUnresolved"),
+        );
         return;
       }
       setAccountId(id);
       setStep(2);
+      if (trial) {
+        try {
+          await updateAccountFlags(id, { trialEndsAt, accountName: name });
+        } catch {
+          // The account exists; only the flag failed. Say so on step 2
+          // rather than block the wizard.
+          setError(t("trialSaveFailed"));
+        }
+      }
     });
 
   const submitFactory = () =>
@@ -276,7 +295,8 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
   const canSubmitAccount =
     accountName.trim().length > 0 &&
     adminName.trim().length > 0 &&
-    adminEmailValid;
+    adminEmailValid &&
+    (!trial || /^\d{4}-\d{2}-\d{2}$/.test(trialEndsAt));
   const canSubmitFactory =
     factoryName.trim().length > 0 && countryId.length > 0 && timeZoneId.length > 0;
   const canSubmitMachine = machineName.trim().length > 0;
@@ -356,6 +376,23 @@ export function NewAccountWizard({ onClose }: { onClose: () => void }) {
               onChange={(e) => setAdminEmail(e.target.value)}
               disabled={submitting}
             />
+            <Checkbox
+              label={t("trialLabel")}
+              checked={trial}
+              onChange={(e) => setTrial(e.target.checked)}
+              disabled={submitting}
+              className="pt-1"
+            />
+            {trial && (
+              <TextField
+                type="date"
+                label={t("trialEndsLabel")}
+                helpText={t("trialHelp")}
+                value={trialEndsAt}
+                onChange={(e) => setTrialEndsAt(e.target.value)}
+                disabled={submitting}
+              />
+            )}
           </div>
         )}
 

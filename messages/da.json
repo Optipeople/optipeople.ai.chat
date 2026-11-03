@@ -160,7 +160,11 @@
     "emailInvalid": "Angiv en gyldig e-mailadresse (fx navn@firma.dk)",
     "closeConfirmTitle": "Afslut opsætningen senere?",
     "closeConfirmBody": "Kontoen \"{account}\" er allerede oprettet i Optipeople. De resterende trin kan færdiggøres senere i Optipeople-portalen — opret ikke kontoen igen.",
-    "closeConfirmLabel": "Afslut senere"
+    "closeConfirmLabel": "Afslut senere",
+    "trialLabel": "Start som prøveperiode",
+    "trialEndsLabel": "Sidste dag i prøveperioden",
+    "trialHelp": "Intet blokeres, når den slutter. Vi får en mail.",
+    "trialSaveFailed": "Kontoen blev oprettet, men prøveperioden kunne ikke gemmes. Sæt den på kontosiden."
   },
   "machineSelect": {
     "heading": "Vælg maskine",
@@ -890,7 +894,9 @@
       "linkQrStickerFailed": "Kunne ikke koble stickeren ({status})",
       "updateQrStickerFailed": "Kunne ikke opdatere stickeren ({status})",
       "fetchQrStickersFailed": "Kunne ikke hente stickers ({status})",
-      "retireQrStickersFailed": "Kunne ikke kassere stickers ({status})"
+      "retireQrStickersFailed": "Kunne ikke kassere stickers ({status})",
+      "fetchAccountFlagsFailed": "Kunne ikke hente kontostatus ({status})",
+      "saveAccountFlagsFailed": "Kunne ikke gemme kontostatus ({status})"
     },
     "aiRules": {
       "heading": "AI-regler — {name}",
@@ -991,7 +997,8 @@
       "machinesEmpty": "Ingen maskiner på denne konto endnu.",
       "machinesLoadFailed": "Kunne ikke hente maskiner",
       "machinesOpenList": "Åbn i maskinlisten",
-      "fleetConversations": "Fleet-samtaler"
+      "fleetConversations": "Fleet-samtaler",
+      "status": "Kontostatus"
     },
     "accountUsage": {
       "description": "AI-tokenforbrug på tværs af chat, dokumentbehandling og søgning de seneste {days} dage.",
@@ -1141,6 +1148,22 @@
         "confirmBody": "Kasserede stickers kan aldrig kobles eller bruges igen. Stickers på maskiner holder straks op med at åbne chatten. Brug det til stickers, der er bortkommet, beskadiget eller fejltrykt.",
         "confirmLabel": "Kassér"
       }
+    },
+    "accountStatus": {
+      "trialLabel": "Prøveperiode",
+      "trialHelp": "Kun til vores overblik. Intet blokeres, når prøveperioden slutter. Optipeople og den, der satte prøveperioden, får en mail dagen efter.",
+      "trialEndsLabel": "Sidste dag i prøveperioden",
+      "trialSetBy": "Sat af {name} den {date}",
+      "save": "Gem",
+      "partnerLabel": "Partnerkonto",
+      "partnerHelp": "Partnerkonti kan ikke sættes på prøveperiode.",
+      "partnerSuperOnly": "Kun Optipeoples superadministratorer kan ændre dette.",
+      "partnerBlocksTrial": "Partnerkonti kan ikke sættes på prøveperiode.",
+      "trialBlocksPartner": "Fjern prøveperioden, før kontoen markeres som partnerkonto.",
+      "badgeTrial": "Prøve",
+      "badgeTrialDays": "Prøve · {days, plural, =0 {sidste dag} one {# dag tilbage} other {# dage tilbage}}",
+      "badgeTrialEnded": "Prøve udløbet",
+      "badgePartner": "Partner"
     }
   },
   "server": {
@@ -1214,7 +1237,10 @@
       "noSpeech": "Ingen tale registreret",
       "transcriptionFailed": "Transskription mislykkedes",
       "connectionLost": "Forbindelsen blev afbrudt"
-    }
+    },
+    "invalidTrialDate": "Slutdatoen for prøveperioden er ikke en gyldig dato",
+    "trialRemoveFirst": "Fjern prøveperioden, før kontoen markeres som partnerkonto",
+    "partnerNoTrial": "En partnerkonto kan ikke være på prøveperiode"
   },
   "sms": {
     "escalation": {

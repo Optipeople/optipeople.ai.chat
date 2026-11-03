@@ -160,7 +160,11 @@
     "emailInvalid": "Enter a valid e-mail address (e.g. name@company.com)",
     "closeConfirmTitle": "Finish setup later?",
     "closeConfirmBody": "The account \"{account}\" has already been created in Optipeople. The remaining steps can be finished later in the Optipeople portal — don't create the account again.",
-    "closeConfirmLabel": "Finish later"
+    "closeConfirmLabel": "Finish later",
+    "trialLabel": "Start as trial",
+    "trialEndsLabel": "Last trial day",
+    "trialHelp": "Nothing is blocked when it ends. We get an email.",
+    "trialSaveFailed": "The account was created, but the trial could not be saved. Set it on the account page."
   },
   "machineSelect": {
     "heading": "Choose machine",
@@ -890,7 +894,9 @@
       "linkQrStickerFailed": "Could not link the sticker ({status})",
       "updateQrStickerFailed": "Could not update the sticker ({status})",
       "fetchQrStickersFailed": "Could not load stickers ({status})",
-      "retireQrStickersFailed": "Could not retire stickers ({status})"
+      "retireQrStickersFailed": "Could not retire stickers ({status})",
+      "fetchAccountFlagsFailed": "Could not fetch account status ({status})",
+      "saveAccountFlagsFailed": "Could not save account status ({status})"
     },
     "aiRules": {
       "heading": "AI rules — {name}",
@@ -991,7 +997,8 @@
       "machinesEmpty": "No machines on this account yet.",
       "machinesLoadFailed": "Could not load machines",
       "machinesOpenList": "Open in machines list",
-      "fleetConversations": "Fleet conversations"
+      "fleetConversations": "Fleet conversations",
+      "status": "Account status"
     },
     "accountUsage": {
       "description": "AI token usage across chat, document ingestion and search for the last {days} days.",
@@ -1141,6 +1148,22 @@
         "confirmBody": "Retired stickers can never be linked or used again. Stickers on machines stop opening the chat at once. Use this for lost, damaged or misprinted stickers.",
         "confirmLabel": "Retire"
       }
+    },
+    "accountStatus": {
+      "trialLabel": "Trial",
+      "trialHelp": "For our overview only. Nothing is blocked when the trial ends. Optipeople and whoever set the trial get an email the day after.",
+      "trialEndsLabel": "Last trial day",
+      "trialSetBy": "Set by {name} on {date}",
+      "save": "Save",
+      "partnerLabel": "Partner account",
+      "partnerHelp": "Partner accounts can't be put on trial.",
+      "partnerSuperOnly": "Only Optipeople super admins can change this.",
+      "partnerBlocksTrial": "Partner accounts can't be put on trial.",
+      "trialBlocksPartner": "Remove the trial before marking this as a partner account.",
+      "badgeTrial": "Trial",
+      "badgeTrialDays": "Trial · {days, plural, =0 {last day} one {# day left} other {# days left}}",
+      "badgeTrialEnded": "Trial ended",
+      "badgePartner": "Partner"
     }
   },
   "server": {
@@ -1214,7 +1237,10 @@
       "noSpeech": "No speech detected",
       "transcriptionFailed": "Transcription failed",
       "connectionLost": "Connection lost"
-    }
+    },
+    "invalidTrialDate": "The trial end date is not a valid date",
+    "trialRemoveFirst": "Remove the trial before marking this as a partner account",
+    "partnerNoTrial": "A partner account cannot be on trial"
   },
   "sms": {
     "escalation": {
