@@ -98,8 +98,8 @@ export function isSuperAdmin(user: User | null): boolean {
     : false;
 }
 
-// Optipeople's own super admins only, not partners. Mirrors
-// isStrictSuperAdmin in src/lib/auth.ts.
+// Optipeople's own super admins only, not partners. Used to show ended
+// trials in red.
 export function isStrictSuperAdmin(user: User | null): boolean {
   return user?.permissionName === "SuperAdministrator";
 }

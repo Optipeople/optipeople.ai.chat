@@ -1,12 +1,9 @@
 "use client";
 
-// Partner and trial flags for one account (table account_flags). Shown
-// to super admins and partners only. Default, with nothing set, is a
-// paying, active customer account.
-//
-// Trial is informational: nothing is blocked when it ends. Only super
-// admins (not partners) can mark a partner account, and a partner
-// account can never be on trial.
+// Trial flag for one account (table account_flags). Shown to super
+// admins and partners only. Default, with nothing set, is a paying,
+// active customer account. Trial is informational: nothing is blocked
+// when it ends.
 
 import { useEffect, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
@@ -55,10 +52,7 @@ export function AccountStatusSection({ accountId }: { accountId: string }) {
     };
   }, [accountId, tErr, tc]);
 
-  async function save(patch: {
-    isPartner?: boolean;
-    trialEndsAt?: string | null;
-  }) {
+  async function save(patch: { trialEndsAt: string | null }) {
     setSaving(true);
     setError(null);
     try {
@@ -95,7 +89,7 @@ export function AccountStatusSection({ accountId }: { accountId: string }) {
         <Checkbox
           label={t("trialLabel")}
           checked={onTrial}
-          disabled={saving || flags.isPartner}
+          disabled={saving}
           onChange={(e) =>
             void save({
               trialEndsAt: e.target.checked ? defaultTrialEnd() : null,
@@ -103,7 +97,7 @@ export function AccountStatusSection({ accountId }: { accountId: string }) {
           }
         />
         <p className="text-[13px] text-[var(--color-muted-foreground)]">
-          {flags.isPartner ? t("partnerBlocksTrial") : t("trialHelp")}
+          {t("trialHelp")}
         </p>
         {onTrial && (
           <div className="flex flex-col gap-3 pt-1">
@@ -140,24 +134,6 @@ export function AccountStatusSection({ accountId }: { accountId: string }) {
             </div>
           </div>
         )}
-      </div>
-
-      <hr className="border-0 border-t border-[var(--ds-grey-light-02)]" />
-
-      <div className="flex flex-col gap-2">
-        <Checkbox
-          label={t("partnerLabel")}
-          checked={flags.isPartner}
-          disabled={saving || !strict || onTrial}
-          onChange={(e) => void save({ isPartner: e.target.checked })}
-        />
-        <p className="text-[13px] text-[var(--color-muted-foreground)]">
-          {!strict
-            ? t("partnerSuperOnly")
-            : onTrial
-              ? t("trialBlocksPartner")
-              : t("partnerHelp")}
-        </p>
       </div>
 
       {error && <ErrorBox>{error}</ErrorBox>}

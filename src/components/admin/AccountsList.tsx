@@ -27,7 +27,6 @@ import {
   isStrictSuperAdmin,
   useAuth,
 } from "@/auth/AuthContext";
-import { Tag } from "@/components/ui/tag";
 import { TrialTag } from "@/components/admin/TrialTag";
 import { formatUsd } from "@/lib/pricing";
 import { formatCredits, summarizeCredits, type CreditSummary } from "@/lib/credits";
@@ -427,15 +426,7 @@ function AccountFlagTags({
   flags: AccountFlags | null;
   showExpired: boolean;
 }) {
-  const t = useTranslations("admin.accountStatus");
   if (!flags) return null;
-  if (flags.isPartner) {
-    return (
-      <Tag size="small" className="shrink-0">
-        {t("badgePartner")}
-      </Tag>
-    );
-  }
   return (
     <TrialTag
       trialEndsAt={flags.trialEndsAt}

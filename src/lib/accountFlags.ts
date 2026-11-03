@@ -1,5 +1,5 @@
-// Per-account partner and trial flags (table account_flags). The portal
-// has no field for either, so they live here. No row means a paying,
+// Per-account trial flag (table account_flags). The portal has no field
+// for it, so it lives here. No row means a paying,
 // active customer account.
 //
 // Trial is informational only: nothing is gated on it. When it runs out
@@ -11,7 +11,6 @@ import { todayUtc } from "./trialDates";
 
 export type AccountFlags = {
   accountId: string;
-  isPartner: boolean;
   // ISO date (YYYY-MM-DD), the last day of the trial. Null when not on trial.
   trialEndsAt: string | null;
   trialSetAt: string | null;
@@ -22,7 +21,6 @@ export type AccountFlags = {
 type Row = {
   account_id: string;
   account_name: string | null;
-  is_partner: boolean;
   trial_ends_at: string | null;
   trial_set_at: string | null;
   trial_set_by_email: string | null;
@@ -31,12 +29,11 @@ type Row = {
 };
 
 const COLUMNS =
-  "account_id, account_name, is_partner, trial_ends_at, trial_set_at, trial_set_by_email, trial_set_by_name, trial_expiry_notified_at";
+  "account_id, account_name, trial_ends_at, trial_set_at, trial_set_by_email, trial_set_by_name, trial_expiry_notified_at";
 
 function toFlags(row: Row): AccountFlags {
   return {
     accountId: row.account_id,
-    isPartner: row.is_partner,
     trialEndsAt: row.trial_ends_at,
     trialSetAt: row.trial_set_at,
     trialSetByEmail: row.trial_set_by_email,
@@ -47,7 +44,6 @@ function toFlags(row: Row): AccountFlags {
 export function defaultFlags(accountId: string): AccountFlags {
   return {
     accountId,
-    isPartner: false,
     trialEndsAt: null,
     trialSetAt: null,
     trialSetByEmail: null,
@@ -73,17 +69,7 @@ export async function getAccountFlags(accountId: string): Promise<AccountFlags> 
   return data ? toFlags(data as Row) : defaultFlags(accountId);
 }
 
-// `reason` picks the localized message in the route handler.
-export class AccountFlagsConflict extends Error {
-  constructor(public readonly reason: "removeTrialFirst" | "partnerNoTrial") {
-    super(reason);
-    this.name = "AccountFlagsConflict";
-  }
-}
-
 export type AccountFlagsPatch = {
-  // Undefined leaves the field as it is.
-  isPartner?: boolean;
   // Null removes the trial. Undefined leaves it as it is.
   trialEndsAt?: string | null;
 };
@@ -103,23 +89,15 @@ export async function updateAccountFlags(
   if (readError) throw readError;
   const current = existing as Row | null;
 
-  const isPartner = patch.isPartner ?? current?.is_partner ?? false;
   const trialEndsAt =
     patch.trialEndsAt !== undefined
       ? patch.trialEndsAt
       : (current?.trial_ends_at ?? null);
 
-  if (isPartner && trialEndsAt !== null) {
-    throw new AccountFlagsConflict(
-      patch.isPartner ? "removeTrialFirst" : "partnerNoTrial",
-    );
-  }
-
   const trialChanged = trialEndsAt !== (current?.trial_ends_at ?? null);
   const row: Partial<Row> & { account_id: string; updated_at: string } = {
     account_id: accountId,
     account_name: accountName ?? current?.account_name ?? null,
-    is_partner: isPartner,
     trial_ends_at: trialEndsAt,
     updated_at: new Date().toISOString(),
   };

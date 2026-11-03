@@ -1155,15 +1155,9 @@
       "trialEndsLabel": "Last trial day",
       "trialSetBy": "Set by {name} on {date}",
       "save": "Save",
-      "partnerLabel": "Partner account",
-      "partnerHelp": "Partner accounts can't be put on trial.",
-      "partnerSuperOnly": "Only Optipeople super admins can change this.",
-      "partnerBlocksTrial": "Partner accounts can't be put on trial.",
-      "trialBlocksPartner": "Remove the trial before marking this as a partner account.",
       "badgeTrial": "Trial",
       "badgeTrialDays": "Trial · {days, plural, =0 {last day} one {# day left} other {# days left}}",
-      "badgeTrialEnded": "Trial ended",
-      "badgePartner": "Partner"
+      "badgeTrialEnded": "Trial ended"
     }
   },
   "server": {
@@ -1238,9 +1232,7 @@
       "transcriptionFailed": "Transcription failed",
       "connectionLost": "Connection lost"
     },
-    "invalidTrialDate": "The trial end date is not a valid date",
-    "trialRemoveFirst": "Remove the trial before marking this as a partner account",
-    "partnerNoTrial": "A partner account cannot be on trial"
+    "invalidTrialDate": "The trial end date is not a valid date"
   },
   "sms": {
     "escalation": {

@@ -1,20 +1,17 @@
-// GET   /api/admin/accounts/[accountId]/flags: the account's partner and
-//       trial flags (defaults when nothing is set).
-// PATCH /api/admin/accounts/[accountId]/flags: set or clear them.
+// GET   /api/admin/accounts/[accountId]/flags: the account's trial flag
+//       (defaults when nothing is set).
+// PATCH /api/admin/accounts/[accountId]/flags: set or clear the trial.
 //
-// Super admins and partners may set or remove a trial. Only super admins
-// (not partners) may mark an account as a partner account. A partner
-// account can never be on trial.
+// Super admins and partners only.
 
 import { getTranslations } from "next-intl/server";
 import {
-  AccountFlagsConflict,
   getAccountFlags,
   updateAccountFlags,
   type AccountFlags,
   type AccountFlagsPatch,
 } from "@/lib/accountFlags";
-import { AuthError, isStrictSuperAdmin, requireSuperAdmin } from "@/lib/auth";
+import { AuthError, requireSuperAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -86,15 +83,6 @@ export async function PATCH(
   }
 
   const patch: AccountFlagsPatch = {};
-  if (body.isPartner !== undefined) {
-    if (typeof body.isPartner !== "boolean") {
-      return Response.json({ error: "isPartner must be a boolean" }, { status: 400 });
-    }
-    if (!isStrictSuperAdmin(user.permissionName)) {
-      return Response.json({ error: t("unauthorized") }, { status: 403 });
-    }
-    patch.isPartner = body.isPartner;
-  }
   if (body.trialEndsAt !== undefined) {
     if (body.trialEndsAt !== null && !isValidTrialDate(body.trialEndsAt)) {
       return Response.json({ error: t("invalidTrialDate") }, { status: 400 });
@@ -116,17 +104,6 @@ export async function PATCH(
     const res: AccountFlagsResponse = { flags };
     return Response.json(res);
   } catch (err) {
-    if (err instanceof AccountFlagsConflict) {
-      return Response.json(
-        {
-          error:
-            err.reason === "removeTrialFirst"
-              ? t("trialRemoveFirst")
-              : t("partnerNoTrial"),
-        },
-        { status: 409 },
-      );
-    }
     console.error("account flags PATCH failed:", err);
     return Response.json({ error: t("dbError") }, { status: 500 });
   }

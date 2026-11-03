@@ -1,5 +1,5 @@
-// GET /api/admin/account-flags: partner and trial flags for every account
-// that has any. Accounts not listed are paying, active customer accounts.
+// GET /api/admin/account-flags: the trial flag for every account that
+// has one. Accounts not listed are paying, active customer accounts.
 // Super admins and partners only.
 
 import { getTranslations } from "next-intl/server";

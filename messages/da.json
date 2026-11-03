@@ -1155,15 +1155,9 @@
       "trialEndsLabel": "Sidste dag i prøveperioden",
       "trialSetBy": "Sat af {name} den {date}",
       "save": "Gem",
-      "partnerLabel": "Partnerkonto",
-      "partnerHelp": "Partnerkonti kan ikke sættes på prøveperiode.",
-      "partnerSuperOnly": "Kun Optipeoples superadministratorer kan ændre dette.",
-      "partnerBlocksTrial": "Partnerkonti kan ikke sættes på prøveperiode.",
-      "trialBlocksPartner": "Fjern prøveperioden, før kontoen markeres som partnerkonto.",
       "badgeTrial": "Prøve",
       "badgeTrialDays": "Prøve · {days, plural, =0 {sidste dag} one {# dag tilbage} other {# dage tilbage}}",
-      "badgeTrialEnded": "Prøve udløbet",
-      "badgePartner": "Partner"
+      "badgeTrialEnded": "Prøve udløbet"
     }
   },
   "server": {
@@ -1238,9 +1232,7 @@
       "transcriptionFailed": "Transskription mislykkedes",
       "connectionLost": "Forbindelsen blev afbrudt"
     },
-    "invalidTrialDate": "Slutdatoen for prøveperioden er ikke en gyldig dato",
-    "trialRemoveFirst": "Fjern prøveperioden, før kontoen markeres som partnerkonto",
-    "partnerNoTrial": "En partnerkonto kan ikke være på prøveperiode"
+    "invalidTrialDate": "Slutdatoen for prøveperioden er ikke en gyldig dato"
   },
   "sms": {
     "escalation": {
