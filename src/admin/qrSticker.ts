@@ -325,14 +325,92 @@ function slug(name: string): string {
     .slice(0, 50);
 }
 
-// Renders the sticker to a fresh 1200 x 1500 canvas. Corners outside the
-// die-cut radius are transparent. Callers that render many stickers should
-// zero the canvas size when done so the browser can free its memory.
+// Layout of one sticker format in canvas px. Both formats share the one
+// design; only the proportions and the vertical rhythm differ.
+export type QrStickerFormat = {
+  W: number;
+  H: number;
+  // Die-cut corner radius. Without bleed everything is clipped to it, so
+  // the PNG corners are transparent.
+  cornerR: number;
+  logoTop: number;
+  logoH: number;
+  cardTop: number;
+  // The card is square. With a code it gives up some height (still
+  // top-anchored, so the header is untouched) and the code takes that
+  // room under it.
+  card: number;
+  cardWithCode: number;
+  gap: number;
+  codeSize: number;
+  codeGap: number;
+  eyebrowSize: number;
+  eyebrowGap: number;
+  barH: number;
+};
+
+// A6 sticker: 105 x 148 mm at 1200 x 1500 px; 4 mm corners at about
+// 11.4 px/mm.
+export const A6_STICKER: QrStickerFormat = {
+  W: 1200,
+  H: 1500,
+  cornerR: 46,
+  logoTop: 72,
+  logoH: 48,
+  cardTop: 384,
+  card: 880,
+  cardWithCode: 816,
+  gap: 64,
+  codeSize: 48,
+  codeGap: 48,
+  eyebrowSize: 34,
+  eyebrowGap: 28,
+  barH: 12,
+};
+
+// Avery 90x120-R label: 90 x 120 mm at 1200 x 1600 px (13.33 px/mm, about
+// 340 dpi); 2 mm corners. The extra height of the 3:4 label goes to a
+// bigger card and a little more air around the header.
+export const AVERY_90X120_STICKER: QrStickerFormat = {
+  W: 1200,
+  H: 1600,
+  cornerR: (2 * 1200) / 90,
+  logoTop: 84,
+  logoH: 52,
+  cardTop: 420,
+  card: 960,
+  cardWithCode: 900,
+  gap: 56,
+  codeSize: 50,
+  codeGap: 44,
+  eyebrowSize: 36,
+  eyebrowGap: 30,
+  barH: 13,
+};
+
+export type QrStickerRenderOptions = {
+  format?: QrStickerFormat;
+  // Extra artwork on every side, in format px, for printing on die-cut
+  // labels: the green field and brand lines run past the trim, so a small
+  // misregistration shows no white edge. With bleed the corners are not
+  // clipped and the trim hairline is left out.
+  bleed?: number;
+  // Output resolution relative to the format (1 = format px).
+  scale?: number;
+};
+
+// Renders the sticker to a fresh canvas, by default the 1200 x 1500 A6
+// sticker. Without bleed, corners outside the die-cut radius are
+// transparent. Callers that render many stickers should zero the canvas
+// size when done so the browser can free its memory.
 export async function renderQrStickerCanvas(
   args: QrStickerArgs,
+  options: QrStickerRenderOptions = {},
 ): Promise<HTMLCanvasElement> {
-  const W = 1200;
-  const H = 1500;
+  const f = options.format ?? A6_STICKER;
+  const b = Math.max(0, options.bleed ?? 0);
+  const k = options.scale ?? 1;
+  const { W, H, cornerR, logoTop, logoH, cardTop, gap, codeSize, codeGap, barH } = f;
   const M = 96; // outer margin; nothing is set closer to the edge
   const cx = W / 2; // the one shared centre line
   const contentW = W - 2 * M;
@@ -340,43 +418,36 @@ export async function renderQrStickerCanvas(
   // Vertical rhythm, top to bottom. The card is square and the green
   // field ends at its midline, so the code sits half on green, half on
   // white. Text blocks are positioned by cap height so the optical gaps
-  // match the numbers here.
-  const logoTop = 72;
-  const logoH = 48;
-  // With a code the card gives up 64 px (still top-anchored, so the
-  // header is untouched) and the code takes that room under it.
+  // match the numbers in the format.
   const code = args.code?.trim() ?? "";
-  const card = code ? 816 : 880;
-  const cardTop = 384;
-  const gap = 64;
-  const codeSize = 48;
-  const codeGap = 48;
+  const card = code ? f.cardWithCode : f.card;
   const cardR = 44;
   const fieldH = cardTop + card / 2;
-  const barH = 12;
   const barsTop = H - barH * 3;
-  // Corner radius of the die-cut sticker, 4 mm at about 11.4 px/mm.
-  // Everything is clipped to it, so the PNG corners are transparent.
-  const cornerR = 46;
 
   const [, logoImg] = await Promise.all([ensureFonts(), loadLogo()]);
 
   const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
+  canvas.width = Math.round((W + 2 * b) * k);
+  canvas.height = Math.round((H + 2 * b) * k);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context unavailable");
+  if (k !== 1) ctx.scale(k, k);
+  // Origin at the trim corner; the bleed lies at negative coordinates.
+  if (b > 0) ctx.translate(b, b);
 
-  ctx.beginPath();
-  ctx.roundRect(0, 0, W, H, cornerR);
-  ctx.clip();
+  if (b === 0) {
+    ctx.beginPath();
+    ctx.roundRect(0, 0, W, H, cornerR);
+    ctx.clip();
+  }
 
   ctx.fillStyle = "#FFFFFF";
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(-b, -b, W + 2 * b, H + 2 * b);
 
   // Deep green field.
   ctx.fillStyle = COLOR.primary;
-  ctx.fillRect(0, 0, W, fieldH);
+  ctx.fillRect(-b, -b, W + 2 * b, fieldH + b);
 
   // Wordmark, centred on the shared axis, white on the dark field.
   const logoW = logoH * LOGO_ASPECT;
@@ -390,9 +461,9 @@ export async function renderQrStickerCanvas(
   // sit balanced. Weight 400 with tight tracking; size carries the
   // hierarchy, never bold.
   const name = layoutMachineName(ctx, args.machineName, contentW);
-  const eyebrowSize = 34;
+  const eyebrowSize = f.eyebrowSize;
   const eyebrowCap = Math.round(eyebrowSize * CAP);
-  const eyebrowGap = 28;
+  const eyebrowGap = f.eyebrowGap;
   const nameCap = Math.round(name.size * CAP);
   const blockH =
     eyebrowCap +
@@ -418,11 +489,12 @@ export async function renderQrStickerCanvas(
 
   // Square white card straddling the field edge. A soft shadow lifts it
   // off the green; the hairline keeps its edge visible on the white half.
+  // Shadow sizes are in device px, so they follow the output scale.
   const cardX = cx - card / 2;
   ctx.save();
   ctx.shadowColor = "rgba(10, 30, 32, 0.20)";
-  ctx.shadowBlur = 48;
-  ctx.shadowOffsetY = 16;
+  ctx.shadowBlur = 48 * k;
+  ctx.shadowOffsetY = 16 * k;
   ctx.fillStyle = "#FFFFFF";
   ctx.beginPath();
   ctx.roundRect(cardX, cardTop, card, card, cardR);
@@ -484,20 +556,23 @@ export async function renderQrStickerCanvas(
   });
 
   // Hairline at the trim edge so a white sticker printed on white paper
-  // can still be cut out cleanly.
-  ctx.strokeStyle = COLOR.border;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(1.5, 1.5, W - 3, H - 3, cornerR - 1.5);
-  ctx.stroke();
+  // can still be cut out cleanly. Left out with bleed, which is only used
+  // on die-cut labels.
+  if (b === 0) {
+    ctx.strokeStyle = COLOR.border;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(1.5, 1.5, W - 3, H - 3, cornerR - 1.5);
+    ctx.stroke();
+  }
 
-  // Brand lines, flush to the bottom edge, full width.
+  // Brand lines, flush to the bottom edge, full width (into any bleed).
   ctx.fillStyle = COLOR.lineAmber;
-  ctx.fillRect(0, barsTop, W, barH);
+  ctx.fillRect(-b, barsTop, W + 2 * b, barH);
   ctx.fillStyle = COLOR.lineSignal;
-  ctx.fillRect(0, barsTop + barH, W, barH);
+  ctx.fillRect(-b, barsTop + barH, W + 2 * b, barH);
   ctx.fillStyle = COLOR.lineGreen;
-  ctx.fillRect(0, barsTop + barH * 2, W, barH);
+  ctx.fillRect(-b, barsTop + barH * 2, W + 2 * b, barH + b);
 
   return canvas;
 }

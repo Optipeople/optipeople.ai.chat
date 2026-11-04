@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Ban, Download, FileText } from "lucide-react";
+import { Ban, Download, FileText, Printer } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,10 @@ import {
   formatStickerCode,
   useShortDate,
 } from "@/components/admin/QrStickerShared";
+import {
+  QrSheetPrintDrawer,
+  type SheetSticker,
+} from "@/components/admin/QrSheetPrintDrawer";
 
 export function QrStickerBatchDetail({ batchId }: { batchId: string }) {
   return (
@@ -122,6 +126,24 @@ function BatchDetailInner({ batchId }: { batchId: string }) {
     () => stickers.filter((s) => s.status !== "retired"),
     [stickers],
   );
+
+  // A4 label sheets: the ticked stickers when any are ticked (retired ones
+  // left out), otherwise the whole printable batch.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const ticked = useMemo(
+    () => printable.filter((s) => selected.has(s.id)),
+    [printable, selected],
+  );
+  const sheetStickers: SheetSticker[] = useMemo(
+    () =>
+      (ticked.length > 0 ? ticked : printable).map((s) => ({
+        code: formatStickerCode(s.code),
+        url: stickerUrl(s.token),
+        machineName: s.status === "linked" ? s.machineName : null,
+      })),
+    [ticked, printable],
+  );
+  const ts = useTranslations("admin.qrStickers.sheet");
 
   const counts = useMemo(() => {
     let linked = 0;
@@ -288,8 +310,31 @@ function BatchDetailInner({ batchId }: { batchId: string }) {
             <FileText className="mr-1.5 h-4 w-4" />
             {t("downloadCsv")}
           </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setSheetOpen(true)}
+            disabled={busy || printable.length === 0}
+          >
+            <Printer className="mr-1.5 h-4 w-4" />
+            {ticked.length > 0
+              ? t("printSheetsSelected", { count: ticked.length })
+              : t("printSheets")}
+          </Button>
         </div>
       </div>
+
+      <QrSheetPrintDrawer
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        stickers={sheetStickers}
+        summary={
+          ticked.length > 0
+            ? ts("summarySelected", { count: ticked.length })
+            : ts("summaryAll", { count: printable.length })
+        }
+        fileBase={baseName}
+      />
 
       {progress && (
         <div className="flex flex-col gap-1.5">
