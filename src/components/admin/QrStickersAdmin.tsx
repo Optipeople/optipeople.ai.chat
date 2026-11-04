@@ -30,6 +30,7 @@ import {
   formatStickerCode,
   useShortDate,
 } from "@/components/admin/QrStickerShared";
+import { QrSheetPrintDrawer } from "@/components/admin/QrSheetPrintDrawer";
 
 // /admin/qr-stickers: batches of pre-printed pool stickers. Super admins
 // only; AdminGate already handled the logged-out and non-admin cases.
@@ -53,6 +54,7 @@ function QrStickersAdminInner() {
     () => new Map(),
   );
   const [newOpen, setNewOpen] = useState(false);
+  const [csvSheetOpen, setCsvSheetOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,15 +113,30 @@ function QrStickersAdminInner() {
               : t("batchCount", { count: batches?.length ?? 0 })}
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="compact"
-          onClick={() => setNewOpen(true)}
-          className="self-start sm:self-auto"
-        >
-          {t("newBatch")}
-        </Button>
+        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={() => setCsvSheetOpen(true)}
+          >
+            {t("printSheetsCsv")}
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={() => setNewOpen(true)}
+          >
+            {t("newBatch")}
+          </Button>
+        </div>
       </div>
+
+      <QrSheetPrintDrawer
+        open={csvSheetOpen}
+        onClose={() => setCsvSheetOpen(false)}
+        stickers={null}
+        fileBase="qr-stickers-csv"
+      />
 
       <FindStickerByCode />
 
