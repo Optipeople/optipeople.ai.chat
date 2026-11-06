@@ -221,7 +221,44 @@ type Piece = {
   pageFrom: number | null;
   pageTo: number | null;
   atomic: boolean;
+  /** The piece opens a page with what looks like a section heading. */
+  startsSection?: boolean;
 };
+
+// A chunk at least this full is closed early when the next page opens a
+// new section, instead of running on into it. Without this a section that
+// starts late in a chunk is buried under the previous section's text: the
+// P900 manual's "Run Speaker Tests" (how to pick the test type in run
+// mode) sat 2364 characters into a chunk about spectrum and monitor
+// settings, and a direct question scored 0.40 against it where the section
+// on its own scores 0.51, below the 0.45 "manual does not cover this"
+// line. Below this fill the cut would leave a stub chunk, so the section
+// joins the current one as before.
+const SECTION_CUT_MIN_FILL = 0.4;
+
+// Printed page numbers ("125") that precede a page's real first line in
+// pdf-parse output.
+function isPageNumberLine(line: string): boolean {
+  return /^\d{1,4}$/.test(line.trim());
+}
+
+/**
+ * True when a page's text opens with a heading-like line: short, starting
+ * with a capital or a section number, and not ending like a sentence.
+ * Deliberately simple. A false positive only ends the previous chunk at a
+ * page boundary a little early; no text is lost or split.
+ */
+function opensWithHeading(text: string): boolean {
+  const lines = text.split("\n").map((l) => l.trim());
+  let i = 0;
+  while (i < lines.length && (!lines[i] || isPageNumberLine(lines[i]))) i++;
+  const first = lines[i];
+  if (!first || first.length < 3 || first.length > 70) return false;
+  if (/[.,;:]$/.test(first)) return false;
+  // Something has to follow the heading on the same page.
+  if (!lines.slice(i + 1).some((l) => l.length > 0)) return false;
+  return /^(?:\d+(?:\.\d+)*\.?\s+)?\p{Lu}/u.test(first);
+}
 
 function minPage(a: number | null, b: number | null): number | null {
   if (a === null) return b;
@@ -276,7 +313,12 @@ export function chunkText(
 ): Chunk[] {
   const pieces: Piece[] = [];
   for (const segment of splitPageSegments(text)) {
+    // Only a page with known provenance can open a section: text without
+    // sentinels (plain files, feedback notes) chunks exactly as before.
+    let firstOnPage = segment.page !== null;
     for (const block of splitTableBlocks(segment.text)) {
+      const opensPage = firstOnPage;
+      firstOnPage = false;
       if (block.atomic) {
         pieces.push({
           text: block.text,
@@ -286,6 +328,7 @@ export function chunkText(
         });
         continue;
       }
+      let firstPart = opensPage;
       for (const part of splitRecursive(block.text, target)) {
         if (!part.trim()) continue;
         pieces.push({
@@ -293,7 +336,9 @@ export function chunkText(
           pageFrom: segment.page,
           pageTo: segment.page,
           atomic: false,
+          startsSection: firstPart && opensWithHeading(part),
         });
+        firstPart = false;
       }
     }
   }
@@ -307,6 +352,13 @@ export function chunkText(
   // a handful of header-less rows, which is exactly the misleading
   // fragment this module exists to prevent.
   let lastWasTable = false;
+  // Where each piece starts inside `current`, with its pages. The overlap
+  // carried into the next chunk is attributed to the pieces it was sliced
+  // from, not to the whole flushed chunk. Taking the flushed chunk's
+  // pageFrom instead ratchets: every carry re-inherits the previous
+  // chunk's first page, so a 200-page manual came out with page_from = 1
+  // on every chunk and get_page_image was sent to the cover.
+  let spans: { start: number; pageFrom: number | null; pageTo: number | null }[] = [];
 
   const flush = () => {
     const cleaned = stripPageMarkers(current).trim();
@@ -315,20 +367,58 @@ export function chunkText(
 
   for (const piece of stitchCrossPageTables(pieces)) {
     const sep = current ? "\n\n" : "";
+    if (
+      current &&
+      piece.startsSection &&
+      current.length >= target * SECTION_CUT_MIN_FILL
+    ) {
+      // Section boundary on a page break: close the chunk here and start
+      // the next one clean. No overlap carry: the carry exists to keep a
+      // thought cut mid-text together, and nothing is cut mid-text here.
+      flush();
+      current = piece.text;
+      pageFrom = piece.pageFrom;
+      pageTo = piece.pageTo;
+      spans = [{ start: 0, pageFrom: piece.pageFrom, pageTo: piece.pageTo }];
+      lastWasTable = piece.atomic;
+      continue;
+    }
     if (current && current.length + sep.length + piece.text.length > target) {
       flush();
       const carry = lastWasTable ? "" : current.slice(-overlap);
       if (carry) {
+        // Pages of the pieces the carried tail overlaps: the last piece
+        // starting at or before the cut, and every piece after it.
+        const cut = current.length - carry.length;
+        let first = 0;
+        for (let k = 0; k < spans.length; k++) {
+          if (spans[k].start <= cut) first = k;
+        }
+        let carryFrom: number | null = null;
+        let carryTo: number | null = null;
+        for (const s of spans.slice(first)) {
+          carryFrom = minPage(carryFrom, s.pageFrom);
+          carryTo = maxPage(carryTo, s.pageTo);
+        }
         current = `${carry}\n\n${piece.text}`;
-        // The carried tail still belongs to the pages just flushed, so
-        // the new chunk legitimately spans both.
-        pageFrom = minPage(pageFrom, piece.pageFrom);
+        pageFrom = minPage(carryFrom, piece.pageFrom);
+        pageTo = maxPage(carryTo, piece.pageTo);
+        spans = [
+          { start: 0, pageFrom: carryFrom, pageTo: carryTo },
+          { start: carry.length + 2, pageFrom: piece.pageFrom, pageTo: piece.pageTo },
+        ];
       } else {
         current = piece.text;
         pageFrom = piece.pageFrom;
+        pageTo = piece.pageTo;
+        spans = [{ start: 0, pageFrom: piece.pageFrom, pageTo: piece.pageTo }];
       }
-      pageTo = piece.pageTo;
     } else if (current) {
+      spans.push({
+        start: current.length + sep.length,
+        pageFrom: piece.pageFrom,
+        pageTo: piece.pageTo,
+      });
       current += sep + piece.text;
       pageFrom = minPage(pageFrom, piece.pageFrom);
       pageTo = maxPage(pageTo, piece.pageTo);
@@ -336,6 +426,7 @@ export function chunkText(
       current = piece.text;
       pageFrom = piece.pageFrom;
       pageTo = piece.pageTo;
+      spans = [{ start: 0, pageFrom: piece.pageFrom, pageTo: piece.pageTo }];
     }
     lastWasTable = piece.atomic;
   }

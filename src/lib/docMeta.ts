@@ -54,6 +54,11 @@ export type DocumentMeta = {
   references: string[];
   /** One-paragraph description for the tool-routing manifest. */
   summary: string | null;
+  /**
+   * The manual's own title as printed on its cover. Only used to replace a
+   * meaningless upload filename (see isOpaqueFileTitle). Null if none.
+   */
+  title: string | null;
 };
 
 export function emptyDocumentMeta(): DocumentMeta {
@@ -63,7 +68,27 @@ export function emptyDocumentMeta(): DocumentMeta {
     appliesTo: [],
     references: [],
     summary: null,
+    title: null,
   };
+}
+
+// Filenames that say nothing about the document: a UUID or hash that a
+// download portal, mail gateway or phone camera handed out, a bare number,
+// or a generic word. On 2026-10-30 a tooling manual was uploaded as
+// "4962a63f-a5f7-418f-a516-16465d8100a2.pdf" and that string became its
+// title in the admin tree, the manifest and every citation.
+const OPAQUE_TITLE_RES = [
+  /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i,
+  /^[0-9a-f]{16,}$/i,
+  /^\d{6,}$/,
+  /^(?:upload|download|document|file|scan|untitled|unnamed|pdf|manual)(?:[\s_-]*\(?\d+\)?)?$/i,
+];
+
+/** True when a title derived from a filename carries no meaning. */
+export function isOpaqueFileTitle(title: string): boolean {
+  const t = title.trim();
+  if (!t) return true;
+  return OPAQUE_TITLE_RES.some((re) => re.test(t));
 }
 
 // "Cat. No. W629-E1-09", "Cat.No. I586-E1-02", "Catalog No. W501".
@@ -99,13 +124,15 @@ const PROMPT = `You are indexing one technical manual for a machine knowledge ba
   "catalog_no": string | null,
   "applies_to": string[],
   "referenced_manuals": string[],
-  "summary": string
+  "summary": string,
+  "title": string | null
 }
 
 - "catalog_no": this manual's own catalogue / document number exactly as printed (e.g. "W629-E1-09"). null if the text does not state one.
 - "applies_to": the product series and model designations THIS manual documents, as printed (e.g. ["NX502-1400", "NX502-1300"] or ["NJ501 series"]). Empty array if the manual is not product-specific. Do not guess models that are only mentioned in passing.
 - "referenced_manuals": catalogue numbers of OTHER manuals this one tells the reader to consult (e.g. ["W501", "W503"]). Base number only, no revision suffix. Empty array if none.
 - "summary": one paragraph, at most 60 words, saying what an operator or technician can look up in this manual. Concrete and specific: name the systems, procedures or reference tables it covers. No marketing language, no "this manual describes".
+- "title": the manual's own title as printed on its cover or title page, in the manual's language (e.g. "Revolverstanser betjeningsvejledning"). Add the product name if the title alone is generic. At most 100 characters. null if the text does not show one.
 
 Report only what the text supports. An empty array or null is the correct answer when the text does not say.`;
 
@@ -142,6 +169,10 @@ function parseMeta(raw: string): Partial<DocumentMeta> | null {
       summary:
         typeof parsed.summary === "string" && parsed.summary.trim()
           ? parsed.summary.trim()
+          : null,
+      title:
+        typeof parsed.title === "string" && parsed.title.trim()
+          ? parsed.title.trim().slice(0, 150)
           : null,
     };
   } catch {
@@ -201,6 +232,7 @@ export async function extractDocumentMeta(args: {
   meta.catalogNo = modelPart?.catalogNo ?? null;
   meta.appliesTo = modelPart?.appliesTo ?? [];
   meta.summary = modelPart?.summary ?? null;
+  meta.title = modelPart?.title ?? null;
 
   // A manual states its own number more often than it states any other,
   // so when the model found nothing, the first scanned number is the best
@@ -246,6 +278,7 @@ export function readDocumentMeta(value: unknown): DocumentMeta {
     );
   }
   if (typeof v.summary === "string") meta.summary = v.summary;
+  if (typeof v.title === "string") meta.title = v.title;
   if (typeof v.version === "number") meta.version = v.version;
   return meta;
 }

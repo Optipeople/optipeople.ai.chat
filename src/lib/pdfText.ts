@@ -543,8 +543,26 @@ async function repairTables(
   });
 
   const pages = [...parsed.pages];
+  let rewritten = 0;
+  const keptTextLayer: number[] = [];
   for (const [page, text] of extraction.byPage) {
-    if (page >= 1 && page <= pages.length) pages[page - 1] = text;
+    if (page < 1 || page > pages.length) continue;
+    // A table page has a text layer by construction (that is how it was
+    // detected). If vision saw nothing on it, the image it was sent was
+    // wrong, not the page: an encrypted source once sliced to blank pages
+    // and this splice replaced a whole G-code chapter with
+    // "[Page contains no readable text or tables]". Keep the text layer.
+    if (looksBlank(text) && !looksBlank(pages[page - 1] ?? "")) {
+      keptTextLayer.push(page);
+      continue;
+    }
+    pages[page - 1] = text;
+    rewritten++;
+  }
+  if (keptTextLayer.length > 0) {
+    console.warn(
+      `[pdfText] table pass saw blank page(s) ${keptTextLayer.join(", ")} that have a text layer; kept pdf-parse text`,
+    );
   }
   if (extraction.missing.length > 0) {
     console.warn(
@@ -552,7 +570,13 @@ async function repairTables(
         (extraction.truncated ? " (stopped early: out of time)" : ""),
     );
   }
-  return { pages, rewritten: extraction.byPage.size };
+  return { pages, rewritten };
+}
+
+// True when a page's text is empty apart from bracketed notes such as
+// "[Blank page: no readable text]" or "[Diagram: ...]".
+function looksBlank(text: string): boolean {
+  return text.replace(/\[[^\]\n]*\]/g, "").replace(/\s+/g, "").length < 20;
 }
 
 export type ExtractPhaseHook = (

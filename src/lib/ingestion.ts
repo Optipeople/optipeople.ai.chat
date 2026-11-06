@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 import { chunkText } from "./chunking";
-import { extractDocumentMeta } from "./docMeta";
+import { extractDocumentMeta, isOpaqueFileTitle } from "./docMeta";
 import { attachPdfFigures, wipePdfFigures } from "./imageIngestion";
 import {
   extractPdfText,
@@ -399,7 +399,14 @@ export async function markFailedOnError<T>(
 // is what makes per-chunk page provenance possible. A version 1 sidecar
 // has none, and its chunk list would therefore differ from what this code
 // produces, so it is treated as absent: the document re-extracts.
-const SIDECAR_VERSION = 2;
+//
+// Version 3 marks the chunker change that closes a chunk at a page which
+// opens a new section (chunking.ts SECTION_CUT_MIN_FILL). The text format
+// is unchanged, but a document caught mid-embedding by that deploy would
+// otherwise resume with different chunk boundaries than the ones already
+// written, duplicating or dropping text at the seam. Re-extracting is the
+// safe price for the handful of documents in flight at deploy time.
+const SIDECAR_VERSION = 3;
 
 type ExtractedSidecar = {
   version?: number;
@@ -730,6 +737,11 @@ async function ensureDocumentMeta(args: {
     const summaryIsFallback =
       !row.summary || row.summary.trim() === row.title.trim();
     if (meta.summary && summaryIsFallback) patch.summary = meta.summary;
+    // The title comes from the upload filename. When that is a UUID or a
+    // hash it means nothing to anyone, so take the title printed in the
+    // manual instead. A meaningful filename (usually chosen by the admin)
+    // is never overwritten.
+    if (meta.title && isOpaqueFileTitle(row.title)) patch.title = meta.title;
 
     const { error: upErr } = await supabase
       .from("kb_documents")
