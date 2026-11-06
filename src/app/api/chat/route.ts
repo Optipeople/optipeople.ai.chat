@@ -46,6 +46,7 @@ import {
   resolveQrToken,
   type QrSession,
 } from "@/lib/qrAuth";
+import { isSupportedImageMime } from "@/lib/imageCaption";
 import { slicePdfPages } from "@/lib/pdfSlice";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { fromAnthropicUsage, recordUsage } from "@/lib/usage";
@@ -162,9 +163,9 @@ const SYSTEM_PREAMBLE = `You are Opti Assist, an assistant for operators of indu
 Your job: help operators get fast, reliable answers from their machine manuals so they don't have to dig through hundreds of pages or wait hours for support. Use plain, everyday language — operators stand on the factory floor, not in an office. Keep technical terms, alarm codes, button names and menu items in the language they appear on the machine itself (e.g. **RESET**, **M06**, **Alarm 731**).
 
 Tool & formatting rules:
-- Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
+- Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific, e.g. "alarm 731 reset" or "tool change procedure". Phrase it in the manual's own words and language, not the user's (a Danish "vælg testprogram" in an English manual is "Run select type"). If the best similarity is below 0.45, search again with the manual's terms before saying the manual does not cover it.
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
-- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit with no \`page_from\` (an uploaded reference screenshot or photo), call it with just the \`document_id\` to see the image itself; its search text is only a short caption.
 - Use the **list_documents** tool when the operator asks what manuals are available, asks for a link / the PDF / the file itself, asks "where do I find the manual", or wants to browse the knowledge base. The tool returns every operator-visible document for this machine; each one is then rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the operator you cannot share links — you can, by calling this tool.
 - Be brief and to the point. Operators are at the machine — they want the solution, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result.
@@ -197,6 +198,16 @@ When the operator says you are wrong:
 - NEVER say the manual confirms you unless you quote, in that same message, the exact line that confirms it.
 - When you correct one value, re-derive EVERY other value you gave from the same table and correct those too. If you misread one row of a table, you have almost certainly misread its other rows the same way.
 
+Screenshots of tests and measurements (e.g. a P900 or end-of-line test screen):
+- Red on a test result means FAILED. A red curve, a red limit band crossed, a red field, a red cross or a red label is a failed test. NEVER call a result OK, approved or "no fault" when anything on it is red. If you cannot tell whether something is red, say so instead of calling it OK.
+- Before naming the fault, look at the references. When search_kb returns reference images for the same station or product (titles like "Station 23 Rubikore 6 OK_2" or one naming a fault), call **get_page_image** on the closest few (the OK reference and the likeliest fault references) and compare the actual curves and markings with the operator's screenshot. Do not diagnose from the reference titles or captions alone.
+- Say which reference it matches best and how sure you are. If none matches well, say that rather than forcing a match.
+
+Conversation context:
+- Equipment: this chat is about the machine named under "Active machine" below. When a question could concern more than one piece of equipment (a button, a part, a procedure), answer for THIS machine, even if an earlier turn discussed another device or another device's manual is in the knowledge base (a grinder, a controller, an accessory). Only answer for the other device when the operator clearly names it.
+- Carry context forward: a product model, variant, station, order or part the operator stated earlier stays in force until they change it. Do not ask for it again and do not make them repeat it; use it in your searches.
+- When the operator tells you the real cause and it differs from what you said, say plainly that your diagnosis was wrong, then describe what the actual fault looks like so it can be recognised next time. Do NOT claim your answer "matched" or "fits perfectly", and do not reinterpret what you said to make it agree.
+
 Formatting (answers render as Markdown):
 - Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
 - Use numbered lists for step-by-step procedures, bullet lists for options or checks.
@@ -209,7 +220,7 @@ Formatting (answers render as Markdown):
 - When a search result has \`is_image: true\`, it is a figure/diagram. Mention briefly in prose what the figure shows ("see the diagram of the tool-change sequence below"). The operator sees the thumbnail automatically below your reply — do NOT try to embed the image yourself.
 - The operator may attach photos to their message (HMI panel, alarm screen, damaged part, …). Read them carefully — they are first-hand evidence of what is happening at the machine. Use them to disambiguate (e.g. read the alarm code off the screen) and search the manual based on what you see. If a photo is unclear, ask the operator for a specific detail instead of guessing.
 
-LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
+LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it. The WHOLE answer is in that language: no English sentences in a Danish answer, including date reasoning such as which day "yesterday" is (work that out silently). Tool results are in English and use field names; translate what they mean and NEVER show raw field names or values (e.g. \`final: false\`, \`is_image\`) to the user.
 `;
 
 // Fleet-scope preamble. A deliberate copy of SYSTEM_PREAMBLE with the
@@ -228,9 +239,9 @@ Scope rules:
 - Always make clear which machine each part of your answer refers to.
 
 Tool & formatting rules:
-- Use the **search_kb** tool to find information in the manuals BEFORE answering technical questions. It searches every machine by default; pass \`machine_id\` (from the fleet list) to focus on one machine. Make the search short and specific — e.g. "alarm 731 reset" or "tool change procedure".
+- Use the **search_kb** tool to find information in the manuals BEFORE answering technical questions. It searches every machine by default; pass \`machine_id\` (from the fleet list) to focus on one machine. Make the search short and specific, e.g. "alarm 731 reset" or "tool change procedure". Phrase it in the manual's own words and language, not the user's (a Danish "vælg testprogram" in an English manual is "Run select type"). If the best similarity is below 0.45, search again with the manual's terms before saying the manual does not cover it.
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the user should check or who they should contact.
-- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit with no \`page_from\` (an uploaded reference screenshot or photo), call it with just the \`document_id\` to see the image itself; its search text is only a short caption.
 - Use the **list_documents** tool when the user asks what manuals are available, asks for a link / the PDF / the file itself, or wants to browse the knowledge base — pass \`machine_id\` for one machine or omit it for all. Each returned document is rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the user you cannot share links — you can, by calling this tool.
 - Be brief and to the point. They want the answer, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result, and name the machine it belongs to.
@@ -261,6 +272,16 @@ When the user says you are wrong:
 - NEVER say the manual confirms you unless you quote, in that same message, the exact line that confirms it.
 - When you correct one value, re-derive EVERY other value you gave from the same table and correct those too. If you misread one row of a table, you have almost certainly misread its other rows the same way.
 
+Screenshots of tests and measurements (e.g. a P900 or end-of-line test screen):
+- Red on a test result means FAILED. A red curve, a red limit band crossed, a red field, a red cross or a red label is a failed test. NEVER call a result OK, approved or "no fault" when anything on it is red. If you cannot tell whether something is red, say so instead of calling it OK.
+- Before naming the fault, look at the references. When search_kb returns reference images for the same station or product (titles like "Station 23 Rubikore 6 OK_2" or one naming a fault), call **get_page_image** on the closest few (the OK reference and the likeliest fault references) and compare the actual curves and markings with the user's screenshot. Do not diagnose from the reference titles or captions alone.
+- Say which reference it matches best and how sure you are. If none matches well, say that rather than forcing a match.
+
+Conversation context:
+- Equipment: once the conversation is about one machine, a follow-up that could concern more than one piece of equipment (a button, a part, a procedure) is about that machine itself, not about another device whose manual happens to be attached to it (a grinder, a controller, an accessory) and not about a device an earlier turn touched in passing. Only switch when the user clearly names the other device or machine.
+- Carry context forward: a product model, variant, station, order or part the user stated earlier stays in force until they change it. Do not ask for it again and do not make them repeat it; use it in your searches.
+- When the user tells you the real cause and it differs from what you said, say plainly that your diagnosis was wrong, then describe what the actual fault looks like so it can be recognised next time. Do NOT claim your answer "matched" or "fits perfectly", and do not reinterpret what you said to make it agree.
+
 Formatting (answers render as Markdown):
 - Start with a one-sentence direct answer. No preambles like "Great question" and no restating of the question.
 - Use numbered lists for step-by-step procedures, bullet lists for options or checks. When comparing machines, a short Markdown table often reads best.
@@ -272,7 +293,7 @@ Formatting (answers render as Markdown):
 - Never wrap the entire answer in a code block.
 - When a search result has \`is_image: true\`, it is a figure/diagram. Mention briefly in prose what the figure shows ("see the diagram of the tool-change sequence below"). The user sees the thumbnail automatically below your reply — do NOT try to embed the image yourself.
 
-LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it.
+LANGUAGE: Always respond in the same language the user is writing in. Detect the language from the user's latest message and mirror it. The WHOLE answer is in that language: no English sentences in a Danish answer, including date reasoning such as which day "yesterday" is (work that out silently). Tool results are in English and use field names; translate what they mean and NEVER show raw field names or values (e.g. \`final: false\`, \`is_image\`) to the user.
 `;
 
 const SEARCH_KB_TOOL: Tool = {
@@ -322,7 +343,7 @@ const LIST_DOCUMENTS_TOOL: Tool = {
 const GET_PAGE_IMAGE_TOOL: Tool = {
   name: "get_page_image",
   description:
-    "Look at one or more pages of a document exactly as printed. Returns the pages themselves, not extracted text, so you can read a table's real column layout and check a value against the page. Use it before stating a specific setting value that came from a table (switch or DIP pin positions, parameter values, torques), and ALWAYS when someone says a value you gave is wrong. Page numbers come from the page_from field of a search_kb result.",
+    "Look at a document exactly as stored. For a PDF it returns the requested pages themselves, not extracted text, so you can read a table's real column layout and check a value against the page. For an image document (a search_kb hit with is_image: true and no page_from, e.g. an uploaded reference screenshot or photo) it returns the actual image, so you can compare it with a photo or screenshot the user sent; pages is ignored then. Use it before stating a specific setting value that came from a table (switch or DIP pin positions, parameter values, torques), ALWAYS when someone says a value you gave is wrong, and before naming a fault by comparing the user's image with reference images. Page numbers come from the page_from field of a search_kb result.",
   input_schema: {
     type: "object",
     properties: {
@@ -335,10 +356,10 @@ const GET_PAGE_IMAGE_TOOL: Tool = {
         type: "array",
         items: { type: "integer" },
         description:
-          "1-indexed page numbers, at most 3 per call. Use the page_from value from the search result. When the result also carries a page_to, the content is spread over that range, so ask for the whole range. Add the following page when a table may continue onto it.",
+          "PDFs only (required for them): 1-indexed page numbers, at most 3 per call. Use the page_from value from the search result. When the result also carries a page_to, the content is spread over that range, so ask for the whole range. Add the following page when a table may continue onto it. Omit for an image document.",
       },
     },
-    required: ["document_id", "pages"],
+    required: ["document_id"],
   },
 };
 
@@ -745,6 +766,17 @@ const MAX_PAGE_LOOKUPS_PER_TURN = 2;
 // print resolution. Refusing beats blowing the request's 32 MB ceiling.
 const MAX_PAGE_LOOKUP_BYTES = 6 * 1024 * 1024;
 
+// Image documents (uploaded reference screenshots and photos) shown via
+// get_page_image. One image per call, a separate per-turn budget from PDF
+// pages: comparing an operator's test screenshot against reference
+// images needs a few of them, and an image is capped at roughly 1600
+// input tokens by the API's own downscaling, so 4 stays cheaper than one
+// PDF lookup of 3 pages. The API's 5 MB limit applies to the base64
+// string, which is 4/3 of the raw bytes, so raw bytes are capped at 3/4
+// of it; anything larger would fail the whole request, not just the tool.
+const MAX_IMAGE_LOOKUPS_PER_TURN = 4;
+const MAX_IMAGE_LOOKUP_BYTES = Math.floor((5 * 1024 * 1024 * 3) / 4);
+
 async function buildSystemPrompt(
   machineId: string,
   accountId: string,
@@ -843,7 +875,8 @@ Every question the operator asks is about THIS machine unless they explicitly na
 Optipeople MCP rules (machine-scoped data — uptime, stops, KPIs, telemetry):
 - ALWAYS pass machine_id="${portalMachineId}" to any MCP tool that accepts it (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_stops_concluesion_statistic, get_time_distribution_statistic, get_total_uptime_by_date, get_total_working_hours_by_date, get_part_counter_log, get_telemetry_data, get_kpi_report_by_date, etc.). Do NOT call the account-wide variants (e.g. get_machines_basic_info, get_factories_data) for operator questions — they return data for other machines the operator doesn't care about.
 - If you genuinely need to resolve a name to an id, use the machine_id above directly; do NOT call get_machine_id or get_machines_basic_info just to find it.
-- When the operator asks something open-ended like "what's been going on today" or "any errors", scope the query to machine_id="${portalMachineId}" and today's date. Never ask the operator which machine they mean.`
+- When the operator asks something open-ended like "what's been going on today" or "any errors", scope the query to machine_id="${portalMachineId}" and today's date. Never ask the operator which machine they mean.
+- Data finality: portal results may carry a finality flag (e.g. final: false). It is about whether the portal has finished processing that period's figures, not whether the period is over in time: a day that has already ended can still show final: false while late registrations and processing catch up. For a past day say the figures are the latest available and may still be adjusted slightly; never say a past day "is not over yet". Only today, or a period that includes today, is still running. Never quote the flag itself.`
       : "";
 
   // Inviolable rules go first so they take primacy over anything that
@@ -914,7 +947,8 @@ Every machine above is in scope. Use each machine's machine_id when scoping sear
 Optipeople MCP rules (live portal data — uptime, stops, KPIs, telemetry):
 - For fleet-wide questions ("which machines had stops today", "how is production doing") use the account-wide tools (e.g. get_machines_basic_info, get_factories_data) — they return data for every machine at once.
 - For per-machine data (e.g. get_machine_basic_info, get_stop_group_by_day_statistic, get_telemetry_data, get_kpi_report_by_date) pass that machine's portal_machine_id from the fleet list above as machine_id. Do NOT call get_machine_id to look ids up — the fleet list already has them.
-- Machines listed with "no portal data" have no live portal data — answer for them from their knowledge base only, and say so if the user asks for their live numbers.`
+- Machines listed with "no portal data" have no live portal data. Answer for them from their knowledge base only, and say so if the user asks for their live numbers.
+- Data finality: portal results may carry a finality flag (e.g. final: false). It is about whether the portal has finished processing that period's figures, not whether the period is over in time: a day that has already ended can still show final: false while late registrations and processing catch up. For a past day say the figures are the latest available and may still be adjusted slightly; never say a past day "is not over yet". Only today, or a period that includes today, is still running. Never quote the flag itself.`
       : "";
 
   const rulesSection = renderRulesSection(adminRules);
@@ -955,10 +989,11 @@ type ToolExecResult = {
   // What goes back to the model as the tool_result content.
   modelPayload: unknown;
   // Rich tool_result content, when the tool returns more than JSON.
-  // get_page_image uses it to hand the model actual PDF pages. When
+  // get_page_image uses it to hand the model actual PDF pages, or the
+  // stored image of an image document. When
   // present this replaces modelPayload in the message to the model;
   // modelPayload is still what gets written to the audit trail.
-  modelBlocks?: Array<TextBlockParam | DocumentBlockParam>;
+  modelBlocks?: Array<TextBlockParam | DocumentBlockParam | ImageBlockParam>;
   // chunk_ids retrieved (search_kb only) — persisted alongside the
   // tool message so audit views can show which snippets the AI saw.
   chunkIds: string[];
@@ -1440,15 +1475,6 @@ async function executeGetPageImage(
   ]
     .sort((a, b) => a - b)
     .slice(0, MAX_PAGE_LOOKUP_PAGES);
-  if (pages.length === 0) {
-    return toolError("pages must contain at least one page number (1-indexed)");
-  }
-  if (budget.pageLookups >= MAX_PAGE_LOOKUPS_PER_TURN) {
-    return toolError(
-      `You have used all ${MAX_PAGE_LOOKUPS_PER_TURN} page lookups for this turn. ` +
-        "Answer from what you have, and say plainly which part you could not verify.",
-    );
-  }
 
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
@@ -1480,10 +1506,22 @@ async function executeGetPageImage(
   if (!allowed.includes(doc.machine_id)) {
     return toolError(`Unknown document_id "${input.document_id}".`);
   }
+  if (doc.source_type === "image") {
+    return executeGetStoredImage(scope, doc, budget);
+  }
   if (doc.source_type !== "pdf" || !doc.storage_path) {
     return toolError(
-      `"${doc.title}" is not a paged PDF, so it has no page to show. ` +
-        "Figures already come back as thumbnails in the search results.",
+      `"${doc.title}" is neither a paged PDF nor an image, so there is nothing to show. ` +
+        "Answer from its search_kb text.",
+    );
+  }
+  if (pages.length === 0) {
+    return toolError("pages must contain at least one page number (1-indexed)");
+  }
+  if (budget.pageLookups >= MAX_PAGE_LOOKUPS_PER_TURN) {
+    return toolError(
+      `You have used all ${MAX_PAGE_LOOKUPS_PER_TURN} page lookups for this turn. ` +
+        "Answer from what you have, and say plainly which part you could not verify.",
     );
   }
 
@@ -1559,9 +1597,115 @@ async function executeGetPageImage(
   };
 }
 
-// Per-turn tool budget. Only page lookups need one so far: they are the
+// get_page_image on an image document (source_type 'image'): hands the
+// model the stored image itself. Without this the model only ever saw
+// the one-line caption written at ingest, which is not enough to compare
+// an operator's test screenshot against a reference screenshot; on
+// account Dali that comparison went wrong about half the time.
+//
+// The image lives in the kb-images bucket under the path recorded on its
+// kb_assets row (imageIngestion.ts runImagePipeline). The asset row is
+// the source of truth for the mime type too, since the API needs it.
+async function executeGetStoredImage(
+  scope: ToolScope,
+  doc: { id: string; machine_id: string; title: string },
+  budget: ToolBudget,
+): Promise<ToolExecResult> {
+  if (budget.imageLookups >= MAX_IMAGE_LOOKUPS_PER_TURN) {
+    return toolError(
+      `You have used all ${MAX_IMAGE_LOOKUPS_PER_TURN} image lookups for this turn. ` +
+        "Compare with the images you already have, and say plainly which reference you could not check.",
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_assets")
+    .select("storage_path, storage_bucket, mime_type, byte_size")
+    .eq("document_id", doc.id)
+    .order("ordinal", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("get_page_image image asset lookup failed:", error);
+    return toolError(error.message);
+  }
+  const asset = data as {
+    storage_path: string;
+    storage_bucket: string;
+    mime_type: string;
+    byte_size: number | null;
+  } | null;
+  if (!asset || !isSupportedImageMime(asset.mime_type)) {
+    return toolError(`"${doc.title}" has no stored image to show.`);
+  }
+  if (asset.byte_size !== null && asset.byte_size > MAX_IMAGE_LOOKUP_BYTES) {
+    return toolError(
+      `The image "${doc.title}" is too large to show. Use its search_kb description instead.`,
+    );
+  }
+
+  budget.imageLookups++;
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from(asset.storage_bucket)
+    .download(asset.storage_path);
+  if (dlErr || !blob) {
+    console.error("get_page_image image download failed:", dlErr);
+    return toolError(`Could not read the stored image for "${doc.title}".`);
+  }
+  const buf = Buffer.from(await blob.arrayBuffer());
+  // byte_size can be null on old rows, so check the real size as well.
+  if (buf.byteLength > MAX_IMAGE_LOOKUP_BYTES) {
+    return toolError(
+      `The image "${doc.title}" is too large to show. Use its search_kb description instead.`,
+    );
+  }
+
+  const payload = {
+    document_id: doc.id,
+    title: doc.title,
+    note:
+      "The stored image follows. The title often names the station, product " +
+      "and result (e.g. OK or the fault). When comparing it with an image the " +
+      "user sent, compare the curves, markings and colours themselves, not only the title.",
+  };
+  return {
+    modelPayload: payload,
+    modelBlocks: [
+      { type: "text", text: JSON.stringify(payload) },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: asset.mime_type,
+          data: buf.toString("base64"),
+        },
+      },
+    ],
+    chunkIds: [],
+    documents: [
+      {
+        id: doc.id,
+        title: doc.title,
+        pageFrom: null,
+        score: PAGE_LOOKUP_SCORE,
+        ...(scope.kind === "fleet"
+          ? {
+              machineName:
+                scope.machines.find((m) => m.machineId === doc.machine_id)
+                  ?.displayName ?? null,
+            }
+          : {}),
+      },
+    ],
+    images: [],
+  };
+}
+
+// Per-turn tool budget. Only get_page_image needs one so far: it is the
 // only tool whose result is measured in megabytes.
-type ToolBudget = { pageLookups: number };
+type ToolBudget = { pageLookups: number; imageLookups: number };
 
 async function executeTool(
   name: string,
@@ -1922,7 +2066,7 @@ export async function POST(req: Request) {
         const imageHits = new Map<string, ImageHit>();
         // Shared across every iteration of this turn's loop, so the cap on
         // page lookups is a per-turn cap rather than a per-iteration one.
-        const toolBudget: ToolBudget = { pageLookups: 0 };
+        const toolBudget: ToolBudget = { pageLookups: 0, imageLookups: 0 };
         // Grounding audit for this turn: did any search_kb call run, and
         // how strong was the best hit. Written onto the final assistant
         // row so the audit can separate manual-backed answers from
