@@ -1306,5 +1306,15 @@
     "linkedBody": "Koblet til {machine}, kode {code}.",
     "openChat": "Åbn chat",
     "nextStickerHint": "Skal du aktivere flere? Scan bare den næste sticker."
+  },
+  "markdown": {
+    "callout": {
+      "note": "Bemærk",
+      "tip": "Tip",
+      "important": "Vigtigt",
+      "warning": "Advarsel",
+      "caution": "Forsigtig"
+    },
+    "followUps": "Opfølgende spørgsmål"
   }
 }

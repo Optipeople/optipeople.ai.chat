@@ -46,6 +46,7 @@ import { QrConsentBanner } from "@/components/QrConsentBanner";
 import { KnowledgeDrawer } from "@/components/KnowledgeDrawer";
 import type { OperatorConversationResponse } from "@/app/api/conversations/[id]/route";
 import { SpeakButton } from "@/components/SpeakButton";
+import { copyableText, speakableText } from "@/lib/speakable";
 import { VoiceConversation } from "@/components/VoiceConversation";
 import { SourceChips, type SourceRef } from "@/components/SourceChips";
 import { useFileViewer } from "@/components/FileViewer";
@@ -2092,6 +2093,13 @@ function ChatApp({
                         : () => setEscalate({ phase: "confirm", note: "" })
                     }
                     onRetry={!streaming && isLast && m.error ? retry : undefined}
+                    // Follow-up chips only on the latest answer, and only
+                    // once it has finished streaming.
+                    onAsk={
+                      !streaming && isLast && m.role === "assistant"
+                        ? (q: string) => void send(q)
+                        : undefined
+                    }
                     onRegenerate={
                       !streaming &&
                       isLast &&
@@ -2114,7 +2122,7 @@ function ChatApp({
           messages.length > 0 &&
           messages[messages.length - 1].role === "assistant" &&
           !messages[messages.length - 1].error
-            ? messages[messages.length - 1].content
+            ? speakableText(messages[messages.length - 1].content)
             : ""}
         </div>
         {/* "Jump to latest" pill — only visible when the operator is
@@ -2594,12 +2602,14 @@ function MessageRow({
   onCallService,
   onRetry,
   onRegenerate,
+  onAsk,
 }: {
   message: Message;
   locale: string;
   isStreaming?: boolean;
   sessionAction?: { label: string; onClick: () => void };
   onCallService?: () => void;
+  onAsk?: (q: string) => void;
   onRetry?: () => void;
   onRegenerate?: () => void;
 }) {
@@ -2682,7 +2692,13 @@ function MessageRow({
   return (
     <div className="msg-in flex flex-col gap-3">
       <div className="relative">
-        <Markdown onCallService={onCallService}>{message.content}</Markdown>
+        <Markdown
+          onCallService={onCallService}
+          onAsk={onAsk}
+          streaming={isStreaming}
+        >
+          {message.content}
+        </Markdown>
         {isStreaming && (
           <span className="stream-caret -ml-0.5 align-baseline" aria-hidden />
         )}
@@ -2702,8 +2718,8 @@ function MessageRow({
       {errorCard}
       {!isStreaming && !message.error && (
         <div className="-mt-1 flex items-center gap-1">
-          <SpeakButton text={message.content} />
-          <CopyButton text={message.content} />
+          <SpeakButton text={speakableText(message.content)} />
+          <CopyButton text={copyableText(message.content)} />
           {onRegenerate && (
             <IconButton
               onClick={onRegenerate}

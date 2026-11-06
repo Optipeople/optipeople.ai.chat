@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages, getTranslations } from "next-intl/server";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";

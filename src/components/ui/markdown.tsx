@@ -1,9 +1,13 @@
 "use client";
 
 import {
+  createContext,
+  useCallback,
   isValidElement,
+  useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -12,7 +16,16 @@ import ReactMarkdown, {
   type Components,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, FileText, Wrench } from "lucide-react";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import type { PluggableList } from "unified";
+import { Check, ExternalLink, FileText, Wrench } from "lucide-react";
+import { CodeBlock } from "@/components/ui/markdown/code-block";
+import { ChartBlock } from "@/components/ui/markdown/chart-block";
+import { KpiBlock } from "@/components/ui/markdown/kpi-block";
+import { QuestionsBlock } from "@/components/ui/markdown/questions-block";
+import { Callout, type CalloutKind } from "@/components/ui/markdown/callout";
+import { TermChip, isTermKind } from "@/components/ui/markdown/term-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { fetchWithAuth } from "@/auth/authApi";
 import { useFileViewer } from "@/components/FileViewer";
@@ -196,336 +209,590 @@ function InlineAssetImage({
   );
 }
 
-const baseComponents: Components = {
-  p: ({ className, ...props }) => (
-    <p
-      className={cn("my-2 first:mt-0 last:mb-0 leading-[1.65]", className)}
-      {...props}
-    />
-  ),
-  h1: ({ className, ...props }) => (
-    <h1
-      className={cn(
-        "mt-6 mb-3 first:mt-0 text-[24px] font-semibold tracking-tight text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h2: ({ className, ...props }) => (
-    <h2
-      className={cn(
-        "mt-6 mb-3 first:mt-0 text-[22px] font-semibold tracking-tight text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h3: ({ className, ...props }) => (
-    <h3
-      className={cn(
-        "mt-5 mb-2 first:mt-0 text-[20px] font-semibold tracking-tight text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h4: ({ className, ...props }) => (
-    <h4
-      className={cn(
-        "mt-5 mb-2 first:mt-0 text-[18px] font-semibold text-[var(--color-accent)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  ul: ({ className, ...props }) => (
-    <ul
-      className={cn(
-        "my-2 ml-1 list-none space-y-1.5 [&_ul]:mt-1.5 [&_ul]:ml-4",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  ol: ({ className, ...props }) => (
-    <ol
-      className={cn(
-        "my-2 ml-5 list-decimal space-y-1.5 marker:text-[var(--color-accent)] marker:font-semibold",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  li: ({ className, children, ...props }) => (
-    <li
-      className={cn(
-        "relative pl-5 leading-[1.6]",
-        "before:absolute before:left-0 before:top-[0.65em] before:h-[6px] before:w-[6px] before:rounded-full before:bg-[var(--color-accent)]/80",
-        "[ol_&]:pl-1 [ol_&]:before:hidden",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </li>
-  ),
-  strong: ({ className, ...props }) => (
-    <strong
-      className={cn(
-        "font-semibold text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  em: ({ className, ...props }) => (
-    <em className={cn("italic", className)} {...props} />
-  ),
-  a: ({ className, href, children, ...props }) => {
-    // No escalation handler in this context (fleet scope, legal pages):
-    // the sentinel must not become a dead link — keep the label as prose.
-    if (href === CALL_SERVICE_HREF) return <span>{children}</span>;
-    const docRef = parseOptiDocHref(href);
-    if (docRef) {
-      return (
-        <InlineDocLink href={href ?? ""} page={docRef.page}>
-          {children}
-        </InlineDocLink>
+// --- Rich formatting -------------------------------------------------
+
+// Minimal mdast shapes for the callout plugin. Kept local so we do not
+// pull in @types/mdast for three fields.
+type MdNode = {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
+};
+
+const CALLOUT_KINDS: readonly CalloutKind[] = [
+  "note",
+  "tip",
+  "important",
+  "warning",
+  "caution",
+];
+function isCalloutKind(s: string): s is CalloutKind {
+  return (CALLOUT_KINDS as readonly string[]).includes(s);
+}
+
+const CALLOUT_MARKER =
+  /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*\n?/i;
+
+// GitHub style alerts: a blockquote whose first line is `[!WARNING]`
+// becomes a callout box. The marker is stripped from the text and the
+// blockquote is re-tagged as a div carrying `data-callout`, which the
+// `div` renderer below picks up.
+function remarkCallouts() {
+  return (tree: MdNode) => {
+    const walk = (node: MdNode) => {
+      if (node.type === "blockquote") {
+        const first = node.children?.[0];
+        const text =
+          first?.type === "paragraph" ? first.children?.[0] : undefined;
+        const match =
+          text?.type === "text" ? CALLOUT_MARKER.exec(text.value ?? "") : null;
+        if (first && text && match) {
+          text.value = (text.value ?? "").slice(match[0].length);
+          if (!text.value) first.children = first.children?.slice(1);
+          if (first.children?.[0]?.type === "break") {
+            first.children = first.children.slice(1);
+          }
+          if (!first.children?.length) node.children = node.children?.slice(1);
+          node.data = {
+            hName: "div",
+            hProperties: { "data-callout": match[1].toLowerCase() },
+          };
+        }
+      }
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+  };
+}
+
+type HastNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+function hastText(node: HastNode | undefined): string {
+  if (!node) return "";
+  if (node.type === "text") return node.value ?? "";
+  return (node.children ?? []).map(hastText).join("");
+}
+
+// Numbers, measurements and codes read better right-aligned in tabular
+// figures: "12.5", "-3 %", "24 V", "1,200 rpm", "±0.02 mm".
+const NUMERIC_CELL =
+  /^[±+\-−~≈]?\s*\d[\d\s.,]*\s*(%|°C?|[a-zA-Zµ/²³]{1,5})?(\s*\/\s*\d[\d\s.,]*)?$/;
+
+// Marks table columns whose body cells are mostly numbers, so the whole
+// column (header included) is right-aligned in tabular figures. Per
+// cell detection left "2179 / 423" hanging left among right-aligned
+// percentages. Columns the author aligned explicitly are left alone.
+function rehypeNumericColumns() {
+  const cellsOf = (row: HastNode) =>
+    (row.children ?? []).filter(
+      (c) => c.type === "element" && (c.tagName === "td" || c.tagName === "th"),
+    );
+  const rowsOf = (node: HastNode | undefined) =>
+    (node?.children ?? []).filter(
+      (c) => c.type === "element" && c.tagName === "tr",
+    );
+  return (tree: HastNode) => {
+    const walk = (node: HastNode) => {
+      if (node.type === "element" && node.tagName === "table") {
+        const part = (tag: string) =>
+          node.children?.find((c) => c.type === "element" && c.tagName === tag);
+        const head = rowsOf(part("thead"));
+        const body = rowsOf(part("tbody"));
+        const width = Math.max(0, ...body.map((r) => cellsOf(r).length));
+        for (let col = 0; col < width; col++) {
+          const texts = body
+            .map((r) => hastText(cellsOf(r)[col]).trim())
+            .filter(Boolean);
+          const numeric = texts.filter((t) => NUMERIC_CELL.test(t)).length;
+          if (!texts.length || numeric / texts.length < 0.6) continue;
+          for (const row of [...head, ...body]) {
+            const cell = cellsOf(row)[col];
+            if (!cell || cell.properties?.align) continue;
+            cell.properties = { ...cell.properties, dataNumeric: "" };
+          }
+        }
+      }
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+  };
+}
+
+const HEADING_BASE =
+  "font-semibold tracking-tight text-[var(--color-foreground)]";
+
+const linkClass =
+  "font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]";
+
+const TERM_PREFIX = "opti:term/";
+
+// Whether the answer is still streaming. Carried by context rather than
+// through buildComponents so the end of a stream does not rebuild the
+// renderers and remount the whole answer.
+const StreamingContext = createContext(false);
+
+function FenceBlock({
+  lang,
+  source,
+  onAsk,
+}: {
+  lang: string | undefined;
+  source: string;
+  onAsk?: (q: string) => void;
+}) {
+  const streaming = useContext(StreamingContext);
+  switch (lang) {
+    case "chart":
+      return <ChartBlock source={source} streaming={streaming} />;
+    case "kpi":
+    case "kpis":
+      return <KpiBlock source={source} streaming={streaming} />;
+    case "questions":
+    case "followups":
+      // Half-written questions would be clickable mid-stream.
+      return streaming ? null : (
+        <QuestionsBlock source={source} onAsk={onAsk} />
       );
-    }
-    return (
-      <a
+    default:
+      return <CodeBlock language={lang} code={source} />;
+  }
+}
+
+// `node: _node` pulls the hast node out of the props so it is not
+// spread onto a DOM element as an attribute.
+/* eslint-disable @typescript-eslint/no-unused-vars */
+function buildComponents({
+  onCallService,
+  onAsk,
+  withHeadingIds,
+}: {
+  onCallService?: () => void;
+  onAsk?: (q: string) => void;
+  withHeadingIds?: boolean;
+}): Components {
+  return {
+    p: ({ className, node: _node, ...props }) => (
+      <p
+        className={cn("my-3 first:mt-0 last:mb-0 leading-[1.65]", className)}
+        {...props}
+      />
+    ),
+    h1: ({ className, node: _node, ...props }) => (
+      <h1
         className={cn(
-          "font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]",
+          "mt-8 mb-3 first:mt-0 text-[1.45em] leading-tight",
+          HEADING_BASE,
           className,
         )}
-        href={href}
-        target="_blank"
-        rel="noreferrer"
+        {...props}
+      />
+    ),
+    h2: ({ className, node: _node, children, ...props }) => (
+      <h2
+        id={withHeadingIds ? slugify(flattenChildren(children)) : undefined}
+        className={cn(
+          "mt-7 mb-3 first:mt-0 text-[1.25em] leading-snug",
+          withHeadingIds && "scroll-mt-6",
+          HEADING_BASE,
+          className,
+        )}
         {...props}
       >
         {children}
-      </a>
-    );
-  },
-  img: ({ className, src, alt, ...props }) => {
-    const assetRef = parseOptiAssetHref(typeof src === "string" ? src : undefined);
-    if (assetRef) {
-      return <InlineAssetImage assetId={assetRef.id} alt={alt ?? ""} />;
-    }
-    // Anything that isn't one of our signed assets is a URL the model
-    // made up or copied from a manual. Never hot-load it as an <img>
-    // (tracking / mixed content / broken boxes) — surface it as a plain
-    // link the operator can choose to open.
-    const href = typeof src === "string" ? src : "";
-    if (!href) return null;
-    void className;
-    void props;
-    return (
-      <a
-        className="font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]"
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {alt || href}
-      </a>
-    );
-  },
-  code: ({ className, children, ...props }) => {
-    const isBlock = /\n/.test(String(children ?? ""));
-    if (isBlock) {
+      </h2>
+    ),
+    h3: ({ className, node: _node, ...props }) => (
+      <h3
+        className={cn(
+          "mt-6 mb-2 first:mt-0 text-[1.08em] leading-snug",
+          HEADING_BASE,
+          className,
+        )}
+        {...props}
+      />
+    ),
+    h4: ({ className, node: _node, ...props }) => (
+      <h4
+        className={cn(
+          "mt-5 mb-1.5 first:mt-0 text-[0.8em] font-semibold uppercase tracking-[0.06em] text-[var(--ds-grey-medium-05)]",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    ul: ({ className, node: _node, ...props }) => (
+      <ul
+        className={cn(
+          "my-3 first:mt-0 last:mb-0 list-none space-y-1.5 [&_ul]:mt-1.5 [&_ul]:mb-0 [&_ol]:mt-1.5 [&_ol]:mb-0",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    // Numbered lists render as step badges via a CSS counter, which reads
+    // far better for procedures than a bare "1." marker.
+    ol: ({ className, node: _node, start, style, ...props }) => (
+      <ol
+        start={start}
+        style={{
+          ...style,
+          counterReset: `step ${typeof start === "number" ? start - 1 : 0}`,
+        }}
+        className={cn(
+          "my-3 first:mt-0 last:mb-0 list-none space-y-2.5",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    li: ({ className, node: _node, children, ...props }) => {
+      const isTask = className?.includes("task-list-item");
       return (
-        <code
+        <li
           className={cn(
-            "block font-mono text-[12.5px] leading-[1.55]",
+            "relative leading-[1.6]",
+            isTask
+              ? "flex items-start gap-2.5"
+              : [
+                  // Bullet
+                  "pl-5 before:absolute before:left-1 before:top-[0.68em] before:h-[6px] before:w-[6px] before:rounded-full before:bg-[var(--color-accent)]/70",
+                  // Step badge when the parent is an <ol>
+                  "[ol>&]:pl-9 [ol>&]:[counter-increment:step] [ol>&]:before:content-[counter(step)]",
+                  "[ol>&]:before:left-0 [ol>&]:before:top-[0.12em] [ol>&]:before:flex [ol>&]:before:h-[2.1em] [ol>&]:before:w-[2.1em]",
+                  "[ol>&]:before:items-center [ol>&]:before:justify-center [ol>&]:before:rounded-full",
+                  "[ol>&]:before:bg-[var(--color-brand)] [ol>&]:before:text-[0.7em] [ol>&]:before:font-semibold [ol>&]:before:leading-none",
+                  "[ol>&]:before:text-white [ol>&]:before:tabular-nums",
+                ],
             className,
           )}
           {...props}
         >
           {children}
-        </code>
+        </li>
       );
-    }
-    return (
-      <code
+    },
+    // GFM task list checkbox. Read-only: a chat answer is not a form.
+    input: ({ checked, type }) => {
+      if (type !== "checkbox") return null;
+      return (
+        <span
+          aria-hidden
+          className={cn(
+            "mt-[0.3em] inline-flex h-[1.05em] w-[1.05em] shrink-0 items-center justify-center rounded-[4px] border",
+            checked
+              ? "border-[var(--ds-green)] bg-[var(--ds-green)] text-white"
+              : "border-[var(--ds-grey-light-03)] bg-[var(--color-surface)]",
+          )}
+        >
+          {checked && (
+            <Check className="h-[0.75em] w-[0.75em]" strokeWidth={3} />
+          )}
+        </span>
+      );
+    },
+    strong: ({ className, node: _node, ...props }) => (
+      <strong
         className={cn(
-          "rounded-[6px] bg-[var(--color-subtle)] px-[5px] py-[1px] font-mono text-[0.88em] text-[var(--color-accent)]",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-      </code>
-    );
-  },
-  pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "my-3 overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-subtle)] p-3 text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  blockquote: ({ className, ...props }) => (
-    <blockquote
-      className={cn(
-        "my-3 border-l-2 border-[var(--color-accent)]/50 bg-[var(--color-muted)] px-3 py-2 text-[var(--color-muted-foreground)] italic",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  hr: ({ className, ...props }) => (
-    <hr
-      className={cn(
-        "my-4 border-0 border-t border-[var(--color-hairline)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  table: ({ className, ...props }) => (
-    <div className="my-3 overflow-x-auto">
-      <table
-        className={cn(
-          "w-full border-collapse text-[13.5px]",
+          "font-semibold text-[var(--color-foreground)]",
           className,
         )}
         {...props}
       />
-    </div>
-  ),
-  thead: ({ className, ...props }) => (
-    <thead
-      className={cn(
-        "border-b border-[var(--color-border)] text-left",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  th: ({ className, ...props }) => (
-    <th
-      className={cn(
-        "px-3 py-1.5 font-semibold text-[var(--color-foreground)]",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  td: ({ className, ...props }) => (
-    <td
-      className={cn(
-        "border-b border-[var(--color-hairline)] px-3 py-1.5 align-top",
-        className,
-      )}
-      {...props}
-    />
-  ),
-};
+    ),
+    em: ({ className, node: _node, ...props }) => (
+      <em className={cn("italic", className)} {...props} />
+    ),
+    del: ({ className, node: _node, ...props }) => (
+      <del
+        className={cn(
+          "text-[var(--color-muted-foreground)] decoration-[var(--color-muted-foreground)]/60",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    a: ({ className, href, children, node: _node, ...props }) => {
+      if (href === CALL_SERVICE_HREF) {
+        // No escalation handler in this context (fleet scope, legal
+        // pages): the sentinel must not become a dead link.
+        if (!onCallService) return <span>{children}</span>;
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              onCallService();
+            }}
+            className={cn(
+              buttonClasses({ variant: "secondary", size: "sm" }),
+              "mx-0.5 align-baseline gap-1",
+            )}
+          >
+            <Wrench className="h-3 w-3" />
+            {children}
+          </button>
+        );
+      }
+      if (href?.startsWith(TERM_PREFIX)) {
+        const kind = href.slice(TERM_PREFIX.length);
+        if (isTermKind(kind)) {
+          return <TermChip kind={kind}>{children}</TermChip>;
+        }
+        return <strong className="font-semibold">{children}</strong>;
+      }
+      const docRef = parseOptiDocHref(href);
+      if (docRef) {
+        return (
+          <InlineDocLink href={href ?? ""} page={docRef.page}>
+            {children}
+          </InlineDocLink>
+        );
+      }
+      // Footnote references and back links stay in-page.
+      if (href?.startsWith("#")) {
+        return (
+          <a
+            className={cn(linkClass, "no-underline", className)}
+            href={href}
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      }
+      return (
+        <a
+          className={cn(linkClass, className)}
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    },
+    img: ({ src, alt }) => {
+      const assetRef = parseOptiAssetHref(
+        typeof src === "string" ? src : undefined,
+      );
+      if (assetRef) {
+        return <InlineAssetImage assetId={assetRef.id} alt={alt ?? ""} />;
+      }
+      // Anything that isn't one of our signed assets is a URL the model
+      // made up or copied from a manual. Never hot-load it as an <img>
+      // (tracking, mixed content, broken boxes). Surface it as a plain
+      // link the operator can choose to open.
+      const href = typeof src === "string" ? src : "";
+      if (!href) return null;
+      return (
+        <a className={linkClass} href={href} target="_blank" rel="noreferrer">
+          {alt || href}
+        </a>
+      );
+    },
+    // Inline code only: fenced blocks are taken over by `pre` below, so
+    // this renderer never sees them.
+    code: ({ className, node: _node, ...props }) => (
+      <code
+        className={cn(
+          "rounded-[5px] border border-[var(--color-hairline)] bg-[var(--ds-grey-light-01)] px-[5px] py-[1px] font-mono text-[0.84em] text-[var(--ds-grey-medium-06)]",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    // Fenced blocks. The fence language picks the renderer: rich blocks
+    // (chart, kpi, questions) or a highlighted code block.
+    pre: ({ node }) => {
+      const codeEl = (node as HastNode | undefined)?.children?.find(
+        (c) => c.type === "element" && c.tagName === "code",
+      );
+      const classes =
+        (codeEl?.properties?.className as string[] | undefined) ?? [];
+      const lang = classes
+        .find((c) => typeof c === "string" && c.startsWith("language-"))
+        ?.slice("language-".length)
+        .toLowerCase();
+      const source = hastText(codeEl);
+      return <FenceBlock lang={lang} source={source} onAsk={onAsk} />;
+    },
+    div: ({ node: _node, children, ...props }) => {
+      const kind = (props as Record<string, unknown>)["data-callout"];
+      if (typeof kind === "string" && isCalloutKind(kind)) {
+        return <Callout kind={kind}>{children}</Callout>;
+      }
+      return <div {...props}>{children}</div>;
+    },
+    blockquote: ({ className, node: _node, ...props }) => (
+      <blockquote
+        className={cn(
+          "my-4 border-l-[3px] border-[var(--ds-grey-light-03)] pl-4 text-[var(--ds-grey-medium-05)]",
+          "[&>p]:my-1.5",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    hr: ({ className, node: _node, ...props }) => (
+      <hr
+        className={cn(
+          "my-6 border-0 border-t border-[var(--color-hairline)]",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    table: ({ className, node: _node, ...props }) => (
+      <div className="my-4 overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
+        <table
+          className={cn(
+            "w-full border-collapse text-[0.84em] leading-[1.5]",
+            className,
+          )}
+          {...props}
+        />
+      </div>
+    ),
+    thead: ({ className, node: _node, ...props }) => (
+      <thead
+        className={cn("bg-[var(--ds-panel-header-bg)] text-left", className)}
+        {...props}
+      />
+    ),
+    tbody: ({ className, node: _node, ...props }) => (
+      <tbody
+        className={cn(
+          "[&>tr:nth-child(even)]:bg-[var(--ds-grey-light-01)] [&>tr]:transition-colors [&>tr:hover]:bg-[var(--ds-table-blue-hover)]",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    th: ({ className, node: _node, ...props }) => (
+      <th
+        className={cn(
+          "whitespace-nowrap border-b border-[var(--color-border)] px-3.5 py-2.5 text-[0.86em] font-semibold uppercase tracking-[0.04em] text-[var(--ds-grey-medium-05)]",
+          "data-[numeric]:text-right",
+          className,
+        )}
+        {...props}
+      />
+    ),
+    td: ({ className, node: _node, style, ...props }) => {
+      const numeric = "data-numeric" in props;
+      return (
+        <td
+          style={style}
+          className={cn(
+            "border-b border-[var(--color-hairline)] px-3.5 py-2.5 align-top [tr:last-child>&]:border-b-0",
+            numeric && "text-right tabular-nums whitespace-nowrap",
+            className,
+          )}
+          {...props}
+        />
+      );
+    },
+    sup: ({ className, node: _node, ...props }) => (
+      <sup
+        className={cn("ml-0.5 text-[0.7em] font-semibold", className)}
+        {...props}
+      />
+    ),
+    section: ({ className, node: _node, ...props }) => (
+      <section
+        className={cn(
+          className?.includes("footnotes") &&
+            "mt-6 border-t border-[var(--color-hairline)] pt-3 text-[0.82em] text-[var(--color-muted-foreground)] [&_h2]:sr-only [&_ol]:space-y-1",
+          className,
+        )}
+        {...props}
+      />
+    ),
+  };
+}
+
+/* eslint-enable @typescript-eslint/no-unused-vars */
+
+// Single dollars stay literal: "$20 to $30" in a price answer must not
+// turn into a formula. Math is `$$...$$`, inline or on its own lines.
+const REMARK_PLUGINS: PluggableList = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkCallouts,
+];
+const REHYPE_PLUGINS: PluggableList = [
+  [rehypeKatex, { throwOnError: false, strict: "ignore" }],
+  rehypeNumericColumns,
+];
 
 export function Markdown({
   children,
   className,
   onCallService,
+  onAsk,
   withHeadingIds,
+  streaming = false,
 }: {
   children: string;
   className?: string;
+  // True while the answer is still arriving: unfinished chart and KPI
+  // JSON shows a placeholder instead of an error.
+  streaming?: boolean;
   onCallService?: () => void;
+  // Sends a follow-up question as the next user message. When absent,
+  // a questions block renders as plain text.
+  onAsk?: (q: string) => void;
   // When true, h2 elements get an id derived from their text content so
   // anchor navigation works (used by the legal pages' table of contents).
   withHeadingIds?: boolean;
 }) {
-  const components = useMemo<Components>(() => {
-    let result: Components = baseComponents;
-
-    if (withHeadingIds) {
-      result = {
-        ...result,
-        h2: ({ className: hClass, children: hChildren, ...rest }) => (
-          <h2
-            id={slugify(flattenChildren(hChildren))}
-            className={cn(
-              "mt-6 mb-3 first:mt-0 scroll-mt-6 text-[22px] font-semibold tracking-tight text-[var(--color-foreground)]",
-              hClass,
-            )}
-            {...rest}
-          >
-            {hChildren}
-          </h2>
-        ),
-      };
-    }
-
-    if (onCallService) {
-      result = {
-        ...result,
-        a: ({ className: aClass, href, children: aChildren, ...rest }) => {
-          if (href === CALL_SERVICE_HREF) {
-            return (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onCallService();
-                }}
-                className={cn(
-                  buttonClasses({ variant: "secondary", size: "sm" }),
-                  "mx-0.5 align-baseline gap-1",
-                )}
-              >
-                <Wrench className="h-3 w-3" />
-                {aChildren}
-              </button>
-            );
-          }
-          const docRef = parseOptiDocHref(href);
-          if (docRef) {
-            return (
-              <InlineDocLink href={href ?? ""} page={docRef.page}>
-                {aChildren}
-              </InlineDocLink>
-            );
-          }
-          return (
-            <a
-              className={cn(
-                "font-medium text-[var(--color-accent)] underline decoration-[var(--color-accent)]/30 underline-offset-2 hover:decoration-[var(--color-accent)]",
-                aClass,
-              )}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              {...rest}
-            >
-              {aChildren}
-            </a>
-          );
-        },
-      };
-    }
-
-    return result;
-  }, [onCallService, withHeadingIds]);
-
-  // The escalation pill only renders where the model explicitly emits
-  // the `opti:call-service` link — blanket-matching the word "service"
-  // in prose turned phrases like "service manual" into buttons.
-  const plugins = useMemo(() => [remarkGfm], []);
+  // Callers pass fresh inline handlers on every render. Rebuilding the
+  // renderers for each one would remount the whole answer on every
+  // streamed token (images refetch, charts flicker), so the handlers
+  // live in refs and the renderers only change when one appears or
+  // disappears.
+  const callServiceRef = useRef(onCallService);
+  const askRef = useRef(onAsk);
+  useEffect(() => {
+    callServiceRef.current = onCallService;
+    askRef.current = onAsk;
+  });
+  const hasCallService = !!onCallService;
+  const hasAsk = !!onAsk;
+  const callService = useCallback(() => callServiceRef.current?.(), []);
+  const ask = useCallback((q: string) => askRef.current?.(q), []);
+  const components = useMemo(
+    () =>
+      // The refs are read only inside click handlers, never during render.
+      // eslint-disable-next-line react-hooks/refs
+      buildComponents({
+        onCallService: hasCallService ? callService : undefined,
+        onAsk: hasAsk ? ask : undefined,
+        withHeadingIds,
+      }),
+    [hasCallService, hasAsk, withHeadingIds, callService, ask],
+  );
 
   return (
     <div
       className={cn(
         "text-[16px] leading-[1.6] text-[var(--color-foreground)] break-words sm:text-[19px] sm:leading-[1.7]",
+        "[&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-1",
         className,
       )}
     >
+      <StreamingContext.Provider value={streaming}>
       <ReactMarkdown
-        remarkPlugins={plugins}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
         components={components}
         urlTransform={(url) =>
           url.startsWith("opti:") ? url : defaultUrlTransform(url)
@@ -533,6 +800,7 @@ export function Markdown({
       >
         {children}
       </ReactMarkdown>
+      </StreamingContext.Provider>
     </div>
   );
 }

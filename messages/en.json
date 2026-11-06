@@ -1306,5 +1306,15 @@
     "linkedBody": "Linked to {machine}, code {code}.",
     "openChat": "Open chat",
     "nextStickerHint": "Activating more stickers? Just scan the next one."
+  },
+  "markdown": {
+    "callout": {
+      "note": "Note",
+      "tip": "Tip",
+      "important": "Important",
+      "warning": "Warning",
+      "caution": "Caution"
+    },
+    "followUps": "Follow-up questions"
   }
 }
