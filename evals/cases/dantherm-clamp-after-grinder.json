@@ -1,0 +1,17 @@
+{
+  "id": "dantherm-clamp-after-grinder",
+  "about": "Production conversation a077f5ad (2026-10-30), Dantherm machine 10001. The operator first asked about grinding special tools (correctly answered from the ANB-2T grinder manual), then asked which button opens the clamps. The model stayed anchored on the grinder, said the grinder has no clamps and no such button, and only answered after the operator added 'on the punch press'. The answer lives in 840_3_DK (Finn-Power punch press, Siemens 840D): the CLAMP SETUP function key on the remote panel (A and F series; SKIP BLOCK on SG machines). This uses mode 'pushback' purely as a two-turn follow-up: the second message is not a wrong correction, it is the real follow-up question.",
+  "machineId": "7539cad3-2a4a-44ac-b4ac-08d73a94b317",
+  "question": "Hvordan skal slibe specialværktøjer",
+  "mode": "pushback",
+  "pushback": "Hvilken knap bruges til at åbne klør?",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "anyOf", "patterns": ["ANB-2T", "slibe", "sliber", "grinder"], "label": "turn 1 answers about grinding (ANB-2T is correct here)" }
+  ],
+  "assertAfterPushback": [
+    { "type": "toolCalled", "name": "search_kb", "label": "searches again for the new question instead of reusing turn 1 context" },
+    { "type": "matches", "pattern": "CLAMP\\s*SETUP", "label": "names the CLAMP SETUP key from 840_3_DK" },
+    { "type": "notMatches", "pattern": "ingen (kl[øo]er|knap)|kan ikke finde|no (clamps|button)", "label": "does not claim there are no clamps / no button (the grinder-anchored answer)" }
+  ]
+}

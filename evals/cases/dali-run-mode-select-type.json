@@ -1,0 +1,14 @@
+{
+  "id": "dali-run-mode-select-type",
+  "about": "Production conversation 79ca51ae (2026-10-05), Dali Testcenter 1. The operator had tested a Rubikore 8 with the Rubikore 6 program (Type: RUBK_6 4 B) and asked twice how to pick the right test program in RUN mode. The model said the manual did not cover it (best match under its threshold), guessed at menu paths, and the operator gave up and asked a colleague. P900proV1m does cover it, section 'Run Speaker Tests' (printed p. 125): entering 'Run' from the main menu shows the available speaker setups; select a valid type by entering an existing type name; with the system multiplexer on, select one type per system. Page assertions are left out on purpose: every P900proV1m chunk has page_from 1, so pageInRetrieval would pass for almost any chunk.",
+  "machineId": "d36f90db-2e85-473d-bd98-08df1ed2e1ab",
+  "question": "Hvordan vælger jeg testprogram i RUN-mode?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "anyOf", "patterns": ["main menu", "hovedmenu", "Run Speaker Tests"], "label": "enters Run from the main menu, as the manual says" },
+    { "type": "anyOf", "patterns": ["type ?name", "typenavn", "type-?navn", "navn(et)? p[åa] (en |den )?type", "existing type", "eksisterende type"], "label": "select by entering an existing type name" },
+    { "type": "notMatches", "pattern": "kollega|colleague", "label": "does not send the operator to a colleague" },
+    { "type": "notMatches", "pattern": "d[æa]kker ikke|ikke (beskrevet|d[æa]kket)|under (min )?t[æa]rskel", "label": "does not claim the manual lacks it" }
+  ]
+}

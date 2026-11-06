@@ -150,8 +150,29 @@ pushback, chunks from both turns count as the manual's text.
 | Cross-lingual | `nx502-crosslingual-dip-safe-mode` | Danish question with no English keywords against the English manual; the vector branch alone must reach section 3-1-3 |
 | Infra failure | `nx502-infra-voyage-down` | Voyage down: keyword-only `search_kb_multi` still finds the switch table and the turn does not error |
 
-All cases derive from OMRON W629-E1-09 section 3-1-3, whose content is
-verified against the manual page for page.
+The `nx502-*` cases derive from OMRON W629-E1-09 section 3-1-3, whose
+content is verified against the manual page for page.
+
+### Production regressions (fixed machines)
+
+These come from real operator conversations and name their own
+`machineId`, so they run against production machines regardless of
+`EVAL_MACHINE_ID`. Expected answers were checked against the indexed
+chunk text in `kb_chunks`.
+
+| Category | Case | Machine | Guards |
+|---|---|---|---|
+| Topic switch | `dantherm-clamp-after-grinder` | Dantherm 10001 | Two turns (uses `mode: "pushback"` as a plain follow-up). After a grinding question answered from the ANB-2T manual, "which button opens the clamps" must be answered from 840_3_DK (CLAMP SETUP), not "the grinder has no clamps" |
+| Not in index | `dantherm-gcodes-no-invention` | Dantherm 10001 | 840_3_DK's G-code tables (6.1.7, 6.1.9, pp. 66 to 69) are missing from the broken extraction. Must point at those sections and name no G-code beyond G1/G54. **Expected to fail once the manual is reprocessed**; replace it then with a positive case from the verified table |
+| False refusal | `dali-run-mode-select-type` | Dali Testcenter 1 | P900proV1m "Run Speaker Tests": enter Run from the main menu, select by existing type name. Must not say the manual lacks it or send the operator to a colleague |
+
+Page assertions are left out of these on purpose. Both 840_3_DK and
+P900proV1m are indexed with `page_from = 1` on every chunk, so
+`pageInRetrieval` would pass for almost any chunk.
+
+Screenshot cases (the Dali curve images in conversation 79ca51ae, where
+the operator's next message names the real fault) are not written: the
+harness sends text only and has no way to attach `attachmentIds`.
 
 The plan targets 30 to 50 cases across alarm codes, torque values and
 parameter ranges. Those are **not** written, and deliberately so: a golden

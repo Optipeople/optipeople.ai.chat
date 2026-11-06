@@ -1,0 +1,17 @@
+{
+  "id": "dantherm-gcodes-no-invention",
+  "about": "Production conversation 408a5904 (2026-10-28), Dantherm machine 10001. The G-code tables are in 840_3_DK section 6.1.7 'G-koder og specialkoder' (p. 66) and 6.1.9 'Programmering af G-koder' (p. 68 to 69), but the current extraction of that manual is broken: 13 chunks for 83 pages, every chunk has page_from 1, long runs of '[Blank page]', and the only G-codes in the indexed text are G1 and G54 (the 'G funktioner' display example). The page images also came back blank. In production the model correctly refused to guess. This case pins that: point at 6.1.7 / 6.1.9, say the table is not available, and name no G-code other than G1/G01/G54. When 840_3_DK is reprocessed and the codes on pp. 66 to 69 have been read off the page, this case is EXPECTED TO FAIL (the right answer will then list codes); replace it with a positive case built from the verified table.",
+  "machineId": "7539cad3-2a4a-44ac-b4ac-08d73a94b317",
+  "question": "Hvilke G-koder understøtter maskinen?",
+  "mode": "single",
+  "assert": [
+    { "type": "toolCalled", "name": "search_kb" },
+    { "type": "anyOf", "patterns": ["6\\.1\\.7", "6\\.1\\.9", "side 6[6-9]", "page 6[6-9]"], "label": "points at the G-code sections of 840_3_DK" },
+    {
+      "type": "anyOf",
+      "patterns": ["ikke indeholder", "indeholder ikke", "kan ikke give", "kan ikke finde", "findes ikke", "ikke (i|tilg[æa]ngelig|med)", "blank", "not (in|available|included)", "does ?n[o']t (contain|include)"],
+      "label": "says the G-code table is not available in what it retrieved"
+    },
+    { "type": "notMatches", "pattern": "\\bG(?!0*1\\b|54\\b)\\d+\\b", "flags": "", "label": "names no G-code beyond G1/G01/G54 (anything else is invented)" }
+  ]
+}
