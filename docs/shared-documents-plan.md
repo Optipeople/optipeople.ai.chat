@@ -126,7 +126,7 @@ Key decisions:
 ## 6. Safety principles (non-negotiable)
 
 1. **Expand, then switch, never contract (in this project).** Phases 1 and 2 only add columns, tables, functions and triggers.
-2. **Rehearse on a copy first.** Every migration and every parity script runs against a restored copy of production before it runs on production (Phase 0).
+2. **Rehearse on a copy first.** Every migration and every parity script runs against a restored copy of production before it runs on production (Phase 0). **Anything that can delete or rewrite existing data is a hard gate: it does not run on production until its rehearsal checklist has passed on the copy (§8.5).** In this plan that is all of Phase 4 and, if it ever happens, Phase 6. No rehearsal copy means no Phase 4.
 3. **The database guarantees the link exists.** An `AFTER INSERT` trigger on `kb_documents` creates the home link. Every insert path is covered without touching that code. The backfill runs after the trigger is created, so in-flight ingests during the migration are covered either way.
 4. **Reads switch behind a database flag, with rollback in under a minute and no deploy.** New SQL functions live beside the old ones; the old ones are never modified.
 5. **The old read path stays correct until Phase 6.** Both sides are kept in sync (home machine, folder, visibility), so turning the flag off never shows stale folders or re-exposes a document an admin hid from operators.
@@ -307,6 +307,8 @@ Exit criteria: default on for at least one week, §8 parity green, no access err
 
 Three steps, in this order. Do not combine them into one deploy.
 
+**This is the only phase that deletes or rewrites existing data. Each step runs on production only after the destructive rehearsal in §8.5 has passed on the copy, with the result written down.**
+
 **Step 1, migration B1 (additive): SQL functions and the reverse mirror.**
 
 - Reverse mirror trigger on `machine_documents` (`after update of folder_path, operator_visible`): copy to `kb_documents` when the link is the home link, guarded with `is distinct from` so the two mirrors cannot loop. From here the document's columns equal the home link no matter which side is written.
@@ -430,6 +432,28 @@ Also record `explain analyze` timings for both, warm and cold. And once, on the 
 - The chat system prompt for each machine is byte-identical with the flag off and on (log a hash of the system block in a one-off script).
 - Manual smoke per phase, on the rehearsal copy first: upload PDF/image/xlsx, ask with citations, open cited page, QR session view, operator document list, fleet chat and drawer, voice, move to folder, toggle visibility, reprocess, delete, delete machine. From Phase 4 also: delete a machine that is the home of a shared document, then reprocess that document from the other machine.
 
+### 8.5 Destructive rehearsal (hard gate for Phase 4, and for Phase 6 if it happens)
+
+Run on the rehearsal copy, refreshed from a recent production backup, with the exact migrations and the exact build that will go to production. Record the outcome of every line in the pull request. Any failure stops the phase.
+
+Before each run, snapshot on the copy: row counts of `kb_documents`, `kb_chunks`, `kb_assets`, `machine_documents`, `kb_folders` per machine, and the list of storage objects in `kb-documents` and `kb-images`. After each action, diff against the snapshot. **Exactly the expected rows and files are gone, and nothing else.**
+
+1. **Remove an unshared document from its machine.** Its row, chunks, assets, file and sidecar are gone. Every other document on the machine is untouched and still answers.
+2. **Remove a shared document from a non-home machine.** Only the link is gone. The document, chunks and file are intact and it still answers on the other machines.
+3. **Remove a shared document from its home machine.** The document is rehomed; chunks and assets follow; folder and visibility match the new home link; the file is intact; it still answers on the remaining machines and no longer on the old one.
+4. **Delete everywhere** on a shared document. Gone on every machine; one file removed.
+5. **Delete a machine with only unshared documents.** Same end state as today's delete: no rows, no files, no folders left for that machine.
+6. **Delete the largest machine** (6,062 chunks). Completes inside the statement timeout.
+7. **Delete a machine that is the home of shared documents.** Those documents survive, rehomed; then reprocess one of them from another machine and confirm it finishes.
+8. **Delete a machine while one of its documents is mid-ingest.** No orphan row, no crash loop in the sweep.
+9. **Link and unlink the same document at the same time** (two sessions, repeated). Never a document without links, never a link without a document.
+10. **Kill the request between the database call and the storage removal.** Rows are gone, files remain, and the orphan script lists exactly those files.
+11. **`resetMachineKb` from the CLI** on a machine with a shared document. The shared document survives.
+12. **Migration B2 ordering.** With the old build still deployed on the copy, confirm that a machine delete after B2 would fail after removing files. This proves why B2 must come last, and that the production order is right.
+13. After all of the above: every §8.1 invariant returns zero rows, and the search snapshot (§8.3) for every untouched machine is identical to before.
+
+Then, on production, apply each step with the same build, run §8.1 immediately, and do the first real delete on our own test account before any customer does one.
+
 ## 9. Risks and edge cases
 
 1. **Machine delete destroying shared files.** Today it sweeps the `${id}/` storage prefix. Fixed in Phase 4 by deleting only the files of documents that lost their last link.
@@ -467,7 +491,7 @@ Inputs needed before planning: Kristian's actual KF1/KF2 pairs, and timing of wh
 
 ## 11. Open decisions for review
 
-- **D1. Rehearsal database.** A second Supabase project restored from backup, for the length of the project. Has a cost. Recommended; without it every migration is tested on production.
+- **D1. Rehearsal database: decided 2026-11-10, required.** A second Supabase project restored from backup, for the length of the project. Has a cost. Still to settle: who creates it and when it is torn down. It holds customer documents, so it needs the same access restrictions as production and must be deleted when the project ends.
 - **D2. Who may "delete everywhere"?** Recommended: any admin of the account, with a confirm listing the machines.
 - **D3. Rehome choice** when the home link is removed: oldest remaining link (recommended, deterministic).
 - **D4. Same-machine exact duplicates** (36 today): offer a one-off cleanup tool, or leave them?
