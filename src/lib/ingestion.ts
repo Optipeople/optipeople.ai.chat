@@ -1241,11 +1241,27 @@ async function runPdfPipelineSteps(
 const INSERT_BATCH = 25;
 const INSERT_ROW_ATTEMPTS = 3;
 
+// Postgres text cannot hold NUL, and PostgREST rejects a JSON body with a
+// lone UTF-16 surrogate escape; both fail the insert with "unsupported
+// Unicode escape sequence". Extracted PDF text does contain them (a
+// Dantherm manual did at chunk 215). Cleaned at write time only, so the
+// chunk list, and with it resume ordinals, stays exactly what chunkText
+// produced.
+const UNSTORABLE_CHARS =
+  /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function storableText(text: string): string {
+  return text.replace(UNSTORABLE_CHARS, "");
+}
+
 export async function insertChunkRows(
-  rows: { ordinal: number }[],
+  rows: { ordinal: number; text?: string }[],
   firstOrdinal: number,
 ): Promise<void> {
   const supabase = getSupabaseServerClient();
+  rows = rows.map((r) =>
+    typeof r.text === "string" ? { ...r, text: storableText(r.text) } : r,
+  );
   const write = async (slice: { ordinal: number }[]): Promise<void> => {
     let lastMessage = "";
     for (let attempt = 1; attempt <= INSERT_ROW_ATTEMPTS; attempt++) {
