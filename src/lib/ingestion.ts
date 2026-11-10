@@ -1098,22 +1098,7 @@ async function runPdfPipelineSteps(
         embedding_model: VOYAGE_MODEL,
       }));
       await assertRunOwner(documentId, runId);
-      const INSERT_BATCH = 50;
-      for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-        const slice = rows.slice(i, i + INSERT_BATCH);
-        // Upsert + ignoreDuplicates: a ghost that already wrote these
-        // ordinals (or this run re-embedding after a mid-batch crash)
-        // leaves the existing rows alone instead of duplicating them.
-        const { error } = await supabase.from("kb_chunks").upsert(slice, {
-          onConflict: "document_id,ordinal,embedding_model",
-          ignoreDuplicates: true,
-        });
-        if (error) {
-          throw new Error(
-            `kb_chunks insert failed at ordinal ${next + i}: ${error.message}`,
-          );
-        }
-      }
+      await insertChunkRows(rows, next);
       next += batch.length;
       await writeProgress(
         documentId,
@@ -1180,6 +1165,53 @@ async function runPdfPipelineSteps(
     storagePath,
     extractionSource: sidecar.source,
   };
+}
+
+// Writes embedded chunk rows in slices. Each row carries a 1024-dim vector
+// (HNSW index) and a generated tsvector (GIN index), so a slice of dense
+// table chunks can blow the database statement timeout, especially while
+// another document is inserting too: a Kvik parts list failed that way at
+// 50 rows. A slice that fails is halved and retried, down to single rows,
+// with a short pause, before the error is surfaced.
+//
+// Upsert + ignoreDuplicates: a ghost that already wrote these ordinals (or
+// this run re-embedding after a mid-batch crash) leaves the existing rows
+// alone instead of duplicating them, which also makes the retries safe.
+const INSERT_BATCH = 25;
+const INSERT_ROW_ATTEMPTS = 3;
+
+async function insertChunkRows(
+  rows: { ordinal: number }[],
+  firstOrdinal: number,
+): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const write = async (slice: { ordinal: number }[]): Promise<void> => {
+    let lastMessage = "";
+    for (let attempt = 1; attempt <= INSERT_ROW_ATTEMPTS; attempt++) {
+      const { error } = await supabase.from("kb_chunks").upsert(slice, {
+        onConflict: "document_id,ordinal,embedding_model",
+        ignoreDuplicates: true,
+      });
+      if (!error) return;
+      lastMessage = error.message;
+      if (slice.length > 1) {
+        const mid = Math.ceil(slice.length / 2);
+        console.warn(
+          `kb_chunks insert of ${slice.length} rows failed (${error.message}); splitting`,
+        );
+        await write(slice.slice(0, mid));
+        await write(slice.slice(mid));
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1_000 * attempt));
+    }
+    throw new Error(
+      `kb_chunks insert failed at ordinal ${slice[0]?.ordinal ?? firstOrdinal}: ${lastMessage}`,
+    );
+  };
+  for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+    await write(rows.slice(i, i + INSERT_BATCH));
+  }
 }
 
 // Runs the best-effort figure pass with a cutoff. Figures are optional
