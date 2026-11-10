@@ -18,11 +18,32 @@ export const VOYAGE_DIMS = 1024;
 const MAX_BATCH = 128;
 const MAX_BATCH_TOKENS = 100_000; // headroom under Voyage's 120k cap
 
-// Conservative token estimate (~3 chars/token). Overestimating just makes
-// batches smaller; underestimating risks a 400 from Voyage.
+// Conservative token estimate. Prose runs ~3 to 4 chars/token, but dense
+// part-number tables (codes, digits, pipes, Danish letters) run closer to
+// 1.3 chars/token: a Kvik parts list hit 221k real tokens in a batch this
+// estimate had put under 100k at 3 chars/token. Characters that are not
+// plain letters or spaces therefore count as a full token each.
+// Overestimating just makes batches smaller; underestimating risks a 400,
+// which embedBatch also survives by splitting the batch.
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3) + 1;
+  let dense = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    const plain =
+      (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c === 32;
+    if (!plain) dense++;
+  }
+  const plainChars = text.length - dense;
+  return Math.ceil(plainChars / 3 + dense) + 1;
 }
+
+// Voyage's 400 when a batch is over the per-request token cap. The text is
+// "The max allowed tokens per submitted batch is 120000".
+function isBatchTokenLimitError(status: number, body: string): boolean {
+  return status === 400 && /tokens per submitted batch/i.test(body);
+}
+
+class BatchTooLargeError extends Error {}
 
 type VoyageInputType = "document" | "query";
 
@@ -129,6 +150,9 @@ async function embedBatch(
 
     const retryable = res.status === 429 || res.status >= 500;
     const text = await res.text();
+    if (isBatchTokenLimitError(res.status, text) && inputs.length > 1) {
+      throw new BatchTooLargeError(`Voyage ${res.status}: ${text}`);
+    }
     if (!retryable || attempt >= MAX_ATTEMPTS) {
       throw new Error(`Voyage ${res.status}: ${text}`);
     }
@@ -138,6 +162,40 @@ async function embedBatch(
       `  Voyage ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS}); sleeping ${Math.round(delayMs / 1000)}s`,
     );
     await new Promise((r) => setTimeout(r, delayMs));
+  }
+}
+
+// embedBatch, but a batch Voyage rejects as over its token cap is halved
+// and each half sent on its own, recursively. The estimate is only an
+// estimate; this is what guarantees an unusual document still embeds.
+// Order is preserved, so result[i] belongs to inputs[i].
+async function embedBatchSplitting(
+  inputs: string[],
+  inputType: VoyageInputType,
+  usage?: UsageAttribution,
+  policy: EmbedPolicy = INGEST_POLICY,
+): Promise<number[][]> {
+  try {
+    return await embedBatch(inputs, inputType, usage, policy);
+  } catch (err) {
+    if (!(err instanceof BatchTooLargeError)) throw err;
+    const mid = Math.ceil(inputs.length / 2);
+    console.warn(
+      `  Voyage batch of ${inputs.length} over the token cap; splitting in two`,
+    );
+    const left = await embedBatchSplitting(
+      inputs.slice(0, mid),
+      inputType,
+      usage,
+      policy,
+    );
+    const right = await embedBatchSplitting(
+      inputs.slice(mid),
+      inputType,
+      usage,
+      policy,
+    );
+    return [...left, ...right];
   }
 }
 
@@ -178,7 +236,7 @@ export async function embedDocumentBatch(
   texts: string[],
   usage?: UsageAttribution,
 ): Promise<number[][]> {
-  return embedBatch(texts, "document", usage);
+  return embedBatchSplitting(texts, "document", usage);
 }
 
 export async function embedDocuments(
@@ -190,7 +248,7 @@ export async function embedDocuments(
   const totalBatches = batches.length;
   let batchesDone = 0;
   for (const slice of batches) {
-    const batch = await embedBatch(slice, "document", opts.usage);
+    const batch = await embedBatchSplitting(slice, "document", opts.usage);
     out.push(...batch);
     batchesDone += 1;
     if (opts.onBatchProgress) {
@@ -236,7 +294,7 @@ export async function embedQueries(
 ): Promise<number[][]> {
   const out: number[][] = [];
   for (const slice of planEmbedBatches(texts)) {
-    out.push(...(await embedBatch(slice, "query", usage)));
+    out.push(...(await embedBatchSplitting(slice, "query", usage)));
   }
   return out;
 }
