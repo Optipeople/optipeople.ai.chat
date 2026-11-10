@@ -544,4 +544,4 @@ The first draft was checked against the code (two audits) and the production dat
 | 4 SQL functions, writes, delete semantics, FK change | 3 days | yes, in three steps |
 | 5 Link instead of upload | 2 to 3 days + design | after 4 and the latency budget |
 
-Phases 0 to 4 change nothing the user can see. They are where the production risk lives, and each one is rehearsed on the copy, verified and reversible on its own.
+Apart from the duplicate hint in Phase 2b, Phases 0 to 4 change nothing the user can see. They are where the production risk lives, and each one is rehearsed on the copy, verified and reversible on its own.
