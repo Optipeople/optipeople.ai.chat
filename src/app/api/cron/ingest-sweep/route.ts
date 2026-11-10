@@ -32,16 +32,18 @@ export async function GET(req: Request) {
 
   const startedAt = Date.now();
   try {
-    // Generic files queued for retry first: each is one short pass, and
-    // the PDF sweep below would otherwise spend the whole budget.
-    const files = await resumeQueuedFiles({
-      deadlineAt: startedAt + SWEEP_BUDGET_MS,
-      limit: 2,
-    });
-    const result = await sweepStuckDocuments({
-      deadlineAt: startedAt + SWEEP_BUDGET_MS,
-      limit: 5,
-    });
+    // Generic files queued for retry run alongside the PDF sweep, which
+    // itself resumes several PDFs at once.
+    const [files, result] = await Promise.all([
+      resumeQueuedFiles({
+        deadlineAt: startedAt + SWEEP_BUDGET_MS,
+        limit: 2,
+      }),
+      sweepStuckDocuments({
+        deadlineAt: startedAt + SWEEP_BUDGET_MS,
+        limit: 12,
+      }),
+    ]);
     return Response.json({
       ok: true,
       ...result,

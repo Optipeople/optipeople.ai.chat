@@ -622,7 +622,8 @@ export type SweepResult = {
 /**
  * Server-driven continuation for the cron sweep. Resumes up to `limit`
  * mid-pipeline PDFs that have been silent for at least RESUME_STALE_MS,
- * oldest first, one at a time, until `deadlineAt`. Each resumed document
+ * oldest first, several at once (see SWEEP_CONCURRENCY), until
+ * `deadlineAt`. Each resumed document
  * checkpoints as usual, so a run that ends with { done: false } is simply
  * picked up by the next sweep. Only then flips what has been silent past
  * the stuck thresholds to failed (globally, unlike cleanupStuckDocuments).
@@ -666,14 +667,26 @@ async function resumeStale(
     .limit(opts.limit ?? 5);
   if (error) throw new Error(`sweep lookup failed: ${error.message}`);
 
-  for (const raw of (data ?? []) as {
+  const queue = [...((data ?? []) as {
     id: string;
     machine_id: string;
     storage_path: string;
     byte_size: number | null;
-  }[]) {
-    if (Date.now() >= opts.deadlineAt - STEP_RESERVE_MS) break;
+  }[])];
 
+  // Several documents at once: one at a time drained a backlog of 16 PDFs
+  // at roughly one per 5-minute tick. Memory is the limit, since a run
+  // holds its PDF in memory and pdf.js page analysis of a 90 MB manual
+  // peaked near 900 MB. So concurrency is capped by count AND by the PDF
+  // bytes in flight; a single document always runs, however big.
+  let inFlight = 0;
+  let inFlightBytes = 0;
+  const fits = (bytes: number) =>
+    inFlight === 0 ||
+    (inFlight < SWEEP_CONCURRENCY &&
+      inFlightBytes + bytes <= SWEEP_MAX_INFLIGHT_BYTES);
+
+  const runOne = async (raw: (typeof queue)[number]): Promise<void> => {
     // Only resume what can actually be resumed: a sidecar or the original
     // PDF must still be there. A row with neither is an orphan and the
     // stuck flip will get it eventually. A listing, not a download: the
@@ -681,7 +694,7 @@ async function resumeStale(
     const resumable =
       (await storageObjectExists(extractionSidecarPath(raw.storage_path))) ||
       (await storageObjectExists(raw.storage_path));
-    if (!resumable) continue;
+    if (!resumable) return;
 
     result.resumed.push(raw.id);
     try {
@@ -703,8 +716,34 @@ async function resumeStale(
         err instanceof Error ? err.message : err,
       );
     }
+  };
+
+  const running = new Set<Promise<void>>();
+  while (queue.length > 0) {
+    if (Date.now() >= opts.deadlineAt - STEP_RESERVE_MS) break;
+    // Oldest first, but let a smaller document past one that does not fit
+    // right now rather than idling a slot.
+    const idx = queue.findIndex((r) => fits(r.byte_size ?? 0));
+    if (idx === -1) {
+      await Promise.race(running);
+      continue;
+    }
+    const [raw] = queue.splice(idx, 1);
+    const bytes = raw.byte_size ?? 0;
+    inFlight++;
+    inFlightBytes += bytes;
+    const p: Promise<void> = runOne(raw).finally(() => {
+      inFlight--;
+      inFlightBytes -= bytes;
+      running.delete(p);
+    });
+    running.add(p);
   }
+  await Promise.all(running);
 }
+
+const SWEEP_CONCURRENCY = 4;
+const SWEEP_MAX_INFLIGHT_BYTES = 60 * 1024 * 1024;
 
 async function storageObjectExists(path: string): Promise<boolean> {
   const dir = path.split("/").slice(0, -1).join("/");
