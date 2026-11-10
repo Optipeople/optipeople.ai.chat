@@ -24,6 +24,7 @@ import {
   chunkText,
   ensureFolderPath,
   ensureMachineKb,
+  insertChunkRows,
   markFailedOnError,
   normalizeFolderPath,
   phaseLabel,
@@ -121,6 +122,126 @@ export async function ingestFileFromStorage(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Retry from the cron sweep
+// ---------------------------------------------------------------------------
+
+// A generic file has no checkpoints: a retry re-runs the whole pipeline on
+// the stored bytes. To queue one, set its row to status 'extracting' (a
+// state the upload path never leaves a file row in, so it means "retry
+// me") with updated_at at least a minute old; the sweep picks it up.
+const FILE_RETRY_STALE_MS = 60_000;
+// A file pipeline is one download, one extraction and a few embedding
+// batches; don't start one with less than this left in the sweep.
+const FILE_RETRY_RESERVE_MS = 150_000;
+
+export async function resumeQueuedFiles(opts: {
+  deadlineAt: number;
+  limit?: number;
+}): Promise<{ completed: string[]; failed: string[] }> {
+  const supabase = getSupabaseServerClient();
+  const result = { completed: [] as string[], failed: [] as string[] };
+  const { data, error } = await supabase
+    .from("kb_documents")
+    .select("id, machine_id, storage_path, title, summary, folder_path")
+    .eq("source_type", "file")
+    .eq("status", "extracting")
+    .not("storage_path", "is", null)
+    .lt("updated_at", new Date(Date.now() - FILE_RETRY_STALE_MS).toISOString())
+    .order("updated_at", { ascending: true })
+    .limit(opts.limit ?? 3);
+  if (error) throw new Error(`file retry lookup failed: ${error.message}`);
+
+  for (const row of (data ?? []) as {
+    id: string;
+    machine_id: string;
+    storage_path: string;
+    title: string;
+    summary: string | null;
+    folder_path: string | null;
+  }[]) {
+    if (Date.now() >= opts.deadlineAt - FILE_RETRY_RESERVE_MS) break;
+    try {
+      await retryFile(row, opts.deadlineAt + 30_000);
+      result.completed.push(row.id);
+    } catch (err) {
+      result.failed.push(row.id);
+      console.warn(
+        `file retry of ${row.id} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  return result;
+}
+
+async function retryFile(
+  row: {
+    id: string;
+    machine_id: string;
+    storage_path: string;
+    title: string;
+    summary: string | null;
+    folder_path: string | null;
+  },
+  hardDeadlineAt: number,
+): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const startedAt = Date.now();
+  // Claim: only one sweep gets to flip extracting -> embedding.
+  const { data: claimed } = await supabase
+    .from("kb_documents")
+    .update({
+      status: "embedding",
+      progress: 20,
+      progress_label: phaseLabel("reading_file"),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id)
+    .eq("status", "extracting")
+    .select("id");
+  if (!claimed || claimed.length === 0) return;
+
+  const { data: kb } = await supabase
+    .from("machine_kb")
+    .select("account_id")
+    .eq("machine_id", row.machine_id)
+    .maybeSingle();
+
+  const work = (async () => {
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from("kb-documents")
+      .download(row.storage_path);
+    if (dlErr || !blob) {
+      throw new Error(
+        `download from Storage failed: ${dlErr?.message ?? "object missing"}`,
+      );
+    }
+    const fileBuffer = Buffer.from(await blob.arrayBuffer());
+    // Start clean: a failed earlier attempt may have left partial rows.
+    await supabase.from("kb_chunks").delete().eq("document_id", row.id);
+    return runFilePipeline(
+      {
+        machineId: row.machine_id,
+        accountId: (kb as { account_id?: string } | null)?.account_id ?? "",
+        documentId: row.id,
+        storagePath: row.storage_path,
+        fileName: row.title,
+        summary: row.summary,
+        folderPath: row.folder_path,
+      },
+      fileBuffer,
+    );
+  })();
+  await markFailedOnError(
+    row.id,
+    withIngestBudget(row.id, work, {
+      startedAt,
+      hardBudgetMs: Math.max(30_000, hardDeadlineAt - startedAt),
+    }),
+  );
+}
+
 async function runFilePipeline(
   input: IngestFileInput,
   fileBuffer: Buffer,
@@ -190,19 +311,7 @@ async function runFilePipeline(
       embedding_model: VOYAGE_MODEL,
     }));
 
-    const BATCH = 50;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const slice = rows.slice(i, i + BATCH);
-      const { error } = await supabase.from("kb_chunks").upsert(slice, {
-        onConflict: "document_id,ordinal,embedding_model",
-        ignoreDuplicates: true,
-      });
-      if (error) {
-        throw new Error(
-          `kb_chunks insert failed at offset ${i}: ${error.message}`,
-        );
-      }
-    }
+    await insertChunkRows(rows, 0);
 
     await supabase
       .from("kb_documents")

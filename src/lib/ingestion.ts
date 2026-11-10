@@ -534,16 +534,38 @@ async function flipStuck(machineId: string | null): Promise<number> {
     console.warn("cleanupStuckDocuments (pdf) threw:", err);
   }
 
-  // Everything that is not a resumable PDF. The filter is the complement
-  // of the one above: not a PDF, or a PDF without a stored original, or a
-  // PDF still in 'uploaded'.
+  // Resumable files: a generic file in 'extracting' is one queued for a
+  // retry (fileIngestion.ts resumeQueuedFiles), which the sweep works
+  // through a few at a time. Same long threshold as resumable PDFs.
+  try {
+    let q = supabase
+      .from("kb_documents")
+      .update(patch())
+      .eq("source_type", "file")
+      .eq("status", "extracting")
+      .not("storage_path", "is", null)
+      .lt("updated_at", cutoff(STUCK_RESUMABLE_THRESHOLD_MS));
+    if (machineId) q = q.eq("machine_id", machineId);
+    const { data, error } = await q.select("id");
+    if (error) console.warn("cleanupStuckDocuments (file) failed:", error);
+    else flipped += data?.length ?? 0;
+  } catch (err) {
+    console.warn("cleanupStuckDocuments (file) threw:", err);
+  }
+
+  // Everything else. The filter is the complement of the two above:
+  // neither a PDF nor a file, or no stored original, or still in
+  // 'uploaded', or a file that is not queued for retry.
   try {
     let q = supabase
       .from("kb_documents")
       .update(patch())
       .in("status", MID_PIPELINE)
       .lt("updated_at", cutoff(STUCK_THRESHOLD_MS))
-      .or("source_type.neq.pdf,storage_path.is.null,status.eq.uploaded");
+      .or(
+        "and(source_type.neq.pdf,source_type.neq.file),storage_path.is.null," +
+          "status.eq.uploaded,and(source_type.eq.file,status.neq.extracting)",
+      );
     if (machineId) q = q.eq("machine_id", machineId);
     const { data, error } = await q.select("id");
     if (error) console.warn("cleanupStuckDocuments failed:", error);
@@ -1180,7 +1202,7 @@ async function runPdfPipelineSteps(
 const INSERT_BATCH = 25;
 const INSERT_ROW_ATTEMPTS = 3;
 
-async function insertChunkRows(
+export async function insertChunkRows(
   rows: { ordinal: number }[],
   firstOrdinal: number,
 ): Promise<void> {

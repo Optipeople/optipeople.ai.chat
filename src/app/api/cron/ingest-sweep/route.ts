@@ -12,6 +12,7 @@
 // Authenticated by Vercel's cron secret: the platform sends
 // `Authorization: Bearer $CRON_SECRET` with every scheduled invocation.
 
+import { resumeQueuedFiles } from "@/lib/fileIngestion";
 import { sweepStuckDocuments } from "@/lib/ingestion";
 
 export const runtime = "nodejs";
@@ -31,11 +32,22 @@ export async function GET(req: Request) {
 
   const startedAt = Date.now();
   try {
+    // Generic files queued for retry first: each is one short pass, and
+    // the PDF sweep below would otherwise spend the whole budget.
+    const files = await resumeQueuedFiles({
+      deadlineAt: startedAt + SWEEP_BUDGET_MS,
+      limit: 2,
+    });
     const result = await sweepStuckDocuments({
       deadlineAt: startedAt + SWEEP_BUDGET_MS,
       limit: 5,
     });
-    return Response.json({ ok: true, ...result, ms: Date.now() - startedAt });
+    return Response.json({
+      ok: true,
+      ...result,
+      files,
+      ms: Date.now() - startedAt,
+    });
   } catch (err) {
     console.error("ingest sweep failed:", err);
     return Response.json(
