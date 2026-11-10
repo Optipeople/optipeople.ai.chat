@@ -307,6 +307,44 @@ function decryptInPlace(doc: PDFDocument): boolean {
   return true;
 }
 
+/**
+ * Rewrites a structurally damaged PDF into a clean one: a fresh, classic
+ * cross-reference table and no linearization or incremental-update
+ * sections. Returns null when even that is impossible.
+ *
+ * pdf.js trusts the file's xref table, so a single stale offset fails the
+ * whole document with "bad XRef entry" (a FormatError, which pdf.js does
+ * not retry in recovery mode). pdf-lib ignores the xref table and finds
+ * objects by scanning the bytes, so a document it can load and save comes
+ * out with offsets that are right by construction. Page order is
+ * preserved, so page numbers in the rebuilt file match the original.
+ *
+ * Encrypted sources are decrypted first (empty user password), because a
+ * re-save without the Encrypt dictionary would otherwise write ciphertext
+ * as if it were plain content.
+ */
+export async function rebuildPdf(buf: Buffer): Promise<Buffer | null> {
+  try {
+    const doc = await PDFDocument.load(new Uint8Array(buf), {
+      ignoreEncryption: true,
+      throwOnInvalidObject: false,
+      updateMetadata: false,
+    });
+    if (doc.isEncrypted && !decryptInPlace(doc)) return null;
+    if (doc.getPageCount() === 0) return null;
+    // Object streams need PDF 1.5 xref streams; a plain table is what the
+    // old pdf.js build behind pdf-parse handles most reliably.
+    const bytes = await doc.save({ useObjectStreams: false });
+    return Buffer.from(bytes);
+  } catch (err) {
+    console.warn(
+      "rebuildPdf: could not rebuild PDF:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
 export type SlicedPdf = {
   buffer: Buffer;
   /**

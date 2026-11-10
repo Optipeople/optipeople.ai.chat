@@ -40,7 +40,7 @@ import { createRequire } from "node:module";
 import Anthropic from "@anthropic-ai/sdk";
 import { pageMarker, splitPageSegments } from "./chunking";
 import { analyzePdfFigures, tablePages } from "./pdfPageAnalysis";
-import { slicePdfPages } from "./pdfSlice";
+import { rebuildPdf, slicePdfPages } from "./pdfSlice";
 import { extractPageTables } from "./pdfTables";
 import {
   fromAnthropicUsage,
@@ -63,7 +63,7 @@ const OCR_EFFORT = "low" as const;
 const OCR_MAX_TOKENS = 32000;
 
 // Pages per OCR request. Ten dense scanned pages come back as roughly
-// 10–15k output tokens, which at Sonnet's output rate is 1–3 minutes: the
+// 10k to 15k output tokens, which at Sonnet's output rate is 1 to 3 minutes: the
 // most a single un-checkpointable step may take inside a 300 s function
 // with the hard budget in front of it. Larger slices were where the
 // max_tokens truncations came from.
@@ -89,7 +89,7 @@ const ABSOLUTE_MIN = 500;
 
 // Per-page gate for mixed documents: a page with an embedded raster image
 // and fewer characters than this is treated as a scan and OCR'd alone.
-// Headers and footers alone are typically 20–60 characters, so 100 leaves
+// Headers and footers alone are typically 20 to 60 characters, so 100 leaves
 // room for them without letting a real half-empty page through.
 const OCR_PAGE_MIN_CHARS = 100;
 
@@ -231,8 +231,8 @@ async function ocrSliceOnce(
 // Maps a slice's OCR output onto original page numbers.
 //
 // Valid output has exactly one marker per slice page, in ascending order
-// (1, 2, …, n). Anything else — a skipped page, a repeated marker, the
-// printed page number copied instead of the position — would anchor text
+// (1, 2, …, n). Anything else (a skipped page, a repeated marker, the
+// printed page number copied instead of the position) would anchor text
 // to the wrong page, and page provenance is what operators are sent to.
 // `valid` false tells the caller to retry; the returned map is then the
 // sequential fallback: segments assigned to slice pages in order, which is
@@ -349,7 +349,7 @@ async function ocrPagesSliced(
       originalPages = slice;
     } else {
       throw new Error(
-        `OCR could not slice pages ${slice[0]}–${slice[slice.length - 1]} out of the PDF`,
+        `OCR could not slice pages ${slice[0]} to ${slice[slice.length - 1]} out of the PDF`,
       );
     }
 
@@ -362,7 +362,7 @@ async function ocrPagesSliced(
         const mid = Math.ceil(slice.length / 2);
         console.warn(
           `[pdfText] OCR hit max_tokens on ${slice.length} pages ` +
-            `(${slice[0]}–${slice[slice.length - 1]}); retrying as ${mid} + ${slice.length - mid}`,
+            `(${slice[0]} to ${slice[slice.length - 1]}); retrying as ${mid} + ${slice.length - mid}`,
         );
         queue.unshift(slice.slice(0, mid), slice.slice(mid));
         continue;
@@ -483,6 +483,55 @@ async function parsePerPage(buf: Buffer): Promise<ParsedPdf> {
   return { pages: pages.slice(0, numpages), pageCount: numpages };
 }
 
+// A wrong password is the one pdf.js failure a rebuild cannot fix (the
+// rebuild only tries the empty password, which pdf.js already tried).
+function isPasswordError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const { name, message } = err as { name?: unknown; message?: unknown };
+  return (
+    name === "PasswordException" ||
+    (typeof message === "string" && /password/i.test(message))
+  );
+}
+
+/**
+ * pdf-parse over `buf`, and when pdf.js rejects the file's structure
+ * ("bad XRef entry", "Invalid PDF structure", "Invalid XRef stream" and
+ * the like) the same parse over a rebuilt copy (see rebuildPdf). Every
+ * viewer opens such files because they repair the xref on the fly; the
+ * old pdf.js build inside pdf-parse fails the whole document instead.
+ *
+ * Returns the bytes that parsed, so every later pass (page analysis,
+ * slicing, OCR) reads the same structure pdf-parse did. When the rebuild
+ * does not help either, the ORIGINAL error is rethrown: it describes the
+ * customer's file, not our repair attempt.
+ */
+async function parseWithRepair(
+  buf: Buffer,
+): Promise<{ parsed: ParsedPdf; buf: Buffer }> {
+  try {
+    return { parsed: await parsePerPage(buf), buf };
+  } catch (err) {
+    if (isPasswordError(err)) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    const rebuilt = await rebuildPdf(buf);
+    if (!rebuilt) throw err;
+    try {
+      const parsed = await parsePerPage(rebuilt);
+      console.warn(
+        `[pdfText] pdf-parse failed (${reason}); rebuilt the PDF structure and retried`,
+      );
+      return { parsed, buf: rebuilt };
+    } catch (retryErr) {
+      console.warn(
+        `[pdfText] pdf-parse failed (${reason}) and also on the rebuilt PDF:`,
+        retryErr instanceof Error ? retryErr.message : retryErr,
+      );
+      throw err;
+    }
+  }
+}
+
 // Pages that look like scans inside an otherwise text-bearing PDF: an
 // embedded raster image and almost no text layer. Returns [] when the
 // page analysis is unavailable, because without it "no text" alone is
@@ -584,7 +633,7 @@ export type ExtractPhaseHook = (
 ) => void | Promise<void>;
 
 export async function extractPdfText(
-  buf: Buffer,
+  input: Buffer,
   opts: {
     force?: PdfExtractionForce;
     onPhaseStart?: ExtractPhaseHook;
@@ -613,7 +662,9 @@ export async function extractPdfText(
     }
   };
 
-  const parsed = await parsePerPage(buf);
+  // `buf` is the rebuilt copy when the original's structure was damaged.
+  // Everything below reads it, never `input`.
+  const { parsed, buf } = await parseWithRepair(input);
   const allPages = Array.from({ length: parsed.pageCount }, (_, i) => i + 1);
 
   const runOcr = (pages: number[]) =>
