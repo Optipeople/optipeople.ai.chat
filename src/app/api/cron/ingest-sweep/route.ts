@@ -1,13 +1,13 @@
-// GET /api/cron/ingest-sweep — server-driven continuation for documents
+// GET /api/cron/ingest-sweep: server-driven continuation for documents
 // whose client went away mid-ingest.
 //
 // The admin upload flow drives long ingests by calling the finalize
 // endpoint again every time it answers 202 { done: false }. That works
-// until the operator closes the tab, at which point the document sits in
-// 'extracting' or 'embedding' until the watchdog fails it six minutes
-// later. This sweep runs on a schedule (vercel.json), fails what is truly
-// stuck, and resumes what has a checkpoint or an original PDF to resume
-// from, one document at a time inside the function's own budget.
+// until the operator closes the tab (or the instance is reaped), at which
+// point the document sits in 'extracting' or 'embedding'. This sweep runs
+// on a schedule (vercel.json), resumes what has a checkpoint or an
+// original PDF to resume from, one document at a time inside the
+// function's own budget, and only then fails what is truly stuck.
 //
 // Authenticated by Vercel's cron secret: the platform sends
 // `Authorization: Bearer $CRON_SECRET` with every scheduled invocation.

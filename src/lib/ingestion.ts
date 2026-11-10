@@ -314,6 +314,10 @@ export async function withIngestBudget<T>(
       void (async () => {
         try {
           const supabase = getSupabaseServerClient();
+          // Only a row that is still mid-pipeline. The work can have
+          // flipped it to ready a moment ago and still be inside its
+          // post-ready tail (sidecar cleanup, suggestion regeneration);
+          // an unconditional flip would then fail a finished document.
           await supabase
             .from("kb_documents")
             .update({
@@ -323,7 +327,8 @@ export async function withIngestBudget<T>(
               run_id: randomUUID(),
               updated_at: new Date().toISOString(),
             })
-            .eq("id", documentId);
+            .eq("id", documentId)
+            .in("status", ["uploaded", "extracting", "embedding"]);
         } catch (err) {
           console.warn("ingest timeout: status flip failed:", err);
         }
@@ -476,40 +481,77 @@ export async function deleteSidecar(storagePath: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 // Any kb_documents row whose status is mid-pipeline AND hasn't been
-// touched in STUCK_THRESHOLD_MS gets flipped to failed. Catches the case
-// where a function instance died (OOM, deploy, network drop) before
-// withIngestBudget could fire its own timer. Cheap to call — single
-// conditional UPDATE.
+// touched for too long gets flipped to failed. Catches the case where a
+// function instance died (OOM, deploy, network drop) before
+// withIngestBudget could fire its own timer. Cheap to call: two
+// conditional UPDATEs.
+//
+// Two thresholds, because only PDFs are resumable:
+//   - A mid-pipeline PDF with a storage path is the cron sweep's to
+//     resume, and the sweep runs every 5 minutes and handles roughly one
+//     big document per run. Failing it after 6 minutes, as this code once
+//     did, raced the sweep: on 2026-11-10 a 1930-page PDF whose sweep run
+//     yielded at 12:04:02 was 58 s stale at the 12:05 sweep (below the
+//     resume threshold) and 363 s stale at the 12:10 sweep, which flipped
+//     it before looking for work to resume. So the give-up threshold has
+//     to cover several sweep periods.
+//   - Everything else (images, generic files, a PDF row without a stored
+//     original) cannot be resumed, so it fails as soon as it is clearly
+//     dead.
 const STUCK_THRESHOLD_MS = 6 * 60_000;
+const STUCK_RESUMABLE_THRESHOLD_MS = 30 * 60_000;
 const STUCK_LABEL =
   "Processing was interrupted (server restart or timeout). Try again.";
+const MID_PIPELINE = ["uploaded", "extracting", "embedding"];
+const RESUMABLE_STATUSES = ["extracting", "embedding"];
 
 async function flipStuck(machineId: string | null): Promise<number> {
+  const supabase = getSupabaseServerClient();
+  const patch = () => ({
+    status: "failed",
+    progress: null,
+    progress_label: STUCK_LABEL,
+    run_id: randomUUID(),
+    updated_at: new Date().toISOString(),
+  });
+  const cutoff = (ms: number) => new Date(Date.now() - ms).toISOString();
+  let flipped = 0;
+
+  // Resumable PDFs: only after the long threshold.
   try {
-    const supabase = getSupabaseServerClient();
-    const cutoff = new Date(Date.now() - STUCK_THRESHOLD_MS).toISOString();
     let q = supabase
       .from("kb_documents")
-      .update({
-        status: "failed",
-        progress: null,
-        progress_label: STUCK_LABEL,
-        run_id: randomUUID(),
-        updated_at: new Date().toISOString(),
-      })
-      .in("status", ["uploaded", "extracting", "embedding"])
-      .lt("updated_at", cutoff);
+      .update(patch())
+      .eq("source_type", "pdf")
+      .not("storage_path", "is", null)
+      .in("status", RESUMABLE_STATUSES)
+      .lt("updated_at", cutoff(STUCK_RESUMABLE_THRESHOLD_MS));
     if (machineId) q = q.eq("machine_id", machineId);
     const { data, error } = await q.select("id");
-    if (error) {
-      console.warn("cleanupStuckDocuments failed:", error);
-      return 0;
-    }
-    return data?.length ?? 0;
+    if (error) console.warn("cleanupStuckDocuments (pdf) failed:", error);
+    else flipped += data?.length ?? 0;
+  } catch (err) {
+    console.warn("cleanupStuckDocuments (pdf) threw:", err);
+  }
+
+  // Everything that is not a resumable PDF. The filter is the complement
+  // of the one above: not a PDF, or a PDF without a stored original, or a
+  // PDF still in 'uploaded'.
+  try {
+    let q = supabase
+      .from("kb_documents")
+      .update(patch())
+      .in("status", MID_PIPELINE)
+      .lt("updated_at", cutoff(STUCK_THRESHOLD_MS))
+      .or("source_type.neq.pdf,storage_path.is.null,status.eq.uploaded");
+    if (machineId) q = q.eq("machine_id", machineId);
+    const { data, error } = await q.select("id");
+    if (error) console.warn("cleanupStuckDocuments failed:", error);
+    else flipped += data?.length ?? 0;
   } catch (err) {
     console.warn("cleanupStuckDocuments threw:", err);
-    return 0;
   }
+  return flipped;
 }
 
 export async function cleanupStuckDocuments(machineId: string): Promise<void> {
@@ -517,10 +559,36 @@ export async function cleanupStuckDocuments(machineId: string): Promise<void> {
 }
 
 // A document mid-pipeline that nobody has touched for this long is
-// presumed abandoned by its client (tab closed, network gone) and picked
-// up by the cron sweep. Progress writes bump updated_at at least once per
-// embedding batch / OCR slice, so a live run stays well inside it.
+// presumed abandoned (client tab closed, function instance killed) and
+// picked up by the cron sweep. A live run never gets near it: the
+// pipeline heartbeats updated_at every HEARTBEAT_MS for as long as it
+// runs, including through long steps that write no progress (pdf-parse
+// and the page analysis of a 1930-page PDF took several minutes on
+// 2026-11-10, and the sweep took the live run over mid-parse).
 const RESUME_STALE_MS = 90_000;
+const HEARTBEAT_MS = 20_000;
+
+// Bumps updated_at every HEARTBEAT_MS while this run still owns the row
+// and the row is still mid-pipeline. Scoped by run_id, so a run that has
+// been fenced out (timeout handler, a newer claim) stops counting as
+// alive the moment it loses ownership. Returns the stop function.
+function startHeartbeat(documentId: string, runId: string): () => void {
+  const timer = setInterval(() => {
+    getSupabaseServerClient()
+      .from("kb_documents")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", documentId)
+      .eq("run_id", runId)
+      .in("status", RESUMABLE_STATUSES)
+      .then(
+        ({ error }) => {
+          if (error) console.warn("ingest heartbeat failed:", error.message);
+        },
+        (err: unknown) => console.warn("ingest heartbeat threw:", err),
+      );
+  }, HEARTBEAT_MS);
+  return () => clearInterval(timer);
+}
 
 export type SweepResult = {
   flipped: number;
@@ -530,12 +598,16 @@ export type SweepResult = {
 };
 
 /**
- * Server-driven continuation for the cron sweep. Flips documents that
- * have been silent past the stuck threshold to failed (globally, unlike
- * cleanupStuckDocuments), then resumes up to `limit` documents stuck
- * between RESUME_STALE_MS and that threshold, one at a time, until
- * `deadlineAt`. Each resumed document checkpoints as usual, so a run
- * that ends with { done: false } is simply picked up by the next sweep.
+ * Server-driven continuation for the cron sweep. Resumes up to `limit`
+ * mid-pipeline PDFs that have been silent for at least RESUME_STALE_MS,
+ * oldest first, one at a time, until `deadlineAt`. Each resumed document
+ * checkpoints as usual, so a run that ends with { done: false } is simply
+ * picked up by the next sweep. Only then flips what has been silent past
+ * the stuck thresholds to failed (globally, unlike cleanupStuckDocuments).
+ *
+ * Resume comes first and has no upper staleness bound on purpose: the
+ * flip used to run first, and anything that fell between two sweep ticks
+ * past the 6-minute mark was failed instead of resumed.
  */
 export async function sweepStuckDocuments(opts: {
   deadlineAt: number;
@@ -547,15 +619,25 @@ export async function sweepStuckDocuments(opts: {
     completed: [],
     failed: [],
   };
-  result.flipped = await flipStuck(null);
+  try {
+    await resumeStale(opts, result);
+  } finally {
+    result.flipped = await flipStuck(null);
+  }
+  return result;
+}
 
+async function resumeStale(
+  opts: { deadlineAt: number; limit?: number },
+  result: SweepResult,
+): Promise<void> {
   const supabase = getSupabaseServerClient();
   const cutoff = new Date(Date.now() - RESUME_STALE_MS).toISOString();
   const { data, error } = await supabase
     .from("kb_documents")
     .select("id, machine_id, storage_path, byte_size, status")
     .eq("source_type", "pdf")
-    .in("status", ["extracting", "embedding"])
+    .in("status", RESUMABLE_STATUSES)
     .lt("updated_at", cutoff)
     .not("storage_path", "is", null)
     .order("updated_at", { ascending: true })
@@ -572,16 +654,12 @@ export async function sweepStuckDocuments(opts: {
 
     // Only resume what can actually be resumed: a sidecar or the original
     // PDF must still be there. A row with neither is an orphan and the
-    // stuck flip will get it eventually.
-    const hasSidecar = (await readSidecar(raw.storage_path)) !== null;
-    if (!hasSidecar) {
-      const dir = raw.storage_path.split("/").slice(0, -1).join("/");
-      const name = raw.storage_path.split("/").pop() ?? "";
-      const { data: objects } = await supabase.storage
-        .from("kb-documents")
-        .list(dir, { search: name, limit: 1 });
-      if (!objects || !objects.some((o) => o.name === name)) continue;
-    }
+    // stuck flip will get it eventually. A listing, not a download: the
+    // sidecar of a big manual is megabytes and the resume reads it anyway.
+    const resumable =
+      (await storageObjectExists(extractionSidecarPath(raw.storage_path))) ||
+      (await storageObjectExists(raw.storage_path));
+    if (!resumable) continue;
 
     result.resumed.push(raw.id);
     try {
@@ -604,7 +682,15 @@ export async function sweepStuckDocuments(opts: {
       );
     }
   }
-  return result;
+}
+
+async function storageObjectExists(path: string): Promise<boolean> {
+  const dir = path.split("/").slice(0, -1).join("/");
+  const name = path.split("/").pop() ?? "";
+  const { data: objects } = await getSupabaseServerClient()
+    .storage.from("kb-documents")
+    .list(dir, { search: name, limit: 10 });
+  return !!objects && objects.some((o) => o.name === name);
 }
 
 // ---------------------------------------------------------------------------
@@ -786,7 +872,7 @@ export type IngestPdfOutcome =
 // what tells a continuation "the chunks in kb_chunks are from THIS text",
 // so it must never exist while old chunks do. A run that yields or fails
 // before the swap leaves the document exactly as it was.
-async function runPdfPipeline(args: {
+type PipelineArgs = {
   documentId: string;
   machineId: string;
   storagePath: string;
@@ -795,12 +881,39 @@ async function runPdfPipeline(args: {
   // ms epoch after which the pipeline should checkpoint and yield.
   // null = run to completion (the CLI has no platform time limit).
   deadlineAt: number | null;
+  // ms epoch at which withIngestBudget fails the document. Best-effort
+  // steps that cannot checkpoint are cut off before it so they can never
+  // take a fully embedded document down with them. null = no limit.
+  hardDeadlineAt: number | null;
   force?: PdfExtractionForce;
   // Pass when the caller already has the bytes; otherwise the pipeline
   // downloads from Storage only when a phase actually needs them
   // (a resumed embed run doesn't).
   fileBuffer?: Buffer;
-}): Promise<IngestPdfOutcome> {
+};
+
+// Figure pass budget. On a cold invocation (no PDF in memory) the step
+// downloads the original and walks every page with pdf.js before its
+// vision call: for the 90 MB, 1930-page Kvik manual that was 14 s of
+// download and 42 s of analysis on a desktop CPU, several times that on
+// a function instance. So a cold start needs most of a fresh budget.
+const FIGURE_COLD_RESERVE_MS = 150_000;
+// Figures are abandoned this long before the hard deadline, leaving room
+// for the ready flip, sidecar cleanup and suggestion regeneration.
+const FIGURE_HARD_MARGIN_MS = 30_000;
+
+async function runPdfPipeline(args: PipelineArgs): Promise<IngestPdfOutcome> {
+  const stopHeartbeat = startHeartbeat(args.documentId, args.runId);
+  try {
+    return await runPdfPipelineSteps(args);
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+async function runPdfPipelineSteps(
+  args: PipelineArgs,
+): Promise<IngestPdfOutcome> {
   const supabase = getSupabaseServerClient();
   const { documentId, machineId, storagePath, byteSize, runId } = args;
 
@@ -1017,15 +1130,29 @@ async function runPdfPipeline(args: {
   // invocation died between attaching figures and flipping to ready. One
   // vision call plus one embedding call, neither of which checkpoints, so
   // it needs the step reserve; otherwise it runs on the next invocation.
-  if (tooLateFor(STEP_RESERVE_MS)) return yieldNow();
+  // A cold start (PDF not in memory) also pays for the download and the
+  // page analysis, so it needs a bigger one.
+  if (tooLateFor(buf ? STEP_RESERVE_MS : FIGURE_COLD_RESERVE_MS)) {
+    return yieldNow();
+  }
   await assertRunOwner(documentId, runId);
   await writeProgress(documentId, 97, phaseLabel("figures"), runId);
   await wipePdfFigures(documentId);
-  await attachPdfFigures({
+  await runFigureStep({
     documentId,
-    machineId,
-    pdfBuffer: await getBuffer(),
-    pdfStoragePath: storagePath,
+    runId,
+    cutoffAt:
+      args.hardDeadlineAt === null
+        ? null
+        : args.hardDeadlineAt - FIGURE_HARD_MARGIN_MS,
+    attach: async (canWrite) =>
+      attachPdfFigures({
+        documentId,
+        machineId,
+        pdfBuffer: await getBuffer(),
+        pdfStoragePath: storagePath,
+        canWrite,
+      }),
   });
 
   await assertRunOwner(documentId, runId);
@@ -1055,6 +1182,61 @@ async function runPdfPipeline(args: {
   };
 }
 
+// Runs the best-effort figure pass with a cutoff. Figures are optional
+// and the text chunks are already persisted, so a figure pass that would
+// run into the hard deadline is abandoned (the document becomes ready
+// without figures) instead of letting the timeout handler fail a fully
+// embedded document. The abandoned work may keep running until the
+// platform reaps the instance; `canWrite` turns its late inserts into
+// no-ops.
+async function runFigureStep(args: {
+  documentId: string;
+  runId: string;
+  cutoffAt: number | null;
+  attach: (canWrite: () => Promise<boolean>) => Promise<number>;
+}): Promise<void> {
+  let abandoned = false;
+  const canWrite = async (): Promise<boolean> => {
+    if (abandoned) return false;
+    try {
+      await assertRunOwner(args.documentId, args.runId);
+      return !abandoned;
+    } catch {
+      return false;
+    }
+  };
+  const work = args.attach(canWrite).catch((err: unknown) => {
+    console.warn(
+      "figure pass failed (continuing without figures):",
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  });
+  if (args.cutoffAt === null) {
+    await work;
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cutoff = new Promise<"cutoff">((resolve) => {
+    timer = setTimeout(
+      () => resolve("cutoff"),
+      Math.max(0, args.cutoffAt! - Date.now()),
+    );
+  });
+  try {
+    const outcome = await Promise.race([work, cutoff]);
+    if (outcome === "cutoff") {
+      abandoned = true;
+      console.warn(
+        `figure pass for ${args.documentId} ran out of time; ` +
+          "the document is marked ready without figures",
+      );
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // Claim + budget + failure marking around one pipeline run. Every entry
 // point that runs on a platform time limit goes through here.
 async function runGuarded(args: {
@@ -1070,11 +1252,13 @@ async function runGuarded(args: {
 }): Promise<IngestPdfOutcome> {
   const runId = randomUUID();
   await claimRun(args.documentId, runId);
+  const hardDeadlineAt =
+    args.startedAt + (args.hardBudgetMs ?? INGEST_HARD_BUDGET_MS);
   return markFailedOnError(
     args.documentId,
     withIngestBudget(
       args.documentId,
-      runPdfPipeline({ ...args, runId }),
+      runPdfPipeline({ ...args, runId, hardDeadlineAt }),
       { startedAt: args.startedAt, hardBudgetMs: args.hardBudgetMs },
     ),
     { runId },
@@ -1149,6 +1333,7 @@ export async function ingestPdf(input: IngestPdfInput): Promise<IngestPdfResult>
       fileBuffer: input.fileBuffer,
       byteSize,
       deadlineAt: null,
+      hardDeadlineAt: null,
       runId,
     }),
     { runId },

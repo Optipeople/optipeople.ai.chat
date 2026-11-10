@@ -301,8 +301,13 @@ export async function attachPdfFigures(args: {
   machineId: string;
   pdfBuffer: Buffer;
   pdfStoragePath: string;
+  // Checked before each write. The ingest pipeline passes one so a figure
+  // pass it has abandoned (out of time) or lost ownership of cannot
+  // insert rows after the document moved on. Omitted: always write.
+  canWrite?: () => Promise<boolean>;
 }): Promise<number> {
   const supabase = getSupabaseServerClient();
+  const canWrite = args.canWrite ?? (async () => true);
 
   let figures: PdfFigure[];
   try {
@@ -314,6 +319,7 @@ export async function attachPdfFigures(args: {
     return 0;
   }
   if (figures.length === 0) return 0;
+  if (!(await canWrite())) return 0;
 
   const assetRows = figures.map((f, i) => ({
     id: randomUUID(),
@@ -348,6 +354,12 @@ export async function attachPdfFigures(args: {
     console.warn(
       `attachPdfFigures: embedding count mismatch (${embeddings.length} vs ${figures.length})`,
     );
+    return 0;
+  }
+  if (!(await canWrite())) {
+    // The asset rows went in while the pass still owned the document.
+    // Without caption chunks they are invisible to retrieval, and the
+    // next figure pass (or reprocess) wipes them.
     return 0;
   }
 

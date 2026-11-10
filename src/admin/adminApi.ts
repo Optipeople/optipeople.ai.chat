@@ -606,8 +606,10 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // off exponentially (5, 10, 20, 40 s — five attempts in total) so a
 // wobbly connection or a briefly overloaded function gets room to
 // recover. A 504 with code "timeout" is NOT transient — the server
-// already marked the document failed — so it surfaces immediately, as
-// does any HTTP failure on the very first call. A *network* failure on
+// already marked the document failed, so it surfaces immediately. On the
+// very first call only a platform 502/503/504 is retried (the instance
+// was reaped; the row exists and resumes); any other HTTP failure
+// surfaces. A *network* failure on
 // the first call (fetch threw: DNS hiccup, dropped Wi-Fi) is retried
 // once, since nothing reached the server and re-sending is harmless.
 const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000];
@@ -651,8 +653,20 @@ async function postJsonUntilDone<T>(
         code?: string;
       };
       const transient = res.status >= 500 && body.code !== "timeout";
-      if (resume && transient && ++failures < MAX_ATTEMPTS) {
+      // On the first call only platform-level failures count as transient:
+      // 502/503/504 mean the function instance was reaped or never ran
+      // (a 90 MB, 1930-page PDF can outlive its first invocation), and
+      // the endpoint resumes from the checkpoint. A 500 is the app's own
+      // error and has already marked the document failed.
+      const platform =
+        res.status === 502 || res.status === 503 || res.status === 504;
+      if (
+        (resume ? transient : transient && platform) &&
+        ++failures < MAX_ATTEMPTS
+      ) {
         await sleep(retryDelay(failures));
+        // The server got as far as it got; from here on it is a resume.
+        resume = true;
         continue;
       }
       throw apiError(errorKey, `${errorLabel} (${res.status})`, {
