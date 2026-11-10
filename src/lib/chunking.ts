@@ -200,8 +200,14 @@ function splitRecursive(text: string, target: number): string[] {
     if (parts.length === 1) continue;
     const out: string[] = [];
     for (const part of parts) {
-      if (part.length <= target) out.push(part);
-      else out.push(...splitRecursive(part, target));
+      if (part.length <= target) {
+        out.push(part);
+        continue;
+      }
+      // A loop, not out.push(...sub): a long line split on " " can yield
+      // hundreds of thousands of parts, and spreading that many arguments
+      // overflows the call stack ("Maximum call stack size exceeded").
+      for (const sub of splitRecursive(part, target)) out.push(sub);
     }
     return out;
   }
