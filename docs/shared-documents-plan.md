@@ -254,8 +254,9 @@ The insert paths keep writing `folder_path` on the document, as today. The home-
 Measured on production during review: the old filter uses the approximate vector index for the largest machine (6,062 chunks, under 1 ms). Replacing the filter with a join through the link table turned that into an exact scan: 47 ms warm, **3 to 5.7 s cold**, and different results. So the filter is **not** replaced. Each candidate branch gets a second source instead:
 
 - `search_kb_linked(p_machine_id, ...)`:
-  - **Home branch:** the existing `vector_hits` and `keyword_hits` queries, textually unchanged (`c.machine_id = p_machine_id`). The home invariant guarantees these documents are linked.
-  - **Linked-in branch:** the same two queries over chunks of documents linked to `p_machine_id` whose home is another machine (`join machine_documents md ... where md.machine_id = p_machine_id and d.machine_id <> p_machine_id`), each limited to `p_candidates`.
+  - **Home branch:** the existing `vector_hits` and `keyword_hits` queries with the same filter (`c.machine_id = p_machine_id`) and one extra condition on the document row they already join: `d.machine_id = c.machine_id`. The home invariant guarantees these documents are linked.
+  - **Linked-in branch:** the same two queries over chunks of documents linked to `p_machine_id` whose chunks carry another machine's id (`join machine_documents md ... where md.machine_id = p_machine_id and c.machine_id <> p_machine_id`), each limited to `p_candidates`.
+  - Those two conditions make search safe while a rehome is half done (Phase 4, batched fallback): chunks not yet moved are invisible on the old home and still found on every linked machine, with no gaps and no duplicates.
   - Candidates = the best `p_candidates` of both branches together, ranked once. Everything after that (fusion, per-document cap, asset cap, final limit, return type) is the existing code. Same `hnsw.ef_search` and `iterative_scan` settings (re-apply the DO block from `search_v2.sql:299-320`).
   - Until a document is shared, the linked-in branch is empty and the function returns exactly what `search_kb` returns.
 - `search_kb_multi_linked(p_machine_ids, ...)`: home branch `c.machine_id = any(p_machine_ids)` unchanged; linked-in branch covers documents linked to any requested machine whose home is **not** in the requested set. A chunk therefore appears once by construction. Linked-in chunks are attributed to `min(md.machine_id)` among the requested machines for the existing `machine_id` column and the per-machine quota. Add a `machine_ids text[]` column listing every requested machine the document is linked to (new return type).
@@ -278,9 +279,19 @@ Verification: rehearse on the copy first, including the admin document routes (P
 - **Backfill:** `scripts/backfill-content-hash.ts`, run **after** the write-path deploy is live (rows inserted by old code mid-deploy have no hash). For each document with `storage_path` and null hash: download, hash, update. Idempotent, resumable, batched, run locally. ~1.46 GB total.
 - Verify: count of documents with null hash is 0, **excluding** `source_type = 'feedback'` (no file) and `status = 'failed'` (rejected uploads keep `storage_path` but their file is deleted). Spot-check that the 36 known duplicate groups now share a hash.
 
+### Phase 2b: same-machine duplicate check (first user-visible value, needs only Phase 2)
+
+"This file already exists on this machine. Skip it?" It needs hashes and nothing else: no links, no read switch, no delete changes. It would have caught all 36 duplicate groups in production. Ship it as soon as the Phase 2 backfill is verified.
+
+- **Check endpoint** `POST /api/admin/ingest/check` `{ machineId, files: [{ name, size, sha256 }] }`. Auth: `assertMachineAccess`. Looks up `content_sha256` among **this machine's** documents (`kb_documents.machine_id = machineId`), excluding `failed` and `feedback`. Returns per file `none` or `on_this_machine { documentId, title }`. Phase 5 widens the lookup to the account and adds a third result.
+- **Client hashing:** in `UploadCard` handlers (`MachineDetail.tsx`), hash with `crypto.subtle.digest('SHA-256', await file.arrayBuffer())` before `enqueueUploads`. Max file is 100 MB (bucket limit), acceptable in memory. Show a "Checking files..." state. Also compare hashes **within the drop**, so two identical files in one batch are caught.
+- **UI:** the queue already flags same-title duplicates (`uploadQueue.tsx:83-85`, `363-364`). Feed that existing flag from the hash result, so this phase adds no new component. If the existing flag does not offer a skip, get a design reference before adding one (CLAUDE.md).
+- **Fail open:** if hashing or the check fails or times out, enqueue exactly as today.
+- No flag needed: nothing is blocked, the user can always upload anyway.
+
 ### Phase 3: switch reads behind a flag
 
-Flag: `account_flags.kb_links_read` (null means follow `kb_settings.links_read_default`). Resolved by one helper `useLinkedReads(accountId)` in a new `src/lib/kbLinks.ts`, cached in process for 30 seconds. Rollback is one SQL update and takes effect within 30 seconds, with no deploy. (An env var would need a redeploy on Vercel.)
+Flag: `account_flags.kb_links_read` (null means follow `kb_settings.links_read_default`). Resolved by one helper `linkedReadsEnabled(accountId)` in a new `src/lib/kbLinks.ts` (not `use...`: the React hooks lint rule would flag that name in server code), cached in process for 30 seconds. Rollback is one SQL update and takes effect within 30 seconds, with no deploy. (An env var would need a redeploy on Vercel.)
 
 `kbLinks.ts` also holds the shared query helpers so call sites don't each re-implement the link join:
 
@@ -321,7 +332,16 @@ Three steps, in this order. Do not combine them into one deploy.
 - `kb_delete_machine(p_machine_id)`: runs the unlink logic for every linked document, deletes the machine row, returns all storage paths of fully deleted documents. One transaction.
 - `kb_delete_document(p_document_id)`: delete everywhere. Lock, delete the row, return storage paths.
 
-Rehearse on the copy with the largest machine: rehoming rewrites every chunk row of the document (including its vector index entries), and a machine delete cascades thousands of chunks. Measure against the statement timeout and set a local `statement_timeout` in the functions if needed.
+**Rehoming and large deletes are the most likely things to hit the statement timeout.** Rehoming rewrites every chunk row of the document, and each rewrite re-inserts into the vector index (about 1,900 rows for the largest document). A machine delete cascades thousands of chunks. Chunk inserts already had to be split into smaller slices for this reason (`eee50c9`). Measure both on the copy with the largest document and the largest machine.
+
+Rule: the single-transaction version ships only if the worst case finishes in **under half the statement timeout**. Otherwise use the batched versions below. They are specified now so the fallback is not designed under pressure.
+
+- **Batched rehome.**
+  1. One short transaction: lock the document, delete the link, set `kb_documents.machine_id`, `folder_path`, `operator_visible` from the new home link. The document row is now correct.
+  2. `kb_finish_rehome(p_document_id, p_batch)`: move up to `p_batch` (start with 200) chunk and asset rows whose `machine_id` differs from the document's, return how many are left. The app calls it until it returns 0.
+  3. Idempotent and resumable. If the request dies, the cron sweep finds documents with `kb_chunks.machine_id <> kb_documents.machine_id` (the §8.1 invariant) and finishes them.
+  4. Linked search stays correct throughout (see the two conditions in Phase 1). With the flag off, the old search would still show the unmoved chunks on the old home until the batches finish; that window is minutes and only matters during an emergency rollback.
+- **Batched machine delete.** Unlink the machine's documents one at a time, each in its own transaction (`kb_unlink_document`), removing files after each. Delete the machine row last, when it has no documents left. A crash leaves a machine with fewer documents, and the delete can simply be run again.
 
 **Step 2, code deploy.**
 
@@ -356,13 +376,11 @@ Rollback: flag off restores reads, and they stay correct because both sides are 
 
 Gate: `account_flags.shared_documents boolean default false` (new column; `src/lib/accountFlags.ts` needs it in `COLUMNS`, `toFlags` and the patch type). Only for accounts with linked reads on. **Precondition:** the linked-in search branch met its latency budget on the rehearsal copy (Phase 1).
 
-- **Check endpoint** `POST /api/admin/ingest/check` `{ machineId, files: [{ name, size, sha256 }] }`. Auth: `assertMachineAccess`. Looks up `content_sha256` in the machine's account only, excluding `failed` and `feedback` documents. Returns per file one of:
+- **Check endpoint** (from Phase 2b): for accounts with `shared_documents` on, widen the lookup from this machine to the machine's **account** (via `machine_documents`), and add a third result:
   - `none`
   - `on_this_machine { documentId, title }`
   - `on_other_machines { documentId, title, machines: [{ id, name }] }`
-- **Client hashing:** in `UploadCard` handlers (`MachineDetail.tsx`), hash with `crypto.subtle.digest('SHA-256', await file.arrayBuffer())` before `enqueueUploads`. Max file is 100 MB (bucket limit), acceptable in memory. Show a "Checking files..." state. If hashing or the check fails, enqueue as today (fail open).
-  - Also compare hashes **within the drop**, so two identical files in one batch are caught.
-  - The queue already flags same-title duplicates (`uploadQueue.tsx:83-85`, `363-364`). Replace that with the hash result where one exists.
+- **Client hashing** is already in place from Phase 2b.
 - **Batch dialog** when any file matched (one dialog per drop, not per file), with per-file choices preselected:
   - matched on another machine: **Link** (default) / Upload anyway / Skip
   - matched on this machine: **Skip** (default) / Upload anyway
@@ -443,7 +461,7 @@ Before each run, snapshot on the copy: row counts of `kb_documents`, `kb_chunks`
 3. **Remove a shared document from its home machine.** The document is rehomed; chunks and assets follow; folder and visibility match the new home link; the file is intact; it still answers on the remaining machines and no longer on the old one.
 4. **Delete everywhere** on a shared document. Gone on every machine; one file removed.
 5. **Delete a machine with only unshared documents.** Same end state as today's delete: no rows, no files, no folders left for that machine.
-6. **Delete the largest machine** (6,062 chunks). Completes inside the statement timeout.
+6. **Delete the largest machine** (6,062 chunks) and **rehome the largest document** (about 1,900 chunks). Time both. Under half the statement timeout: single transaction is fine. Otherwise switch to the batched versions (Phase 4) and rerun this whole checklist with them, including killing a batched rehome halfway and confirming the sweep finishes it and search is correct in between.
 7. **Delete a machine that is the home of shared documents.** Those documents survive, rehomed; then reprocess one of them from another machine and confirm it finishes.
 8. **Delete a machine while one of its documents is mid-ingest.** No orphan row, no crash loop in the sweep.
 9. **Link and unlink the same document at the same time** (two sessions, repeated). Never a document without links, never a link without a document.
@@ -511,6 +529,7 @@ The first draft was checked against the code (two audits) and the production dat
 | A nullable origin breaks reprocess, sweep resume, figure attach, PATCH and client resume | Home machine stays NOT NULL; rehome on unlink |
 | Deletes were multi-step from app code: crash leaves invisible documents; link can race the last unlink | SQL functions with row locks; rows first, storage second; zero-link invariant check |
 | Phase 6 design problems (§10) | Deferred to its own plan with a simpler direction |
+| Second pass (plan author): the same-machine duplicate check waited behind Phase 4 for no reason; rehoming had no named fallback for statement timeouts; `useLinkedReads` would trip the hooks lint rule | Phase 2b ships the same-machine check right after hashes; batched rehome and batched machine delete specified, with a threshold; helper renamed `linkedReadsEnabled` |
 | Smaller: machine can change account; embedding model per machine; feedback docs linkable; PATCH had no machine id; fleet drawer grouping; `lock_timeout`; failed rows in the hash check; suggestions inside the ingest budget; image finalize retry | Folded into Phases 0 to 5 |
 
 ## 13. Effort (rough)
@@ -520,6 +539,7 @@ The first draft was checked against the code (two audits) and the production dat
 | 0 Groundwork + rehearsal copy | 1 day | yes |
 | 1 Expand schema + new search functions + latency test | 1.5 days | yes, no behavior change |
 | 2 Hashes + backfill | 0.5 day | yes |
+| 2b Same-machine duplicate check | 1 day | yes, first visible value |
 | 3 Read switch + parity script | 2 to 3 days | yes, behind flag |
 | 4 SQL functions, writes, delete semantics, FK change | 3 days | yes, in three steps |
 | 5 Link instead of upload | 2 to 3 days + design | after 4 and the latency budget |
