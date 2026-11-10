@@ -1,6 +1,6 @@
 # Shared documents and duplicate-aware uploads: implementation plan
 
-Written 2026-11-10. Status: **proposal, awaiting review**. Nothing here is implemented.
+Written 2026-11-10. Revised 2026-11-10 after review (see §12 for what changed and why). Status: **revised proposal, awaiting approval**. Nothing here is implemented.
 
 ## 1. Why
 
@@ -15,30 +15,36 @@ Goals:
 
 - A document belongs to the **account** and is **linked** to one or more machines.
 - On upload, detect exact duplicates (whole-file hash) anywhere in the account and offer **"link instead of upload"**.
-- On PDF upload, detect page-level overlap with existing documents and offer **"process only the new pages"**.
 - **Zero regression for existing production users.** Every existing machine must answer exactly as before, until and after the switch.
 
-Non-goals (v1):
+Non-goals (this plan):
 
+- **Partial overlap ("process only the new pages").** Moved to its own plan. The first design had too many failure modes and depends on facts about Kristian's files we do not have yet. See §10.
 - Sharing across accounts. Matching is always scoped to one account. Never reveal that a file exists in another account.
-- Detecting overlap on scanned pages (no text layer). See §9.6.
 - Sharing experience documents (`source_type = 'feedback'`). They stay machine-specific.
-- Retiring the old `machine_id` columns. Optional, much later (Phase 7).
+- Retiring the old `machine_id` columns. Optional, much later (Phase 6).
 
 ## 3. Production baseline (queried 2026-11-10)
 
 | | Count |
 |---|---|
 | Accounts with machines | 18 |
-| Machines (`machine_kb`) | 33 |
-| Documents (`kb_documents`) | 322 (215 pdf ready, 57 image, 25 file, 7 feedback, 18 in progress at query time) |
-| Chunks / assets | 11,361 / 2,292 |
+| Machines (`machine_kb`) | 33, of which 13 have chunks |
+| Documents (`kb_documents`) | 322 at first query |
+| Chunks / assets | about 12,000 / 2,292 |
+| Chunks per machine | 6,062, 3,356, 1,373, then 226 and below |
 | Stored bytes | ~1.46 GB |
 | Documents with `machine_id` null or orphaned | 0 |
+| Chunks or assets whose `machine_id` differs from their document's | 0 |
+| Machines with null `account_id` | 0 |
+| Embedding model | `voyage-4-large` on all 33 machines and all chunks |
+| PDFs by extraction | 116 text layer, 27 text layer + table repair, 71 OCR (no usable text layer) |
 | Same title + same byte size, same account | 36 groups, **all on the same machine**, ~171 MB redundant |
 | Titles present on more than one machine | 0 |
 
 So nobody shares documents today (they can't), and the same-machine exact duplicate already happens 36 times. The whole-file hash check pays off immediately.
+
+There is **one Supabase project**. Local dev, `npm run eval` and every script hit production. There is no staging database and no CI. Migrations are applied by hand with `npx supabase db push`, then the app is deployed.
 
 ## 4. Today's model and everything that depends on it
 
@@ -48,14 +54,17 @@ So nobody shares documents today (they can't), and the same-machine exact duplic
 - `kb_chunks.machine_id` and `kb_assets.machine_id` are denormalized copies, `NOT NULL`, no FK. **Search filters on `kb_chunks.machine_id`**, not on the document (`20260918120000_search_v2.sql`, vector and keyword branches of `search_kb` and `search_kb_multi`).
 - `kb_max_similarity` filters on `kb_chunks.machine_id` too, and has no `status='ready'` join (`20260813130000_kb_max_similarity.sql`).
 - There is **no accounts table**. A document's account is only reachable via `kb_documents.machine_id -> machine_kb.account_id`.
-- **No RLS policies and no storage policies exist.** All access goes through the service-role client; the app code is the whole security boundary. So this change is app code plus SQL functions, no policy rewrites.
+- **A machine's account can change today.** `ensureMachineKb` (`src/lib/ingestion.ts:780-797`) upserts `{machine_id, account_id}`, so the CLI's `--account-id` silently moves a machine. Fixed in Phase 0.
+- **No RLS policies and no storage policies exist.** All access goes through the service-role client; the app code is the whole security boundary.
 - `kb_documents.status` has a CHECK constraint that was never altered (`initial.sql:30`). This plan avoids adding statuses.
-- `kb_folders` is keyed `(machine_id, path)`; documents point at folders only by the `folder_path` string.
-- Precedent: `doc.folder_machines` (`20260526120000_doc_initial.sql:55-78`) is already a link table carrying `account_id` with an account-match trigger. `machine_documents` copies that pattern.
+- `kb_folders` is keyed `(machine_id, path)`; documents point at folders only by the `folder_path` string. There is no folder rename and no bulk `folder_path` update anywhere.
+- `machine_kb.active_embedding_model` is per machine, and search filters chunks on it. A shared document is only searchable on machines whose model matches its chunks.
+- No triggers, views, edge functions, pg_cron jobs or realtime subscriptions touch the KB tables. The only SQL functions that do are `search_kb`, `search_kb_multi` and `kb_max_similarity`.
+- `doc.folder_machines` (`20260526120000_doc_initial.sql:55-78`) is a loose precedent for a link table with an account check. Its trigger only checks the folder's account; ours checks both sides.
 
 ### 4.2 Every code site that reads or writes by machine
 
-Grouped from a full audit. Every row must be handled in the phase named.
+Every row must be handled in the phase named.
 
 | Area | Site | What it does today | Phase |
 |---|---|---|---|
@@ -65,75 +74,97 @@ Grouped from a full audit. Every row must be handled in the phase named.
 | Chat tools | `chat/route.ts` `get_page_image` | auth `allowed.includes(doc.machine_id)` | 3 |
 | Chat tools | `chat/route.ts` `executeGetStoredImage` | reads asset by document, no machine check | 3 (verify) |
 | Fleet | `src/lib/fleet.ts` `getFleetMachines` | doc count per machine | 3 |
+| Fleet drawer | `src/components/KnowledgeDrawer.tsx:140-144` | groups by the single `machineId` on each document | 3 |
 | Voice | `src/lib/searchKb.ts` `searchKb`, `listDocuments` | RPC `search_kb`, `.eq("machine_id")` | 3 |
 | Voice | `src/app/api/voice/realtime/session/route.ts` `buildVoiceInstructions` | doc list `.eq("machine_id")` | 3 |
-| Suggestions | `src/lib/suggestions.ts` `regenerateSuggestedQuestions` | doc list by machine, RPC `kb_max_similarity` | 3 |
+| Suggestions | `src/lib/suggestions.ts` `regenerateSuggestedQuestions`, `scripts/regenerate-suggestions.ts` | doc list by machine, RPC `kb_max_similarity` | 3 |
 | Transcripts | `src/app/api/conversations/[id]/route.ts` `attachSources` | names chip machine from `kb_documents.machine_id` | 3 |
 | Admin | `src/app/api/admin/machines/[id]/route.ts` GET | doc list + folders by machine | 3 |
 | Admin | `src/app/api/admin/machines/route.ts` | doc count per machine (reads all accounts, filters in memory) | 3 |
 | Admin | `src/app/api/admin/machines/[id]/folders/route.ts` | folder emptiness counts by machine | 4 |
-| Admin | `src/lib/autoOrganize.ts` | reads and moves docs `.eq("machine_id")` | 4 |
+| Admin | `src/lib/autoOrganize.ts` | reads and moves docs `.eq("machine_id")`, one row at a time | 4 |
+| Admin | `src/app/api/admin/documents/[id]/url/route.ts` | behind `assertDocumentAccess` | 0, 3 |
 | Operator | `src/app/api/machines/[id]/documents/route.ts` | `.eq("machine_id").eq("operator_visible", true)` | 3 |
 | Operator | `src/app/api/accounts/[id]/documents/route.ts` | `.in("machine_id", fleetIds)` + machine name | 3 |
 | Signed URLs | `src/app/api/documents/[id]/url/route.ts` | QR: `row.machine_id === qrMachineId`; bearer: account via machine | 3 |
 | Signed URLs | `src/app/api/assets/[id]/url/route.ts` | same, on `kb_assets.machine_id` | 3 |
-| Auth | `src/lib/auth.ts` `assertDocumentAccess` | embed `machine_kb!inner(account_id)` via the FK | 3 |
+| Auth | `src/lib/auth.ts:369` `assertDocumentAccess` | embed `machine_kb!inner(account_id)` via the FK | **0**, 3 |
+| Ingest sign/finalize | `src/app/api/admin/ingest/sign/route.ts`, `ingest/route.ts`, `ingest/image/route.ts`, `ingest/file/route.ts` | rebuild `${machineId}/${documentId}.ext` from the request | 4 |
 | Ingest PDF | `src/lib/ingestion.ts` `insertPdfDocRow`, `ingestPdfFromStorage` (row-machine 403 check), `insertChunkRows`, `reprocessPdf`, `flipStuck`, `cleanupStuckDocuments`, sweep `resumeStale` | writes `machine_id` on doc and chunks | 1 (trigger), 4 |
-| Ingest image/file | `src/lib/imageIngestion.ts`, `src/lib/fileIngestion.ts` | same | 1 (trigger), 4 |
+| Ingest figures | `src/lib/imageIngestion.ts` `attachPdfFigures` | inserts `kb_assets` and caption chunks with `machine_id`, on every reprocess and resume | 4 |
+| Ingest image/file | `src/lib/imageIngestion.ts`, `src/lib/fileIngestion.ts` (incl. `resumeQueuedFiles` / `retryFile` from the cron sweep) | same | 1 (trigger), 4 |
 | Experience docs | `src/lib/feedback.ts` `publishExperienceDoc`, `src/lib/distill.ts` | insert doc + chunks with `machine_id` | 1 (trigger) |
-| Delete doc | `src/app/api/admin/documents/[id]/route.ts` DELETE | deletes storage object, sidecar, row | 4 |
-| Move doc | same route, PATCH | `folder_path`, `operator_visible` on the document | 4 |
-| **Delete machine** | `src/app/api/admin/machines/[id]/route.ts` DELETE | **removes every storage object under `${id}/`**, relies on FK cascade | 4 (**blocker for sharing**) |
-| CLI | `src/lib/ingestion.ts` `resetMachineKb`, `scripts/ingest.ts` | delete all docs of a machine | 4 |
-| Evals | `scripts/eval.ts` | per machine | 3 (run as gate) |
+| Experience doc deletes | `src/app/api/chat/feedback/route.ts:131`, `src/lib/distill.ts:240,405`, `src/app/api/admin/insights/[id]/route.ts:140`, `src/lib/feedback.ts:149,170` | delete `kb_documents` rows directly | none (safe while feedback docs cannot be shared; Phase 5 enforces that) |
+| Delete doc | `src/app/api/admin/documents/[id]/route.ts` DELETE | removes storage object, sidecar, **then** row | 4 |
+| Move doc | same route, PATCH; client helpers `src/admin/adminApi.ts:259-289` and `MachineDetail.tsx:1026,1122,2017` | `folder_path`, `operator_visible` by document id only, no machine in the call | 4 |
+| **Delete machine** | `src/app/api/admin/machines/[id]/route.ts` DELETE | **removes storage objects under `${id}/`** (first 1,000 only), then relies on FK cascade | 4 (**blocker for sharing**) |
+| CLI | `src/lib/ingestion.ts` `resetMachineKb`, `ensureMachineKb`, `scripts/ingest.ts` | delete all docs of a machine; upsert the machine | 0, 4 |
+| Evals | `scripts/eval.ts` | 12 LLM chat cases over QR only | smoke test, not a gate |
 
 ## 5. Target model
 
 ```
 machine_kb (machine_id, account_id, ...)            unchanged
-kb_documents (id, account_id NEW, machine_id = "origin machine", content_sha256 NEW, ...)
+kb_documents (id, account_id NEW, machine_id = "home machine", content_sha256 NEW, ...)
 machine_documents NEW (machine_id, document_id, account_id, folder_path, operator_visible, created_at, created_by)
-kb_chunks, kb_assets                                 unchanged (machine_id becomes "origin", unused by new reads)
-kb_document_pages NEW (document_id, page, text_sha256, char_count)       Phase 6
-kb_document_coverage NEW (document_id, source_document_id, pages int[]) Phase 6
+kb_chunks, kb_assets                                 unchanged (machine_id = the document's home machine)
 ```
 
 Key decisions:
 
 - **A document is visible on a machine if and only if a `machine_documents` row links them.** All reads go through the link.
-- `kb_documents.machine_id` stays, renamed in meaning to **origin machine** (where it was first uploaded). It is used for usage attribution and as a fallback. Nothing authorizes on it after Phase 3.
-- **Folder and operator visibility move to the link** (`machine_documents.folder_path`, `machine_documents.operator_visible`). Folders are already per machine (`kb_folders`), so a shared manual can sit in "Electrical" on machine A and in "Manuals" on machine B, and be operator-visible on one but not the other. Title, summary, `meta`, file, chunks are on the document and shared. See open decision D1.
-- **Storage paths do not change.** New uploads keep `${machineId}/${documentId}.ext`. The path is just an address. The only code that treats the machine prefix as meaningful is the machine-delete prefix sweep, which Phase 4 removes. (This changes what was said in chat earlier, where account-level paths for new shared documents were suggested. Keeping the scheme means fewer moving parts and no backfill.)
+- **Every document keeps a home machine, and the home machine is always one of its linked machines.** `kb_documents.machine_id` stays `NOT NULL`. `kb_chunks.machine_id` and `kb_assets.machine_id` keep following it. When the home link is removed while other links remain, the document is **rehomed** to another linked machine in the same transaction (§7 Phase 4). To the user all links are equal; "home" is internal.
+  - Why not make the origin nullable (the first draft): reprocess, sweep resume, figure attach, the PATCH route and usage attribution all write or read the document's machine, and `kb_chunks.machine_id` / `kb_assets.machine_id` are NOT NULL. A null origin breaks all of them.
+  - Why this is safer for search: the existing query (`c.machine_id = p_machine_id`) stays valid for a machine's home documents. Shared documents are an extra branch. Before anyone shares, the new search functions run the same query as the old ones (§7 Phase 1).
+  - Why this is safer for rollback: the old read path keeps showing every document on a machine that is really linked to it.
+- **Folder and operator visibility live on the link** (`machine_documents.folder_path`, `machine_documents.operator_visible`). A shared manual can sit in "Electrical" on machine A and in "Manuals" on machine B, and be operator-visible on one but not the other. The document's own `folder_path` / `operator_visible` columns always equal the **home link's** values, kept in sync by triggers in both directions until Phase 6. Title, summary, `meta`, file and chunks are on the document and shared.
+- **Storage paths do not change.** New uploads keep `${machineId}/${documentId}.ext`. The path is just an address and stays put when a document is rehomed. Code must read `kb_documents.storage_path` and never rebuild the path from a machine id once the row exists.
+- **All structural changes go through SQL functions** (link, unlink, delete machine), each one transaction with a row lock. supabase-js cannot run a transaction, and these must be atomic.
+- **A document can only be linked to machines whose `active_embedding_model` matches its chunks.** All 33 match today.
 - Matching for duplicates is **always scoped to the caller's account.**
 
 ## 6. Safety principles (non-negotiable)
 
-1. **Expand, then switch, never contract (in this project).** Phases 1 and 2 only add columns, tables, functions and triggers. Old code keeps working against the new schema unchanged.
-2. **The database guarantees the link exists.** An `AFTER INSERT` trigger on `kb_documents` creates the origin link. Every insert path (PDF, image, file, CLI, experience docs, any path we forgot) is covered without touching that code. The backfill runs after the trigger is created, so in-flight ingests during the migration are covered either way.
-3. **Reads switch behind a flag, with rollback in seconds.** New SQL functions live beside the old ones; the old ones are never modified. Flag off means the old path.
-4. **Prove parity before switching.** Set equality and search result equality, on all production data, must be exact (§8).
-5. **Sharing is enabled only after delete semantics are fixed.** Otherwise deleting one machine could destroy a document another machine relies on. Phase 4 must be live before Phase 5.
-6. **Fail open on detection.** If hash checks or page analysis fail or time out, the upload proceeds exactly as today.
+1. **Expand, then switch, never contract (in this project).** Phases 1 and 2 only add columns, tables, functions and triggers.
+2. **Rehearse on a copy first.** Every migration and every parity script runs against a restored copy of production before it runs on production (Phase 0).
+3. **The database guarantees the link exists.** An `AFTER INSERT` trigger on `kb_documents` creates the home link. Every insert path is covered without touching that code. The backfill runs after the trigger is created, so in-flight ingests during the migration are covered either way.
+4. **Reads switch behind a database flag, with rollback in under a minute and no deploy.** New SQL functions live beside the old ones; the old ones are never modified.
+5. **The old read path stays correct until Phase 6.** Both sides are kept in sync (home machine, folder, visibility), so turning the flag off never shows stale folders or re-exposes a document an admin hid from operators.
+6. **Prove parity before switching.** Set equality and search result equality, on all production data, must be exact (§8).
+7. **Sharing is enabled only after delete semantics are fixed.** Phase 4 must be live, including the FK change, before Phase 5.
+8. **Database row first, storage second.** Deletes remove rows in a transaction and only then remove storage objects. A crash leaves an unreferenced file (harmless, swept later), never a row without its file.
+9. **Fail open on detection.** If hash checks fail or time out, the upload proceeds exactly as today.
 
 ## 7. Phases
 
-### Phase 0: baseline (no code)
+### Phase 0: groundwork (small code fixes, no schema change)
 
-- Confirm point-in-time recovery is enabled on the Supabase project; otherwise take a manual backup before each migration.
-- Record baseline: counts in §3, `npm run eval` report saved under `evals/out/`, and a search snapshot (§8.3) for every machine.
-- Note in-flight ingests; prefer to apply migrations when the queue is quiet (not required, the trigger covers it).
+Environment:
+
+- **Create a rehearsal database**: a second Supabase project restored from a production backup (a Supabase branch alone starts without data, so it is not enough). **Needs approval, it has a monthly cost while it exists.** Point a local `.env.rehearsal` at it. All later "rehearse" steps mean this copy.
+- Confirm point-in-time recovery is enabled on production; otherwise take a manual backup before each migration.
+- Record baseline: counts in §3 and a search snapshot (§8.3) for every machine.
+
+Code fixes, shipped and verified before migration A:
+
+- **Pin the FK in `assertDocumentAccess`** (`src/lib/auth.ts:369`): `machine_kb!kb_documents_machine_id_fkey!inner(account_id)`. Reason: `machine_documents` has FKs to both `kb_documents` and `machine_kb` inside its primary key, which the Supabase API treats as a many-to-many path. The unpinned embed would then be ambiguous and fail, breaking admin PATCH, DELETE, reprocess and the admin document URL from Phase 1 on. First step of the rehearsal is to reproduce this failure on the copy with the old code, then confirm the pinned embed works.
+- **`ensureMachineKb` must not overwrite `account_id`**: insert if missing, and throw if the machine exists under a different account.
+- **Image finalize retry** (`imageIngestion.ts:141-203`): a retried finalize hits a duplicate key and `markFailedOnError` flips the existing, possibly ready, row to `failed`. Detect the existing row first and return done. Same check for file finalize (`fileIngestion.ts:101-115`), which returns a 500 today. Not caused by this plan, but shared documents raise the cost of that bug.
 
 ### Phase 1: additive schema (migration A, no behavior change)
 
 `supabase/migrations/<ts>_shared_documents_expand.sql`:
 
 ```sql
+set lock_timeout = '5s';   -- fail fast instead of queueing chat reads behind a blocked ALTER; retry if it trips
+
 -- 1. account on documents
 alter table kb_documents add column account_id text;
 update kb_documents d set account_id = m.account_id
   from machine_kb m where m.machine_id = d.machine_id and d.account_id is null;
 
-create or replace function kb_documents_fill_account() returns trigger language plpgsql as $$
+create or replace function kb_documents_fill_account() returns trigger
+language plpgsql set search_path = public as $$
 begin
   if new.account_id is null then
     select account_id into new.account_id from machine_kb where machine_id = new.machine_id;
@@ -146,7 +177,7 @@ create trigger kb_documents_fill_account before insert on kb_documents
 alter table kb_documents alter column account_id set not null;   -- safe: backfilled + trigger
 create index kb_documents_account_idx on kb_documents (account_id);
 
--- 2. link table (pattern: doc.folder_machines)
+-- 2. link table
 create table machine_documents (
   machine_id       text not null references machine_kb(machine_id) on delete cascade,
   document_id      uuid not null references kb_documents(id) on delete cascade,
@@ -162,7 +193,8 @@ create index machine_documents_folder_idx on machine_documents (machine_id, fold
 alter table machine_documents enable row level security;   -- no policies, same as every kb table
 
 -- account-match guard: a link may only join a machine and a document of the same account
-create or replace function machine_documents_assert_account() returns trigger language plpgsql as $$
+create or replace function machine_documents_assert_account() returns trigger
+language plpgsql set search_path = public as $$
 begin
   if new.account_id is distinct from (select account_id from machine_kb where machine_id = new.machine_id)
      or new.account_id is distinct from (select account_id from kb_documents where id = new.document_id) then
@@ -173,23 +205,26 @@ end $$;
 create trigger machine_documents_assert_account before insert or update on machine_documents
   for each row execute function machine_documents_assert_account();
 
--- 3. every new document gets its origin link automatically
-create or replace function kb_documents_link_origin() returns trigger language plpgsql as $$
+-- 3. every new document gets its home link automatically
+create or replace function kb_documents_link_home() returns trigger
+language plpgsql set search_path = public as $$
 begin
   insert into machine_documents (machine_id, document_id, account_id, folder_path, operator_visible, created_by)
   values (new.machine_id, new.id, new.account_id, new.folder_path, new.operator_visible, new.created_by)
   on conflict do nothing;
   return new;
 end $$;
-create trigger kb_documents_link_origin after insert on kb_documents
-  for each row execute function kb_documents_link_origin();
+create trigger kb_documents_link_home after insert on kb_documents
+  for each row execute function kb_documents_link_home();
 
--- 4. transition mirror: old code still writes folder_path / operator_visible on the document
-create or replace function kb_documents_mirror_link() returns trigger language plpgsql as $$
+-- 4. mirror document -> home link (old code writes folder_path / operator_visible on the document)
+create or replace function kb_documents_mirror_link() returns trigger
+language plpgsql set search_path = public as $$
 begin
   update machine_documents
      set folder_path = new.folder_path, operator_visible = new.operator_visible
-   where machine_id = new.machine_id and document_id = new.id;
+   where machine_id = new.machine_id and document_id = new.id
+     and (folder_path, operator_visible) is distinct from (new.folder_path, new.operator_visible);
   return new;
 end $$;
 create trigger kb_documents_mirror_link after update of folder_path, operator_visible on kb_documents
@@ -204,19 +239,33 @@ on conflict do nothing;
 alter table kb_documents add column content_sha256 text;
 create index kb_documents_account_sha_idx on kb_documents (account_id, content_sha256)
   where content_sha256 is not null;
+
+-- 7. read flag (used from Phase 3)
+alter table account_flags add column kb_links_read boolean;          -- null = follow the default
+create table kb_settings (id boolean primary key default true check (id), links_read_default boolean not null default false);
+insert into kb_settings default values;
+alter table kb_settings enable row level security;
 ```
 
-Plus new, **separate** SQL functions. The old `search_kb`, `search_kb_multi`, `kb_max_similarity` are not touched:
+The insert paths keep writing `folder_path` on the document, as today. The home-link trigger copies it. That column is not "unused".
 
-- `search_kb_linked(p_machine_id, ...)`: identical body to `search_kb` except the machine filter becomes
-  `join machine_documents md on md.document_id = c.document_id and md.machine_id = p_machine_id`
-  in both the vector and keyword branches. Same return type, same diversity caps, same `hnsw.ef_search` and `iterative_scan` settings (re-apply the DO block from `search_v2.sql:299-320`).
-- `search_kb_multi_linked(p_machine_ids, ...)`: same, with `md.machine_id = any(p_machine_ids)`. A chunk whose document is linked to several requested machines must appear **once**: pick a deterministic attribution machine (`min(md.machine_id)` among the requested set) for the existing `machine_id` column and the per-machine quota, and add a `machine_ids text[]` column with all of them. New return type, so it is a new function anyway.
-- `kb_max_similarity_linked`: same filter change. Keep the current semantics exactly (no `status='ready'` join), so parity holds.
+**New search functions.** Separate functions; the old `search_kb`, `search_kb_multi`, `kb_max_similarity` are not touched.
 
-Rollback: `drop` the new functions, triggers, table and columns. Old code never noticed them.
+Measured on production during review: the old filter uses the approximate vector index for the largest machine (6,062 chunks, under 1 ms). Replacing the filter with a join through the link table turned that into an exact scan: 47 ms warm, **3 to 5.7 s cold**, and different results. So the filter is **not** replaced. Each candidate branch gets a second source instead:
 
-Verification: §8.1 and §8.2 must return zero rows right after the migration.
+- `search_kb_linked(p_machine_id, ...)`:
+  - **Home branch:** the existing `vector_hits` and `keyword_hits` queries, textually unchanged (`c.machine_id = p_machine_id`). The home invariant guarantees these documents are linked.
+  - **Linked-in branch:** the same two queries over chunks of documents linked to `p_machine_id` whose home is another machine (`join machine_documents md ... where md.machine_id = p_machine_id and d.machine_id <> p_machine_id`), each limited to `p_candidates`.
+  - Candidates = the best `p_candidates` of both branches together, ranked once. Everything after that (fusion, per-document cap, asset cap, final limit, return type) is the existing code. Same `hnsw.ef_search` and `iterative_scan` settings (re-apply the DO block from `search_v2.sql:299-320`).
+  - Until a document is shared, the linked-in branch is empty and the function returns exactly what `search_kb` returns.
+- `search_kb_multi_linked(p_machine_ids, ...)`: home branch `c.machine_id = any(p_machine_ids)` unchanged; linked-in branch covers documents linked to any requested machine whose home is **not** in the requested set. A chunk therefore appears once by construction. Linked-in chunks are attributed to `min(md.machine_id)` among the requested machines for the existing `machine_id` column and the per-machine quota. Add a `machine_ids text[]` column listing every requested machine the document is linked to (new return type).
+- `kb_max_similarity_linked`: `greatest` of the existing query and the same query over linked-in documents. Keep the current semantics exactly (no `status='ready'` join).
+
+The linked-in branch is an exact scan over the shared documents' chunks. Its cost only appears once sharing exists. Measure it on the rehearsal copy by linking the largest document (about 1,900 chunks) to a second machine: warm and cold. **Budget: warm within 50 ms of today, cold under 500 ms.** If it misses the budget, stop and redesign before Phase 5 (options: prewarm, a per-machine cap, or copying chunks for shared documents). Phases 1 to 4 are not affected by that outcome.
+
+Rollback: `drop` the new functions, triggers, tables and columns. Old code never noticed them.
+
+Verification: rehearse on the copy first, including the admin document routes (Phase 0 embed fix). Then on production, §8.1 and §8.2 must return zero rows right after the migration.
 
 ### Phase 2: file hashes (low risk)
 
@@ -224,157 +273,141 @@ Verification: §8.1 and §8.2 must return zero rows right after the migration.
   - PDF: `ingestPdfFromStorage` right after the download, passed into `insertPdfDocRow`.
   - Image: `ingestImageFromStorage` (`fileBuffer`), into the insert in `runImagePipeline`.
   - File: `ingestFileFromStorage` (`fileBuffer`), into its insert.
-  - CLI `ingestPdf` / `ingestImage` have the buffer up front.
-- **Backfill:** `scripts/backfill-content-hash.ts`. For each document with `storage_path` and null hash: download, hash, update. Idempotent, resumable, batched, run locally (not on Vercel). ~1.46 GB total. Experience docs have no file and stay null.
-- Verify: count of non-feedback docs with null hash is 0; spot-check the 36 known duplicate groups now share a hash.
+  - CLI `ingestPdf` has the buffer up front.
+  - Stored files never change after upload (the signed PUT uses `x-upsert: false`, reprocess does not replace the file), so the hash stays valid.
+- **Backfill:** `scripts/backfill-content-hash.ts`, run **after** the write-path deploy is live (rows inserted by old code mid-deploy have no hash). For each document with `storage_path` and null hash: download, hash, update. Idempotent, resumable, batched, run locally. ~1.46 GB total.
+- Verify: count of documents with null hash is 0, **excluding** `source_type = 'feedback'` (no file) and `status = 'failed'` (rejected uploads keep `storage_path` but their file is deleted). Spot-check that the 36 known duplicate groups now share a hash.
 
 ### Phase 3: switch reads behind a flag
 
-Flag: env `KB_LINKS_READ`, value `off` | `on` | comma-separated account ids. Resolved server-side by one helper `useLinkedReads(accountId)` in a new `src/lib/kbLinks.ts`. That file also holds the shared query helpers so call sites don't each re-implement the link join:
+Flag: `account_flags.kb_links_read` (null means follow `kb_settings.links_read_default`). Resolved by one helper `useLinkedReads(accountId)` in a new `src/lib/kbLinks.ts`, cached in process for 30 seconds. Rollback is one SQL update and takes effect within 30 seconds, with no deploy. (An env var would need a redeploy on Vercel.)
+
+`kbLinks.ts` also holds the shared query helpers so call sites don't each re-implement the link join:
 
 - `linkedDocumentIds(machineIds)`, `documentsForMachine(machineId, filters)`, `machinesForDocument(documentId)`, `isDocumentOnMachine(documentId, machineId)`, `documentAccountId(documentId)`.
 
 Change every Phase 3 row in §4.2:
 
 - **Search:** RPC name chosen by the flag (`search_kb` vs `search_kb_linked`, etc.). Chips: when `machine_ids` has more than one entry, label with all machine names (fleet only).
-- **Doc lists** (chat prompt, voice prompt, `list_documents`, operator routes, admin machine GET, suggestions): query through `machine_documents`, taking `folder_path` and `operator_visible` from the link. **Keep the exact same ordering and fields**, so the chat system prompt stays byte-identical and the 1h prompt cache is not invalidated by the switch.
+- **Doc lists** (chat prompt, voice prompt, `list_documents`, operator routes, admin machine GET, suggestions): query through `machine_documents`, taking `folder_path` and `operator_visible` from the link. **Keep the exact same ordering, fields and filters**, so the chat system prompt stays byte-identical and the 1h prompt cache is not invalidated by the switch. That includes today's quirk that the voice lists do not filter `operator_visible` (§9.11): preserve it here, fix it separately.
+- **Fleet lists** (`accounts/[id]/documents` and `KnowledgeDrawer.tsx`): return **one row per link**, so a shared document shows under each machine it is on. The drawer's grouping keeps working unchanged. Only search dedupes.
 - **Counts** (`getFleetMachines`, admin machines list): count links. Also fix the admin machines list to scope to the caller's accounts while there.
 - **Auth:**
   - `assertDocumentAccess`: check `kb_documents.account_id` directly, no FK embed.
   - Document and asset signed-URL routes: QR session allowed if `isDocumentOnMachine(doc, qrMachineId)`; bearer allowed if the document's `account_id` matches. Assets resolve through `kb_assets.document_id`.
   - `get_page_image`: allowed if the document is linked to any machine in `allowedMachineIds`.
-  - `ingestPdfFromStorage` row check: stays as is (it guards a document being created on this machine; unchanged meaning).
+  - `ingestPdfFromStorage` row check: unchanged in this phase.
 - **Transcripts** (`attachSources`): name machines from links intersected with the conversation's machines.
 
-Rollout: our own account first, then all. Before each step run §8 parity. Rollback: set the flag to `off`.
+Rollout: rehearse on the copy; then our own account on production; then the default for all. Before each step run §8 parity. Rollback: set the flag off.
 
-Exit criteria: flag `on` for all accounts for at least one week, evals green, no access errors in logs.
+Exit criteria: default on for at least one week, §8 parity green, no access errors in logs.
 
 ### Phase 4: switch writes and fix delete semantics (must ship before Phase 5)
 
-Migration B:
+Three steps, in this order. Do not combine them into one deploy.
+
+**Step 1, migration B1 (additive): SQL functions and the reverse mirror.**
+
+- Reverse mirror trigger on `machine_documents` (`after update of folder_path, operator_visible`): copy to `kb_documents` when the link is the home link, guarded with `is distinct from` so the two mirrors cannot loop. From here the document's columns equal the home link no matter which side is written.
+- `kb_unlink_document(p_machine_id, p_document_id)`:
+  1. Lock the document row (`for update`).
+  2. Delete the link.
+  3. If no links remain: delete the document row (cascades chunks and assets) and return its storage paths (object and sidecar).
+  4. Else if the removed link was the home: **rehome**. Pick the oldest remaining link; set `kb_documents.machine_id`, `folder_path`, `operator_visible` from it; update `kb_chunks.machine_id` and `kb_assets.machine_id` for the document.
+- `kb_link_document(p_machine_id, p_document_id, p_folder_path, p_created_by)`: lock the document row, then insert the link. Rejects: document not found (deleted meanwhile), different account, `source_type = 'feedback'`, embedding model mismatch between the machine and the document's chunks. Idempotent.
+- `kb_delete_machine(p_machine_id)`: runs the unlink logic for every linked document, deletes the machine row, returns all storage paths of fully deleted documents. One transaction.
+- `kb_delete_document(p_document_id)`: delete everywhere. Lock, delete the row, return storage paths.
+
+Rehearse on the copy with the largest machine: rehoming rewrites every chunk row of the document (including its vector index entries), and a machine delete cascades thousands of chunks. Measure against the statement timeout and set a local `statement_timeout` in the functions if needed.
+
+**Step 2, code deploy.**
+
+- **Delete document becomes "remove from this machine".** New route `DELETE /api/admin/machines/[id]/documents/[docId]`: fence in-flight ingest as today, call `kb_unlink_document`, then remove any returned storage paths, then regenerate suggestions for that machine. The old `DELETE /api/admin/documents/[id]` becomes "delete everywhere" via `kb_delete_document` (regenerate suggestions for every machine that was linked). `MachineDetail.tsx` single and bulk delete call the new route.
+- **Delete machine:** replace the `${id}/` prefix sweep with `kb_delete_machine`, then remove the returned storage paths. Shared documents survive and are rehomed. This also removes the 1,000-object limit of today's sweep.
+- **`resetMachineKb` (CLI):** unlink every document of the machine through the same function. Today it leaves sidecars behind; the returned paths include them.
+- **Folders and visibility:** new route `PATCH /api/admin/machines/[id]/documents/[docId]` for `folderPath` and `operatorVisible`, writing the link (with `ensureFolderPath` for that machine). The client helpers in `adminApi.ts:259-289` and their callers gain a machine id. The old `PATCH /api/admin/documents/[id]` keeps document-level fields only (title). Auto-organize and the folder emptiness check read and write `machine_documents` for the machine in context.
+- **Ingest:**
+  - Sign and finalize routes, sweep and reprocess use `kb_documents.storage_path` once the row exists; they never rebuild the path from a machine id.
+  - The finalize row check (`ingestion.ts:1520`) and the PATCH/reprocess guards accept any machine the document is linked to (`isDocumentOnMachine`), not only the home.
+  - Pipeline writes (`insertChunkRows`, `attachPdfFigures`, `retryFile`) keep using the document's current home `machine_id`, read from the row at write time.
+- **Document changes reach every machine:** when an ingest or reprocess finishes, suggestions are regenerated for the home machine inside the pipeline as today, and for the other linked machines **after** the response (not inside the ingest time budget, where a slow regeneration would report a timeout for a document that succeeded). Title edits regenerate nothing today; keep that.
+
+**Step 3, migration B2, after step 2 is live and verified.**
 
 ```sql
-alter table kb_documents alter column machine_id drop not null;
+set lock_timeout = '5s';
 alter table kb_documents drop constraint kb_documents_machine_id_fkey;
 alter table kb_documents add constraint kb_documents_machine_id_fkey
-  foreign key (machine_id) references machine_kb(machine_id) on delete set null;
+  foreign key (machine_id) references machine_kb(machine_id);   -- NO ACTION, was CASCADE
 ```
 
-From here a document outlives its origin machine. Deleting a machine removes its links (FK cascade on `machine_documents`) and only nulls the origin.
+From here a machine row cannot be deleted while it is still the home of any document, so no code path can destroy documents by deleting a machine directly. `kb_delete_machine` unlinks or rehomes first, so it is unaffected. The constraint name stays the same, so the pinned embed from Phase 0 keeps working.
 
-Code:
+Why B2 comes last: the old machine DELETE removes storage objects first and then the row. With NO ACTION and old code still running, the row delete would fail **after** the files were gone.
 
-- **Delete document becomes "remove from this machine".** New route `DELETE /api/admin/machines/[id]/documents/[docId]`: delete the link; if no links remain, run the existing full delete (storage object, sidecar, row, cascade). Regenerate suggestions for that machine. The old `DELETE /api/admin/documents/[id]` becomes "delete everywhere" (full delete, regenerate suggestions for every machine that was linked). `MachineDetail.tsx` single and bulk delete call the new route.
-- **Delete machine:** replace the `${id}/` prefix sweep with: collect the machine's linked documents; delete the machine (cascade removes links, nulls origins); for each collected document with zero remaining links, run the full delete. Shared documents survive. Leftover orphans are handled by a separate, read-first sweep script (§9.4).
-- **`resetMachineKb` (CLI):** same rule as machine delete.
-- **Folders and visibility:** PATCH move and visibility, auto-organize, folder emptiness checks write and read `machine_documents` for the machine in context. After this, drop the mirror trigger (migration C) in the same deploy, since nothing writes those fields on the document any more. Keep `kb_documents.folder_path`/`operator_visible` columns, unused.
-- **Document changes reach every machine:** reprocess, title/summary edit and ingest completion call `regenerateSuggestedQuestionsSafe` for every linked machine, not just the origin.
-- **Ingest guards that are by machine** (`flipStuck`, `cleanupStuckDocuments`): keep by origin, plus allow `null` origin (skip machine filter).
+Both mirror triggers stay until Phase 6.
 
-Rollback: flag off restores reads. Migration B is not reverted (relaxing a constraint is harmless to old code). If sharing (Phase 5) has not been enabled, there is no data the old path cannot see.
+Rollback: flag off restores reads, and they stay correct because both sides are in sync. Step 2 can be rolled back to the previous deployment as long as B2 has not been applied. B1 is additive.
 
 ### Phase 5: link instead of upload
 
-Gate: `account_flags.shared_documents boolean default false` (existing per-account flag table, `src/lib/accountFlags.ts`). Only accounts with Phase 3 reads on.
+Gate: `account_flags.shared_documents boolean default false` (new column; `src/lib/accountFlags.ts` needs it in `COLUMNS`, `toFlags` and the patch type). Only for accounts with linked reads on. **Precondition:** the linked-in search branch met its latency budget on the rehearsal copy (Phase 1).
 
-- **Check endpoint** `POST /api/admin/ingest/check` `{ machineId, files: [{ name, size, sha256 }] }`. Auth: `assertMachineAccess`. Looks up `content_sha256` in the machine's account only, excluding `failed` documents. Returns per file one of:
+- **Check endpoint** `POST /api/admin/ingest/check` `{ machineId, files: [{ name, size, sha256 }] }`. Auth: `assertMachineAccess`. Looks up `content_sha256` in the machine's account only, excluding `failed` and `feedback` documents. Returns per file one of:
   - `none`
   - `on_this_machine { documentId, title }`
   - `on_other_machines { documentId, title, machines: [{ id, name }] }`
 - **Client hashing:** in `UploadCard` handlers (`MachineDetail.tsx`), hash with `crypto.subtle.digest('SHA-256', await file.arrayBuffer())` before `enqueueUploads`. Max file is 100 MB (bucket limit), acceptable in memory. Show a "Checking files..." state. If hashing or the check fails, enqueue as today (fail open).
+  - Also compare hashes **within the drop**, so two identical files in one batch are caught.
+  - The queue already flags same-title duplicates (`uploadQueue.tsx:83-85`, `363-364`). Replace that with the hash result where one exists.
 - **Batch dialog** when any file matched (one dialog per drop, not per file), with per-file choices preselected:
   - matched on another machine: **Link** (default) / Upload anyway / Skip
   - matched on this machine: **Skip** (default) / Upload anyway
   - buttons: "Apply", "Upload all anyway"
-  - Built on the existing `AutoOrganizeDialog` pattern (`useFocusTrap`, `dialog-overlay`/`dialog-panel`, `Checkbox`, `Button`). **Needs a design reference before building** (CLAUDE.md; open decision D6).
-- **Link endpoint** `POST /api/admin/machines/[id]/documents/link` `{ documentId, folderPath }`: `assertMachineAccess`, verify the document's account matches, insert link (`ensureFolderPath` first), regenerate suggestions for this machine. Idempotent.
+  - Built on the existing `AutoOrganizeDialog` pattern (`useFocusTrap`, `dialog-overlay`/`dialog-panel`, `Checkbox`, `Button`). **Needs a design reference before building** (CLAUDE.md; open decision D5).
+- **Link endpoint** `POST /api/admin/machines/[id]/documents/link` `{ documentId, folderPath }`: `assertMachineAccess`, `ensureFolderPath`, `kb_link_document` (which enforces account, source type and embedding model), regenerate suggestions for this machine. Idempotent.
 - **"Shared with N machines" tag** in the machine document list (existing `Tag` component), with the machine names in a tooltip. Delete on a shared document asks "Remove from this machine" vs "Delete from all N machines" (`useConfirm` covers the two-way case; a three-way needs the dialog pattern).
 - The server hash computed at finalize (Phase 2) is authoritative. A wrong client hash can only cause a missed match or a link offer to a document in the same account, never a cross-account leak, because the check is account-scoped.
 
-### Phase 6: process only the new pages (PDF)
+### Phase 6: tidy up (optional, months later)
 
-**6a. Page fingerprints.** New table:
-
-```sql
-create table kb_document_pages (
-  document_id uuid not null references kb_documents(id) on delete cascade,
-  page        int  not null,
-  text_sha256 text not null,
-  char_count  int  not null,
-  primary key (document_id, page)
-);
-create index kb_document_pages_sha_idx on kb_document_pages (text_sha256);
-```
-
-- Hash the **pdf-parse text layer** per page (not the OCR text), because a new upload can only cheaply produce the text layer. Normalize: Unicode NFKC, collapse whitespace, trim. Skip pages under `OCR_PAGE_MIN_CHARS` (100) characters: unhashable, always treated as new.
-- `extractPdfText` (`src/lib/pdfText.ts`) returns the text-layer pages alongside the result; `runPdfPipelineSteps` writes them at the swap point (where the complete sidecar is written).
-- Backfill: `scripts/backfill-page-hashes.ts`, runs `parseWithRepair` (to be exported) on each stored PDF locally. The 90 MB / 1930-page Kvik manual is the worst case; run with no deadline.
-
-**6b. Analyze step after upload, before finalize.**
-
-- `POST /api/admin/ingest/analyze { machineId, documentId }` after the PUT (split point: `directUpload` in `src/admin/adminApi.ts`, between `putToSignedUrl` and finalize). Downloads the object, parses the text layer with a deadline, hashes pages, matches against `kb_document_pages` joined to `kb_documents` in the same account.
-- Returns `{ pageCount, matches: [{ documentId, title, machines, pages: [ranges], sourcePages: [ranges] }], newPages: [ranges] }`.
-- **Offer only when it is worth it:** at least 5 matched pages and at least 20% of the file, from a single source document (v1). Ignore page hashes that occur in 3 or more documents of the account (cover pages, blank templates, generic TOCs).
-- No row exists yet, so no new `kb_documents.status` is needed.
-
-**6c. Decision in the upload queue.**
-
-- New queue status `needs_decision` in `uploadQueue.tsx` (`processNext` only picks `pending`, so parked items are skipped naturally; extend `hasActive` and the panel counts). Item row shows: "Pages 1 to 40 already exist in 'KF1 ...' (on Machine A). Process only pages 41 to 52?" with **Only new pages** / **Process everything** / **Cancel upload**.
-- Cancel deletes the uploaded storage object.
-- The remaining items keep processing while one waits.
-
-**6d. Skipping pages in the pipeline.** Persist on the row so the sweep and reprocess see it:
-
-```sql
-alter table kb_documents add column skip_pages int[];
-create table kb_document_coverage (
-  document_id        uuid not null references kb_documents(id) on delete cascade,
-  source_document_id uuid not null references kb_documents(id) on delete restrict,
-  pages              int[] not null,
-  primary key (document_id, source_document_id)
-);
-```
-
-Threading `skip_pages` (from the ingest audit):
-
-1. `insertPdfDocRow` writes it; `PipelineArgs` reads it; finalize `makeBody` in `adminApi.ts` sends it on both the first call and the resume path, since `postJsonUntilDone` re-sends the body.
-2. `extractPdfText`: remove skipped pages from `allPages` and `scannedPages`; pass into `repairTables`/`tablePages` and **filter before the `MAX_TABLE_PAGES = 60` cap**; compute the too-thin whole-document decision over kept pages only; blank skipped pages' text but **keep their `<<<page:N>>>` markers**, so every kept page keeps its original page number.
-3. Figures: filter in `extractPdfFigures` after `figurePages` (before its 150 cap) **and** on the returned figures, since the fallback sends the whole PDF.
-4. Chunking and embedding need no change: blank pages produce no chunks; page numbers stay original.
-5. `ensureDocumentMeta` would see only the new pages: copy `meta` from the source document instead of re-deriving.
-6. `page_count` stays the full file's page count. The full KF2 PDF is stored, so citations, `#page=` links and `get_page_image` keep working.
-7. Bump `SIDECAR_VERSION` so in-flight sidecars from before the change re-extract cleanly.
-
-Behavior:
-
-- If the source document is on another machine, "Only new pages" also links the source to this machine (otherwise pages 1 to 40 would not be searchable here). The dialog says so.
-- Answers about pages 1 to 40 cite KF1 with KF1's page numbers.
-- **Dependency guard:** `on delete restrict` on `source_document_id` stops a full delete of KF1 while KF2 depends on it. Unlinking or deleting KF1 on a machine where KF2 depends on it shows: "KF2 relies on pages from this document. Reprocess KF2 fully, or cancel." Reprocess clears `skip_pages` and the coverage row.
-- `evals/README.md` requires all deterministic evals to pass before changes to `extractPdfText`/`chunkText` ship. With `skip_pages` empty the code path must be byte-identical; add an eval that ingests a small KF1/KF2-style pair.
-
-### Phase 7: tidy up (optional, months later)
-
-Stop writing `kb_chunks.machine_id`/`kb_assets.machine_id`, drop the old search functions, drop the flag. Only after Phase 5 has run without incident for a long time. Not required.
+Drop the mirror triggers and the document-level `folder_path` / `operator_visible`, drop the old search functions, drop the flag. Only after Phase 5 has run without incident for a long time. Not required.
 
 ## 8. Verification
 
-### 8.1 Link completeness (must be zero rows, run after Phase 1 and before every rollout step)
+Run everything on the rehearsal copy first, then on production.
+
+### 8.1 Invariants (must be zero rows; after Phase 1 and before every rollout step, and worth a daily check once sharing is on)
 
 ```sql
--- every document has its origin link
+-- every document has its home link
 select d.id from kb_documents d
 left join machine_documents md on md.document_id = d.id and md.machine_id = d.machine_id
-where d.machine_id is not null and md.document_id is null;
+where md.document_id is null;
 
--- no link crosses accounts
-select md.* from machine_documents md
+-- no document without links
+select d.id from kb_documents d
+where not exists (select 1 from machine_documents md where md.document_id = d.id);
+
+-- no link crosses accounts, and document account matches its home machine
+select md.document_id from machine_documents md
 join kb_documents d on d.id = md.document_id
 join machine_kb m on m.machine_id = md.machine_id
 where md.account_id <> d.account_id or md.account_id <> m.account_id;
+
+-- chunks and assets follow the document's home
+select c.id from kb_chunks c join kb_documents d on d.id = c.document_id where c.machine_id <> d.machine_id
+union all
+select a.id from kb_assets a join kb_documents d on d.id = a.document_id where a.machine_id <> d.machine_id;
+
+-- document folder and visibility equal the home link's
+select d.id from kb_documents d
+join machine_documents md on md.document_id = d.id and md.machine_id = d.machine_id
+where (d.folder_path, d.operator_visible) is distinct from (md.folder_path, md.operator_visible);
 ```
 
-### 8.2 Set equality per machine (before Phase 5, must be zero rows)
+### 8.2 Set equality per machine (until Phase 5 is enabled for an account, must be zero rows)
 
 ```sql
 (select machine_id, id from kb_documents
@@ -384,51 +417,87 @@ union all
  except select machine_id, id from kb_documents);
 ```
 
-Also folder and visibility parity: `kb_documents.folder_path/operator_visible` equal to the origin link's values.
-
 ### 8.3 Search parity (script `scripts/verify-kb-links.ts`)
 
-For every machine, for the eval questions plus 20 sample queries per machine (titles and summary phrases), call old and new functions with the same embedding and compare: identical `chunk_id` order and scores for `search_kb` vs `search_kb_linked`, same for `search_kb_multi` on each account's fleet, and identical `kb_max_similarity`. Any difference blocks the rollout. Also record `explain analyze` timings for both; the new one must not be materially slower.
+For every machine, for the eval questions plus 20 sample queries per machine (titles and summary phrases), call old and new functions with the same embedding and compare: identical `chunk_id` order and scores for `search_kb` vs `search_kb_linked`, same for `search_kb_multi` on each account's fleet, and identical `kb_max_similarity`. Because the home branch is the same query, identical is the right bar while nothing is shared. If a difference appears, compare both against an exact scan to tell a real difference from the vector index's approximation, and stop the rollout until it is explained.
+
+Also record `explain analyze` timings for both, warm and cold. And once, on the copy: the shared-document latency test from Phase 1.
 
 ### 8.4 App-level checks
 
-- `npm run lint`, `tsc --noEmit`, `npm run eval` with all deterministic cases green.
+- `npm run lint`, `tsc --noEmit`.
+- `npm run eval` as a **smoke test only**. It is 12 LLM chat cases over the QR path against production; it does not cover admin, voice, operator lists or fleet, and its answers vary. It is not a parity gate.
 - The chat system prompt for each machine is byte-identical with the flag off and on (log a hash of the system block in a one-off script).
-- Manual smoke per phase in a test account: upload PDF/image/xlsx, ask with citations, open cited page, QR session view, operator document list, fleet chat, move to folder, toggle visibility, delete, delete machine.
+- Manual smoke per phase, on the rehearsal copy first: upload PDF/image/xlsx, ask with citations, open cited page, QR session view, operator document list, fleet chat and drawer, voice, move to folder, toggle visibility, reprocess, delete, delete machine. From Phase 4 also: delete a machine that is the home of a shared document, then reprocess that document from the other machine.
 
 ## 9. Risks and edge cases
 
-1. **Machine delete destroying shared files.** Today it sweeps the `${id}/` storage prefix. Legacy files of a document shared later still live under the origin prefix. Fixed in Phase 4, which is why Phase 5 depends on it.
-2. **Rolling reads back after sharing exists.** The old functions only see origin machines, so linked machines would lose shared documents until the flag goes back on. Acceptable as an emergency measure; documented, not silent.
-3. **Fleet duplicates.** A shared document must appear once in fleet search and fleet lists. Handled in `search_kb_multi_linked` and the account documents route.
-4. **Orphan storage objects.** After Phase 4 no prefix sweep exists. A script lists objects in `kb-documents`/`kb-images` not referenced by any `kb_documents.storage_path`, sidecar, or `kb_assets.storage_path`, prints them, and deletes only with an explicit `--delete`.
-5. **Prompt cache.** Any change in doc list order or format invalidates the 1h prompt cache and changes behavior. Parity check in §8.4.
-6. **Scanned PDFs.** No text layer, so page overlap is invisible in v1. Whole-file duplicates are still caught by the file hash. A v2 could hash each page's raw content stream via pdf-lib, or a downscaled render.
-7. **Same text, different figure.** Two pages with identical text but a changed diagram would be skipped. The user sees the page ranges and decides; v1.1 could also compare the image-object count per page from `analyzePdfFigures`.
-8. **Concurrent ingest during migration.** Covered by trigger-before-backfill ordering.
-9. **Cross-account leak.** All matching is account-scoped in SQL; the link trigger rejects cross-account links.
-10. **Pre-existing gap, out of scope:** the voice routes do not check a bearer caller's machine against their account (`src/app/api/voice/realtime/tool/route.ts`, `session/route.ts`). Worth fixing separately.
+1. **Machine delete destroying shared files.** Today it sweeps the `${id}/` storage prefix. Fixed in Phase 4 by deleting only the files of documents that lost their last link.
+2. **Crash in the middle of a delete.** Rows are removed in one transaction; storage is removed afterwards. A crash leaves unreferenced files only. A script lists objects in `kb-documents` / `kb-images` not referenced by any `kb_documents.storage_path`, sidecar, or `kb_assets.storage_path`, prints them, and deletes only with an explicit `--delete`. It also catches uploads that were signed and PUT but never finalized.
+3. **Link racing with the last unlink.** Both lock the document row, so either the link lands first and the document survives, or the document is gone and the link fails with "not found".
+4. **Rolling reads back after sharing exists.** The old functions see each document only on its home machine, so other linked machines lose it until the flag goes back on. Folders and visibility stay correct. Acceptable as an emergency measure; documented, not silent.
+5. **Fleet duplicates.** Search returns a shared chunk once by construction. Fleet lists show one row per link on purpose.
+6. **Prompt cache.** Any change in doc list order or format invalidates the 1h prompt cache and changes behavior. Parity check in §8.4.
+7. **Concurrent ingest during migration.** Covered by trigger-before-backfill ordering and `lock_timeout`.
+8. **Cross-account leak.** All matching is account-scoped in SQL; the link trigger rejects cross-account links; a machine can no longer change account (Phase 0).
+9. **Different embedding models.** A document linked to a machine with another model would be silently unsearchable there. `kb_link_document` rejects it. Changing a machine's model later must re-check its linked-in documents.
+10. **Shared-document search latency.** Unknown until measured (Phase 1). It gates Phase 5 only.
+11. **Pre-existing gaps, out of scope, worth fixing separately:**
+    - The voice routes do not check a bearer caller's machine against their account (`src/app/api/voice/realtime/tool/route.ts`, `session/route.ts`).
+    - Voice `listDocuments` (`searchKb.ts:157-162`) and the voice prompt do not filter `operator_visible`; chat does.
+    - `fleet.ts:19` says its count is "operator-visible" but does not filter on it.
 
-## 10. Open decisions for review
+## 10. Deferred: process only the new pages
 
-- **D1. Folder and operator visibility per link (recommended) or per document?** Per link is more correct but needs the mirror trigger during transition.
+Kristian's first request is **not** solved by this plan beyond exact duplicates. It gets its own plan, after Phases 1 to 5, and only once we have his real files.
+
+What the review found in the first design (text-layer page hashes, a `skip_pages` column, a coverage table that makes KF2 depend on KF1):
+
+- `on delete restrict` on the source document loses files (the delete route removes storage before the row) and can block machine deletes.
+- The analyze step has no checkpoint inside the 300 s route limit; the 1,930-page PDF takes minutes. It would fail open on exactly the large files it is meant for.
+- "Only new pages" with nothing new ends as a failed document (zero-chunk guard, `ingestion.ts:1048-1058`).
+- The page hash is fragile across re-exported files: "Page X of Y" footers, revision dates, and different text-item splits all change it.
+- 71 of 214 production PDFs are OCR'd with no usable text layer. Those are the slow ones, and the design cannot see overlap in them.
+- No KF files are in production yet, so we do not know whether they are scanned or digital, or how KF2 is produced from KF1.
+- A parked upload awaiting a decision lives only in browser memory; closing the tab leaves a file with no row.
+
+Direction to evaluate first, because it removes most of those problems: **reuse extraction results per page instead of skipping pages.** When a page of KF2 matches a page already processed in the account, copy that page's extracted text (OCR, table repair) and figure captions into KF2's own extraction, then chunk and embed KF2 as a normal, complete document. KF2 stays self-contained: no dependency on KF1, no coverage table, no citation pointing at another file, nothing special on delete. The expensive steps are skipped; embedding is cheap. It needs a page fingerprint that also works for scanned pages (for example a hash of the page's content stream or a downscaled render).
+
+Inputs needed before planning: Kristian's actual KF1/KF2 pairs, and timing of where the hours go on them (OCR, table repair, captions, embedding).
+
+## 11. Open decisions for review
+
+- **D1. Rehearsal database.** A second Supabase project restored from backup, for the length of the project. Has a cost. Recommended; without it every migration is tested on production.
 - **D2. Who may "delete everywhere"?** Recommended: any admin of the account, with a confirm listing the machines.
-- **D3. Flag granularity for reads:** env allowlist (recommended, simple) vs `account_flags` column.
-- **D4. Overlap threshold** (5 pages and 20%, single source, boilerplate filter at 3 docs). Tune with Kristian's real files.
-- **D5. Are Kristian's KF files scanned or digital?** If scanned, Phase 6 needs the content-stream hash from the start.
-- **D6. Design references needed** (CLAUDE.md "never invent UI components"): the batch duplicate dialog, the per-item decision row, the "Shared with N machines" tag, and the remove/delete-everywhere confirm.
-- **D7. Same-machine exact duplicates** (36 today): offer a one-off cleanup tool, or leave them?
+- **D3. Rehome choice** when the home link is removed: oldest remaining link (recommended, deterministic).
+- **D4. Same-machine exact duplicates** (36 today): offer a one-off cleanup tool, or leave them?
+- **D5. Design references needed** (CLAUDE.md "never invent UI components"): the batch duplicate dialog, the "Shared with N machines" tag, and the remove/delete-everywhere confirm.
+- **D6. Partial overlap** (§10): confirm it is deferred, and ask Kristian for sample files now so the follow-up plan can start from real data.
 
-## 11. Effort (rough)
+## 12. Review log (2026-11-10)
+
+The first draft was checked against the code (two audits) and the production database. Its inventory and schema facts held. These changes came out of it:
+
+| Finding | Change |
+|---|---|
+| `machine_documents` makes the `machine_kb` embed in `assertDocumentAccess` ambiguous, likely breaking admin document routes from Phase 1 | Pin the FK in Phase 0; reproduce on the copy |
+| Replacing the search filter with a link join changed the query plan on the largest machine: exact scan, up to 5.7 s cold, different results. The "identical results" gate could not pass | Keep the existing filter as the home branch; shared documents are a second branch. Latency budget gates Phase 5 |
+| One database for everything; evals are an LLM smoke test | Rehearsal copy (D1); evals demoted; parity script is the gate |
+| After Phase 4, flag-off reads would use stale folder and visibility values, re-exposing hidden documents | Two-way mirror until Phase 6; database flag instead of env var; mirror trigger no longer dropped in Phase 4 |
+| A nullable origin breaks reprocess, sweep resume, figure attach, PATCH and client resume | Home machine stays NOT NULL; rehome on unlink |
+| Deletes were multi-step from app code: crash leaves invisible documents; link can race the last unlink | SQL functions with row locks; rows first, storage second; zero-link invariant check |
+| Phase 6 design problems (§10) | Deferred to its own plan with a simpler direction |
+| Smaller: machine can change account; embedding model per machine; feedback docs linkable; PATCH had no machine id; fleet drawer grouping; `lock_timeout`; failed rows in the hash check; suggestions inside the ingest budget; image finalize retry | Folded into Phases 0 to 5 |
+
+## 13. Effort (rough)
 
 | Phase | Size | Can ship alone |
 |---|---|---|
-| 0 Baseline | hours | yes |
-| 1 Expand schema + new functions | 1 day | yes, no behavior change |
+| 0 Groundwork + rehearsal copy | 1 day | yes |
+| 1 Expand schema + new search functions + latency test | 1.5 days | yes, no behavior change |
 | 2 Hashes + backfill | 0.5 day | yes |
 | 3 Read switch + parity script | 2 to 3 days | yes, behind flag |
-| 4 Writes + delete semantics | 2 days | yes |
-| 5 Link instead of upload | 2 to 3 days + design | after 4 |
-| 6 New pages only | 4 to 5 days | after 5 |
+| 4 SQL functions, writes, delete semantics, FK change | 3 days | yes, in three steps |
+| 5 Link instead of upload | 2 to 3 days + design | after 4 and the latency budget |
 
-Phases 1 to 4 change nothing the user can see. They are where the production risk lives, and each one is verified and reversible on its own.
+Phases 0 to 4 change nothing the user can see. They are where the production risk lives, and each one is rehearsed on the copy, verified and reversible on its own.
