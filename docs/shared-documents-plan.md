@@ -141,7 +141,7 @@ Key decisions:
 
 Environment:
 
-- **Create a rehearsal database**: a second Supabase project restored from a production backup (a Supabase branch alone starts without data, so it is not enough). **Needs approval, it has a monthly cost while it exists.** Point a local `.env.rehearsal` at it. All later "rehearse" steps mean this copy.
+- **Create a rehearsal database** (done by the implementing agent, see D1): a second Supabase project restored from a production backup, including the `kb-documents` and `kb-images` buckets, since the delete rehearsal checks files. A Supabase branch alone starts without data, so it is not enough. It has a monthly cost while it exists; the agent confirms the cost with Morten before creating it. Point a local, git-ignored `.env.rehearsal` at it. All later "rehearse" steps mean this copy.
 - Confirm point-in-time recovery is enabled on production; otherwise take a manual backup before each migration.
 - Record baseline: counts in §3 and a search snapshot (§8.3) for every machine.
 
@@ -491,7 +491,7 @@ Inputs needed before planning: Kristian's actual KF1/KF2 pairs, and timing of wh
 
 ## 11. Open decisions for review
 
-- **D1. Rehearsal database: decided 2026-11-10, required.** A second Supabase project restored from backup, for the length of the project. Has a cost. Still to settle: who creates it and when it is torn down. It holds customer documents, so it needs the same access restrictions as production and must be deleted when the project ends.
+- **D1. Rehearsal database: decided 2026-11-10, required.** A second Supabase project restored from backup, for the length of the project. Has a cost. **The implementing agent creates it** as the first step of Phase 0, restores the latest production backup into it (database and both storage buckets), and refreshes it before the Phase 4 rehearsal. The agent shows Morten the monthly cost and gets a yes before creating it, since that is the one step that spends money. It holds customer documents, so it gets the same access restrictions as production, its keys stay out of the repo, and the agent deletes it (after confirming with Morten) when Phase 5 has shipped or the project stops.
 - **D2. Who may "delete everywhere"?** Recommended: any admin of the account, with a confirm listing the machines.
 - **D3. Rehome choice** when the home link is removed: oldest remaining link (recommended, deterministic).
 - **D4. Same-machine exact duplicates** (36 today): offer a one-off cleanup tool, or leave them?
