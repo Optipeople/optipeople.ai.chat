@@ -1,114 +1,8 @@
 @import "tailwindcss";
+@import "@optipeople/ui/theme.css";
 
-@theme {
-  /* Opticloud brand — aligned with backoffice */
-  --color-brand: #243535;            /* header background */
-  --color-brand-2: #1a2828;          /* darker for hover / brand-stripe */
-  --color-brand-soft: #e8edec;
-  --color-accent: #243535;           /* in-content brand (user bubble) */
-  --color-accent-soft: #e8edec;
-  --color-success: #37c245;
-  --color-success-soft: #e7f7e9;
-  --color-amber: #dbab3b;
-  --color-amber-soft: #faf0d8;
-
-  /* Surfaces — neutral gray to match backoffice */
-  --color-background: #f7f7f7;
-  --color-surface: #ffffff;
-  --color-foreground: #212529;
-
-  --color-muted: #f1f1f2;
-  --color-muted-foreground: #6c757d;
-  --color-subtle: #ececec;
-
-  --color-border: #dee2e6;
-  --color-hairline: oklch(0.88 0 0 / 70%);
-  --color-input: #ced4da;
-  --color-ring: oklch(0.3 0.005 240 / 25%);
-
-  --color-primary: #212529;
-  --color-primary-foreground: #ffffff;
-
-  /* === Figma design system tokens === */
-  /* Greys */
-  --ds-grey-light-01: #f6fafa;
-  --ds-grey-light-02: #eaeeee;
-  --ds-grey-light-03: #aab5b5;
-  --ds-grey-medium-04: #758585;  /* label text */
-  --ds-grey-medium-05: #5d6b6b;  /* help text */
-  --ds-grey-medium-06: #364646;
-  --ds-grey-medium-07: #243535;  /* same as brand */
-  --ds-grey-dark-08: #112222;
-  --ds-grey-dark-09: #071818;    /* primary text */
-  --ds-text-disabled: #b9b8b7;
-  --ds-bg-disabled: #f7f6f4;
-
-  /* Accents */
-  --ds-blue-primary: #378fc2;
-  --ds-blue-primary-fill: #bde0f5;
-  --ds-blue-secondary: #eef9ff;
-  --ds-table-blue-hover: #ebf1f5;
-
-  --ds-orange: #ffa740;
-  --ds-orange-darkest: #f98700;
-
-  --ds-red: #c25037;
-  --ds-red-dark: #962e17;
-  --ds-red-bg: #ffede9;
-  --ds-red-validation-bg: #fdf8f7;
-
-  --ds-green: #37c245;
-  --ds-green-50: rgba(55, 194, 69, 0.5);
-  --ds-green-80: rgba(55, 194, 69, 0.8);
-
-  --ds-midnight-green: #134343;  /* progress fill, brand-dark accent */
-
-  /* Tag palette */
-  --ds-tag-green-light: #d6f1d9;
-  --ds-tag-green-dark: #b2d0b5;
-  --ds-tag-orange-light: #f8e6d1;
-  --ds-tag-orange-dark: #f0b571;
-  --ds-tag-red-light: #f6cdc4;
-  --ds-tag-red-dark: #da8572;
-
-  /* Panel header */
-  --ds-panel-header-bg: #f5f5f5;
-  --ds-panel-header-hover: #e5e3e0;
-
-  /* Shadows */
-  --ds-shadow-input: 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.3), 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05);
-  --ds-shadow-button: 0px 1px 1px 0px rgba(0, 0, 0, 0.1);
-  --ds-shadow-button-active: 0px 1px 2.5px 0px rgba(0, 122, 255, 0.24), 0px 0px 0px 0.5px rgba(0, 122, 255, 0.12);
-  --ds-shadow-destructive: 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.3), 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05);
-  --ds-shadow-tag-inset: inset 1px 1px 4px 0px rgba(0, 0, 0, 0.08);
-  --ds-shadow-panel-inset: inset 0px 2px 2px 0px rgba(0, 0, 0, 0.1);
-  --ds-focus-ring: 0px 0px 0px 3px rgba(55, 194, 69, 0.8);
-
-  /* Radii — soft, generous */
-  --radius-xs: 0.5rem;
-  --radius-sm: 0.625rem;
-  --radius: 0.875rem;
-  --radius-lg: 1.125rem;
-  --radius-xl: 1.5rem;
-  --radius-2xl: 1.75rem;
-
-  /* Elevation — crisp Apple-style shadows */
-  --shadow-hairline: 0 0 0 1px oklch(0.88 0.008 200 / 55%);
-  --shadow-sm: 0 1px 2px oklch(0.15 0.02 200 / 6%), 0 1px 1px oklch(0.15 0.02 200 / 4%);
-  --shadow-md: 0 6px 22px -8px oklch(0.15 0.02 200 / 12%), 0 1px 2px oklch(0.15 0.02 200 / 6%);
-  --shadow-lg: 0 18px 48px -16px oklch(0.15 0.02 200 / 22%), 0 2px 6px oklch(0.15 0.02 200 / 6%);
-
-  /* Motion */
-  --ease-apple: cubic-bezier(0.22, 1, 0.36, 1);
-
-  /* Inline validation / error text (auth + forms) */
-  --color-error: #b00020;
-}
-
-html,
-body {
-  height: 100%;
-}
+/* Tokens and shared base styles come from the @optipeople/ui theme.
+   Only the styles that belong to Opti Assist alone live here. */
 
 /* Dynamic viewport height: follows mobile browser chrome + on-screen
    keyboard (with viewport interactiveWidget=resizes-content) so the
@@ -119,113 +13,7 @@ body {
   }
 }
 
-html {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:not(:disabled),
-[role="button"]:not([aria-disabled="true"]) {
-  cursor: pointer;
-}
-button:disabled,
-[role="button"][aria-disabled="true"] {
-  cursor: not-allowed;
-}
-
-body {
-  background-color: var(--color-background);
-  color: var(--color-foreground);
-  font-family:
-    var(--font-hanken-grotesk), -apple-system, BlinkMacSystemFont,
-    "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", ui-sans-serif,
-    system-ui, sans-serif;
-  font-size: 18px;
-  font-feature-settings: "ss01", "cv11", "tnum";
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-@media (max-width: 640px) {
-  body {
-    font-size: 16px;
-  }
-}
-
-/* Prevent iOS Safari from zooming when focusing inputs/textareas with
-   font-size < 16px. Keep the *visual* size separate (via line-height /
-   tailwind text-* utilities) but never let the effective font-size drop
-   below 16px in form controls on mobile. */
-@media (max-width: 640px) {
-  input,
-  textarea,
-  select {
-    font-size: 16px;
-  }
-}
-
-/* Soft, quick hover/active transition for all buttons app-wide.
-   Component-level Tailwind `transition-*` classes override this via specificity. */
-button,
-[role="button"],
-a[data-button] {
-  transition:
-    background-color 150ms ease-out,
-    border-color 150ms ease-out,
-    box-shadow 150ms ease-out,
-    color 150ms ease-out,
-    opacity 150ms ease-out,
-    transform 150ms ease-out;
-}
-
-/* Opticloud brand stripe — three stacked bars, full width */
-.brand-stripe {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-}
-.brand-stripe > span {
-  display: block;
-  height: 9px;
-  width: 100%;
-}
-.brand-stripe > span:nth-child(1) { background: var(--color-amber); }
-.brand-stripe > span:nth-child(2) { background: var(--color-success); }
-.brand-stripe > span:nth-child(3) { background: var(--color-brand); }
-
-/* Message entrance */
-@keyframes msg-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.msg-in {
-  animation: msg-in 420ms var(--ease-apple) both;
-}
-
-@keyframes dialog-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes dialog-panel-in {
-  from { opacity: 0; transform: scale(0.96) translateY(4px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
-}
-.dialog-overlay {
-  animation: dialog-overlay-in 180ms var(--ease-apple) both;
-}
-.dialog-panel {
-  animation: dialog-panel-in 220ms var(--ease-apple) both;
-}
-
-@keyframes drawer-in {
-  from { transform: translateX(100%); }
-  to   { transform: translateX(0); }
-}
-.drawer-in {
-  animation: drawer-in 260ms var(--ease-apple) both;
-}
-
-/* Shimmering "thinking" text — used by WorkingRow while waiting for the
+/* Shimmering "thinking" text: used by WorkingRow while waiting for the
    first assistant token. The mask sweeps a brighter band across the text
    so it reads as alive without a spinner. */
 @keyframes text-shimmer {
@@ -248,7 +36,7 @@ a[data-button] {
   animation: text-shimmer 2.2s linear infinite;
 }
 
-/* Streaming caret — blinking block at the end of in-flight assistant text. */
+/* Streaming caret: blinking block at the end of in-flight assistant text. */
 @keyframes stream-caret {
   0%, 49%   { opacity: 1; }
   50%, 100% { opacity: 0; }
@@ -264,7 +52,7 @@ a[data-button] {
   animation: stream-caret 1s steps(1, end) infinite;
 }
 
-/* Suggestion chip entrance — staggered fade/rise. Index supplied inline. */
+/* Suggestion chip entrance: staggered fade/rise. Index supplied inline. */
 @keyframes chip-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -274,7 +62,7 @@ a[data-button] {
   animation-delay: calc(500ms + var(--chip-index, 0) * 220ms);
 }
 
-/* Send-button invite — gentle nudge when input has text waiting. */
+/* Send-button invite: gentle nudge when input has text waiting. */
 @keyframes send-nudge {
   0%, 100% { transform: translateX(0); }
   50%      { transform: translateX(1.5px); }
@@ -319,34 +107,10 @@ a[data-button] {
   animation: voice-pill-glow 2.2s ease-out infinite;
 }
 
-/* Minimum 44px touch target on coarse pointers without changing the
-   visual size: an invisible, centered pseudo-element extends the hit
-   area. Apply to any small interactive control (icon buttons, chips,
-   tags). Safe on touch layouts where small controls are not packed
-   tighter than ~44px. */
-@media (pointer: coarse) {
-  .tap-target {
-    position: relative;
-  }
-  .tap-target::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: max(100%, 44px);
-    height: max(100%, 44px);
-    transform: translate(-50%, -50%);
-  }
-}
-
-/* Respect the OS "reduce motion" setting: entrance/infinite animations
-   settle to their resting state. */
+/* Respect the OS "reduce motion" setting for the animations above: they
+   settle to their resting state. The theme does the same for its own. */
 @media (prefers-reduced-motion: reduce) {
-  .msg-in,
   .chip-in,
-  .dialog-overlay,
-  .dialog-panel,
-  .drawer-in,
   .send-nudge,
   .stream-caret,
   .voice-pill-active,
@@ -363,22 +127,4 @@ a[data-button] {
     background-clip: initial;
     color: var(--color-muted-foreground);
   }
-}
-
-/* Scrollbar */
-.scroll-area {
-  scrollbar-width: thin;
-  scrollbar-color: oklch(0.7 0.01 200 / 35%) transparent;
-}
-.scroll-area::-webkit-scrollbar { width: 10px; }
-.scroll-area::-webkit-scrollbar-track { background: transparent; }
-.scroll-area::-webkit-scrollbar-thumb {
-  background-color: oklch(0.7 0.01 200 / 25%);
-  border-radius: 9999px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-.scroll-area::-webkit-scrollbar-thumb:hover {
-  background-color: oklch(0.5 0.02 200 / 45%);
-  background-clip: padding-box;
 }
