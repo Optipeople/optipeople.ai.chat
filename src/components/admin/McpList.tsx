@@ -2,21 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Trash2 } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
-import { Tooltip } from "@/components/ui/tooltip";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
+  Spinner,
+  Button,
+  TextField,
+  Tooltip,
+  useConfirm,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import {

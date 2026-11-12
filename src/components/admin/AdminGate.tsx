@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@optipeople/ui";
 import { type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { isAdmin, useAuth } from "@/auth/AuthContext";

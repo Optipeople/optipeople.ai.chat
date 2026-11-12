@@ -4,20 +4,21 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChevronRight, Wrench } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Pagination } from "@/components/ui/pagination";
-import { Select } from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
-import { Tag, type TagVariant } from "@/components/ui/tag";
-import { getAccounts } from "@/auth/accountsApi";
 import {
+  Button,
+  Pagination,
+  Select,
+  Spinner,
+  Tag,
+  type TagVariant,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { getAccounts } from "@/auth/accountsApi";
 import {
   adminErrorMessage,
   listAdminEscalationInbox,

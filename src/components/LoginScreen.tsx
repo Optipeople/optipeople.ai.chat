@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, cn } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { OptipeopleLogo } from "@/components/logo";
+import { OptipeopleLogo } from "@optipeople/ui/blocks";
 import { useAuth } from "@/auth/AuthContext";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 const MIDNIGHT_GREEN = "#134343";
 

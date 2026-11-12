@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { buttonClasses } from "@/components/ui/button";
+import { buttonClasses } from "@optipeople/ui";
 
 export default async function NotFound() {
   const t = await getTranslations("errors");

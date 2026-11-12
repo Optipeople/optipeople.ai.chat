@@ -10,12 +10,14 @@ import {
   X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { Tag } from "@/components/ui/tag";
-import { TextField } from "@/components/ui/text-field";
-import { Select } from "@/components/ui/select";
-import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  Button,
+  Spinner,
+  Tag,
+  TextField,
+  Select,
+  useConfirm,
+} from "@optipeople/ui";
 import {
   adminErrorMessage,
   clearAdminEscalationTarget,

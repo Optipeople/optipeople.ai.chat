@@ -24,10 +24,7 @@ import { CheckCircle2, ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
-import { Button } from "@/components/ui/button";
-import { useConfirm } from "@/components/ui/confirm-dialog";
-import { SearchField } from "@/components/ui/search-field";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, useConfirm, SearchField, Spinner, cn } from "@optipeople/ui";
 import { isAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import {
   AdminApiError,
@@ -37,7 +34,6 @@ import {
   type AdminMachine,
 } from "@/admin/adminApi";
 import type { QrStickerLookupResponse } from "@/lib/qrStickerTypes";
-import { cn } from "@/lib/utils";
 
 type LookupState =
   | { kind: "loading" }

@@ -192,7 +192,7 @@ b8b147d Refactor: extract ingestion pipeline into src/lib/ingestion.ts
 | Schema (initial) | [supabase/migrations/20260506141924_initial.sql](../supabase/migrations/20260506141924_initial.sql) |
 | Optipeople auth proxy | [src/app/auth-api/[...path]/route.ts](../src/app/auth-api/%5B...path%5D/route.ts) |
 | Auth state (client) | [src/auth/AuthContext.tsx](../src/auth/AuthContext.tsx) |
-| Confirm dialog primitive | [src/components/ui/confirm-dialog.tsx](../src/components/ui/confirm-dialog.tsx) |
+| Confirm dialog primitive | `ConfirmProvider` and `useConfirm` from the shared package `@optipeople/ui` |
 
 ### Schema — what each migration adds
 

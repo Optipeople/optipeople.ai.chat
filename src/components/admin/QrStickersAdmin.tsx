@@ -5,17 +5,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronRight, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
 import {
+  Spinner,
+  Button,
+  TextField,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
 import {
   adminErrorMessage,
   listQrStickerBatches,

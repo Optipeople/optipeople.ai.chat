@@ -3,15 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AlertTriangle, AudioLines, Mic, MicOff } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, cn } from "@optipeople/ui";
 import {
   useRealtimeVoice,
   type RealtimeTranscriptTurn,
 } from "@/lib/useRealtimeVoice";
-import { Button } from "@/components/ui/button";
 import { SourceChips } from "@/components/SourceChips";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { cn } from "@/lib/utils";
 
 type Props = {
   machineId: string;

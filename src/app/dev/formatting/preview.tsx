@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Markdown } from "@/components/ui/markdown";
+import { Markdown } from "@/components/Markdown";
 
 const SAMPLE = String.raw`**Alarm 731** means the tool changer did not reach its home position, so the spindle is blocked until it is reset.
 

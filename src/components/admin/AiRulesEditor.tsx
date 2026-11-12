@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Lock, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { useConfirm } from "@/components/ui/confirm-dialog";
-import { ToggleButton } from "@/components/ui/toggle-button";
-import { Tooltip } from "@/components/ui/tooltip";
+import {
+  Spinner,
+  Button,
+  useConfirm,
+  ToggleButton,
+  Tooltip,
+  cn,
+} from "@optipeople/ui";
 import {
   createAiRule,
   deleteAiRule,
@@ -16,7 +19,6 @@ import {
   type AccountAiRule,
 } from "@/admin/aiRulesAdminApi";
 import { getAccounts } from "@/auth/accountsApi";
-import { cn } from "@/lib/utils";
 
 const MAX_RULE_BODY_LENGTH = 2000;
 

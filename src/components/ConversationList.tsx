@@ -3,11 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { MessageSquare } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { buttonClasses } from "@/components/ui/button";
+import { Spinner, buttonClasses, cn } from "@optipeople/ui";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
-import { cn } from "@/lib/utils";
 import type { KnowledgeDrawerSource } from "@/components/KnowledgeDrawer";
 import type {
   OperatorConversationListItem,

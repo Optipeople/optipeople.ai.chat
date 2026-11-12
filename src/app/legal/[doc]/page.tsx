@@ -2,11 +2,11 @@ import { notFound } from "next/navigation";
 import { getLocale } from "next-intl/server";
 import { LegalDocLayout } from "@/components/LegalDocLayout";
 import { LocaleToggle } from "@/components/LocaleToggle";
-import { Markdown } from "@/components/ui/markdown";
-import { OptipeopleLogo } from "@/components/logo";
+import { Markdown } from "@/components/Markdown";
+import { OptipeopleLogo } from "@optipeople/ui/blocks";
 import { isLocale } from "@/i18n/config";
 import { isLegalDocId, loadLegalDoc } from "@/lib/legalDocs";
-import { cn } from "@/lib/utils";
+import { cn } from "@optipeople/ui";
 
 export const dynamic = "force-dynamic";
 

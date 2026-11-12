@@ -17,7 +17,7 @@ import {
 import { isAccountAdmin, isAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { locales, type Locale } from "@/i18n/config";
 import { persistLocale } from "@/i18n/localeApi";
-import { cn } from "@/lib/utils";
+import { cn } from "@optipeople/ui";
 
 export function UserMenu() {
   const {

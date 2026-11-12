@@ -2,16 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { HelpHint } from "@/components/ui/help-hint";
 import {
+  Spinner,
+  HelpHint,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
 import {
   getAdminAccountUsage,
   type AdminAccountUsageResponse,

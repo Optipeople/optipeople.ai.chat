@@ -11,9 +11,8 @@ import {
   Wrench,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
-import { Markdown } from "@/components/ui/markdown";
-import { Spinner } from "@/components/ui/spinner";
+import { cn, Spinner } from "@optipeople/ui";
+import { Markdown } from "@/components/Markdown";
 import {
   adminErrorMessage,
   getAdminConversation,

@@ -4,19 +4,20 @@ import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { Ban, Unlink } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Tag, type TagVariant } from "@/components/ui/tag";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
+  Spinner,
+  Button,
+  Checkbox,
+  Tag,
+  type TagVariant,
+  useConfirm,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
 import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
 import { adminErrorMessage, updateQrSticker } from "@/admin/adminApi";
 import type { QrSticker, QrStickerStatus } from "@/lib/qrStickerTypes";

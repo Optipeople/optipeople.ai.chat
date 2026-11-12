@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ban, Download, FileText } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
-import { ProgressBar } from "@/components/ui/progress-bar";
+import {
+  Spinner,
+  Button,
+  Select,
+  ProgressBar,
+  useConfirm,
+} from "@optipeople/ui";
 import { Breadcrumbs, type Crumb } from "@/components/admin/Breadcrumbs";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   adminErrorMessage,
   getQrStickerBatch,

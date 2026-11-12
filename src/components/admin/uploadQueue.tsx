@@ -20,12 +20,8 @@ import {
   ScanEye,
   Table2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, Spinner, cn, ProgressBar, Tag } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
-import { ProgressBar } from "@/components/ui/progress-bar";
-import { Tag } from "@/components/ui/tag";
 import {
   AdminApiError,
   adminErrorMessage,

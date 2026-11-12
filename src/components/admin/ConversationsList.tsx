@@ -3,20 +3,21 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { useTranslations } from "next-intl";
-import { Pagination } from "@/components/ui/pagination";
-import { Select } from "@/components/ui/select";
-import { TextField } from "@/components/ui/text-field";
-import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
+  Spinner,
+  Pagination,
+  Select,
+  TextField,
+  Tag,
+  type TagVariant,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { useTranslations } from "next-intl";
 import {
   adminErrorMessage,
   listAdminConversations,

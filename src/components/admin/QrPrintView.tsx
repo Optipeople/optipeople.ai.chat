@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Download } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
 import { Breadcrumbs, type Crumb } from "@/components/admin/Breadcrumbs";
 import { getAdminMachine, type AdminMachineDetail } from "@/admin/adminApi";
 import { downloadQrStickerPng, renderQrStickerPngUrl } from "@/admin/qrSticker";

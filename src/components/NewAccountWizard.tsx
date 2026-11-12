@@ -12,12 +12,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
-import { Select } from "@/components/ui/select";
-import { ProgressBar } from "@/components/ui/progress-bar";
-import { Spinner } from "@/components/ui/spinner";
-import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  Button,
+  TextField,
+  Select,
+  ProgressBar,
+  Spinner,
+  useConfirm,
+  Checkbox,
+} from "@optipeople/ui";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useAuth } from "@/auth/AuthContext";
 import { getAccounts, searchAccounts, type Account } from "@/auth/accountsApi";
@@ -32,7 +35,6 @@ import {
   type PortalOption,
 } from "@/auth/portalSetupApi";
 import { createAdminMachine, updateAccountFlags } from "@/admin/adminApi";
-import { Checkbox } from "@/components/ui/checkbox";
 import { defaultTrialEnd } from "@/lib/trialDates";
 
 const TOTAL_STEPS = 4;

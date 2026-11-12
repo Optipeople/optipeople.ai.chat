@@ -11,11 +11,9 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import { ExternalLink, X } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, buttonClasses, cn } from "@optipeople/ui";
 import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
-import { Button, buttonClasses } from "@/components/ui/button";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { cn } from "@/lib/utils";
 
 // Centralized file viewer for kb_documents and kb_assets. Renders PDFs in
 // an iframe, images in an <img>, and falls back to "open in a new tab"

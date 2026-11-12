@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { SectionExpander } from "@/components/ui/section-expander";
+import { SectionExpander } from "@optipeople/ui";
 import { MachineDetail, MachineSettings } from "@/components/admin/MachineDetail";
 import { ConversationsList } from "@/components/admin/ConversationsList";
 import { EscalationsList } from "@/components/admin/EscalationsList";

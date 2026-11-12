@@ -8,7 +8,7 @@ import {
 } from "react";
 import { ChevronDown, List } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
+import { cn } from "@optipeople/ui";
 import type { TocEntry } from "@/lib/legalDocs";
 
 // Layout wrapper for the /legal/[doc] page. Renders a sticky table of

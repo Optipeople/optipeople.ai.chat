@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { AlertTriangle } from "lucide-react";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { Button, buttonClasses } from "@optipeople/ui";
 
 export default function ErrorPage({
   error,
