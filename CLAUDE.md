@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # Project rules
 
 ## Design fidelity
