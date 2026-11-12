@@ -3,10 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, TextField } from "@optipeople/ui";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import { adminErrorMessage, createQrStickerBatch } from "@/admin/adminApi";
 import { Combobox } from "@/components/admin/AddMachineDialog";

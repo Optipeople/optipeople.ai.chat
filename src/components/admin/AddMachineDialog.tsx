@@ -2,12 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Search, X } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, cn, Button, TextField } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import {
   getMachinesForAccount,

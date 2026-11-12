@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Tag, type TagSize } from "@/components/ui/tag";
+import { Tag, type TagSize } from "@optipeople/ui";
 import { isTrialExpired, trialDaysLeft } from "@/lib/trialDates";
 
 // Trial badge for an account. Ended trials turn red ("issue") only when

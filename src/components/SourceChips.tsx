@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { ExternalLink, FileText } from "lucide-react";
 import { useFileViewer } from "@/components/FileViewer";
-import { cn } from "@/lib/utils";
+import { cn } from "@optipeople/ui";
 
 export type SourceRef = {
   id: string;

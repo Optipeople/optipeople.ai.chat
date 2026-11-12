@@ -29,8 +29,18 @@ import {
   X,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
-import { Spinner } from "@/components/ui/spinner";
+import {
+  cn,
+  Spinner,
+  useConfirm,
+  Button,
+  buttonClasses,
+  IconButton,
+  HelpHint,
+  Tag,
+  type TagVariant,
+  Select,
+} from "@optipeople/ui";
 import {
   MAX_IMAGE_UPLOAD_LABEL,
   MAX_UPLOAD_LABEL,
@@ -53,12 +63,6 @@ import {
 import { classifyFile, filesFromDrop } from "@/admin/dropFiles";
 import { getAccounts } from "@/auth/accountsApi";
 import { getMachinesForAccount } from "@/auth/machinesApi";
-import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Button, buttonClasses } from "@/components/ui/button";
-import { IconButton } from "@/components/ui/icon-button";
-import { HelpHint } from "@/components/ui/help-hint";
-import { Tag, type TagVariant } from "@/components/ui/tag";
-import { Select } from "@/components/ui/select";
 import {
   UploadQueuePanel,
   UploadQueueProvider,

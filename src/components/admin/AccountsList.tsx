@@ -5,16 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { SearchField } from "@/components/ui/search-field";
 import {
+  Spinner,
+  SearchField,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
 import { getAccounts, type Account } from "@/auth/accountsApi";
 import {
   getAdminMachines,

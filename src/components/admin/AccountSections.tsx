@@ -4,17 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { buttonClasses } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import {
+  buttonClasses,
+  Spinner,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
-import { SectionExpander } from "@/components/ui/section-expander";
+  SectionExpander,
+} from "@optipeople/ui";
 import { AiRulesEditor } from "@/components/admin/AiRulesEditor";
 import { McpList } from "@/components/admin/McpList";
 import { AccountUsageSection } from "@/components/admin/AccountUsageSection";

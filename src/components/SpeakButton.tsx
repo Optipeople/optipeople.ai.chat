@@ -3,10 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Volume2, VolumeX } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, cn, Tooltip } from "@optipeople/ui";
 import { fetchWithAuth } from "@/auth/authApi";
-import { cn } from "@/lib/utils";
-import { Tooltip } from "@/components/ui/tooltip";
 
 type Props = {
   text: string;

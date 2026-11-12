@@ -3,19 +3,20 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChevronRight, ExternalLink, Wrench } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Pagination } from "@/components/ui/pagination";
-import { Tag, type TagVariant } from "@/components/ui/tag";
 import {
+  Spinner,
+  Button,
+  Pagination,
+  Tag,
+  type TagVariant,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { useTranslations } from "next-intl";
 import {
   adminErrorMessage,
   listAdminEscalations,

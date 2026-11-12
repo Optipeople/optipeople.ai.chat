@@ -8,8 +8,8 @@
 import { notFound } from "next/navigation";
 import { Wrench } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
-import { Markdown } from "@/components/ui/markdown";
-import { OptipeopleLogo } from "@/components/logo";
+import { Markdown } from "@/components/Markdown";
+import { OptipeopleLogo } from "@optipeople/ui/blocks";
 import type {
   EscalationChannel,
   EscalationSnapshot,

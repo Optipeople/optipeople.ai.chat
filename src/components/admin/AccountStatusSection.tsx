@@ -7,10 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
-import { TextField } from "@/components/ui/text-field";
+import { Button, Checkbox, Spinner, TextField } from "@optipeople/ui";
 import { isStrictSuperAdmin, useAuth } from "@/auth/AuthContext";
 import {
   adminErrorMessage,

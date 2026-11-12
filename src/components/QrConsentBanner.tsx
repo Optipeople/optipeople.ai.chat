@@ -4,9 +4,8 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { getQrToken } from "@/auth/qrStorage";
-import { Button } from "@/components/ui/button";
+import { Button, cn } from "@optipeople/ui";
 import { TERMS_VERSION } from "@/lib/consent";
-import { cn } from "@/lib/utils";
 
 // Anonymous operators arriving via QR sticker have no Optipeople login,
 // so we can't record per-user acceptance. Legal accountability sits

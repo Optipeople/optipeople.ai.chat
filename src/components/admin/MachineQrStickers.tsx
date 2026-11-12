@@ -3,18 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link2, Unlink } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { TextField } from "@/components/ui/text-field";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
+  Spinner,
+  Button,
+  TextField,
+  useConfirm,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
 import {
   QrStickerAlreadyLinkedError,
   adminErrorMessage,

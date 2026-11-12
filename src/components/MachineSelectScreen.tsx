@@ -3,12 +3,10 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Boxes, ChevronRight, ChevronLeft, Search, X } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, cn } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/AppHeader";
 import { isAdmin, isSuperAdmin, useAuth } from "@/auth/AuthContext";
-import { cn } from "@/lib/utils";
 
 export function MachineSelectScreen() {
   const {

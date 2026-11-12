@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { AlertTriangle, ExternalLink, RotateCcw } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@optipeople/ui";
 
 export type OutageInfo = {
   kind: "outage" | "overloaded" | "rate_limit" | "error" | "session";

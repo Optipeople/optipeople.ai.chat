@@ -2,12 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Folder, Sparkles, X } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, cn, Button, Checkbox } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { cn } from "@/lib/utils";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   applyAutoOrganize,
   previewAutoOrganize,

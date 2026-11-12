@@ -31,12 +31,16 @@ import {
   X,
 } from "lucide-react";
 import type { EscalateResponse } from "@/app/api/chat/escalate/route";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { FieldFrame } from "@/components/ui/field";
-import { Tag } from "@/components/ui/tag";
-import { Markdown } from "@/components/ui/markdown";
-import { Spinner } from "@/components/ui/spinner";
+import {
+  Button,
+  Textarea,
+  FieldFrame,
+  Tag,
+  Spinner,
+  IconButton,
+  cn,
+} from "@optipeople/ui";
+import { Markdown } from "@/components/Markdown";
 import { AppHeader } from "@/components/AppHeader";
 import { LoginScreen } from "@/components/LoginScreen";
 import { ConsentScreen } from "@/components/ConsentScreen";
@@ -54,7 +58,6 @@ import { OutageCard, type OutageInfo } from "@/components/OutageCard";
 import { useLiveTranscription } from "@/lib/useLiveTranscription";
 import { useAuth } from "@/auth/AuthContext";
 import { SessionExpiredError, fetchWithAuth } from "@/auth/authApi";
-import { IconButton } from "@/components/ui/icon-button";
 import {
   clearQrSession,
   getQrMachine,
@@ -63,7 +66,6 @@ import {
   type QrMachineInfo,
 } from "@/auth/qrStorage";
 import { CHAT_STASH_PREFIX } from "@/auth/storage";
-import { cn } from "@/lib/utils";
 
 // Temporarily disabled: hides the realtime voice-conversation entry point.
 // Dictation (mic button / live transcription) is unaffected.

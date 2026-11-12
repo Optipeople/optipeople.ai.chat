@@ -4,14 +4,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ChevronRight, CircleHelp } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { Pagination } from "@/components/ui/pagination";
-import { Select } from "@/components/ui/select";
-import { TextField } from "@/components/ui/text-field";
-import { Textarea } from "@/components/ui/textarea";
-import { Tag, type TagVariant } from "@/components/ui/tag";
-import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  Spinner,
+  Button,
+  Pagination,
+  Select,
+  TextField,
+  Textarea,
+  Tag,
+  type TagVariant,
+  useConfirm,
+} from "@optipeople/ui";
 import {
   adminErrorMessage,
   listAdminInsights,

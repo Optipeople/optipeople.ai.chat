@@ -12,16 +12,13 @@ import {
   PanelLeftOpen,
   Upload,
 } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, buttonClasses, Tooltip, cn } from "@optipeople/ui";
 import { fetchWithAuth } from "@/auth/authApi";
 import { getQrToken } from "@/auth/qrStorage";
 import { isAdmin, useAuth } from "@/auth/AuthContext";
 import { ConversationList } from "@/components/ConversationList";
 import { useFileViewer } from "@/components/FileViewer";
-import { buttonClasses } from "@/components/ui/button";
-import { Tooltip } from "@/components/ui/tooltip";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { cn } from "@/lib/utils";
 import type {
   OperatorDocument,
   OperatorDocumentsResponse,

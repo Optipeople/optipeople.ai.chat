@@ -11,22 +11,22 @@ import {
   MessageSquare,
   QrCode,
 } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ProgressBar } from "@/components/ui/progress-bar";
-import { useConfirm } from "@/components/ui/confirm-dialog";
-import { SearchField } from "@/components/ui/search-field";
-import { Select } from "@/components/ui/select";
 import {
+  Spinner,
+  Button,
+  Checkbox,
+  ProgressBar,
+  useConfirm,
+  SearchField,
+  Select,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { useTranslations } from "next-intl";
 import {
   adminErrorMessage,
   bulkMachineQr,

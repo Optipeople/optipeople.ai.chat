@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, cn } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
-import { OptipeopleLogo } from "@/components/logo";
-import { Button } from "@/components/ui/button";
+import { OptipeopleLogo } from "@optipeople/ui/blocks";
 import { PasswordResetError, setNewPassword } from "@/auth/passwordApi";
-import { cn } from "@/lib/utils";
 
 const MIDNIGHT_GREEN = "#134343";
 // Mirrors the backend policy: at least 10 characters with an uppercase

@@ -2,13 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { ExternalLink } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, Button, CheckIcon, cn } from "@optipeople/ui";
 import { useTranslations } from "next-intl";
 import { AppHeader } from "@/components/AppHeader";
-import { Button } from "@/components/ui/button";
-import { CheckIcon } from "@/components/ui/icons";
 import { useAuth } from "@/auth/AuthContext";
-import { cn } from "@/lib/utils";
 
 export function ConsentScreen() {
   const { acceptConsent } = useAuth();
@@ -151,7 +148,7 @@ function ConsentRow({
         disabled={disabled}
         className="sr-only"
       />
-      {/* Visual checkbox — replicates @/components/ui/checkbox so the
+      {/* Visual checkbox: replicates the Checkbox of @optipeople/ui so the
           whole card can be a single <label>. Nesting the design-system
           Checkbox (itself a <label>) inside another label is invalid HTML. */}
       <span
