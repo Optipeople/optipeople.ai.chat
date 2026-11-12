@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.0",
-    "@optipeople/ui": "^0.2.0",
+    "@optipeople/ui": "^0.2.1",
     "@supabase/supabase-js": "^2.105.3",
     "fflate": "^0.8.3",
     "katex": "^0.16.47",
