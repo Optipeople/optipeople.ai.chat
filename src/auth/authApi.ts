@@ -18,7 +18,30 @@ export type LoginResponse = {
   // envelope instead of a 400/401, so a token-less 200 body must be
   // inspected before concluding anything.
   errors?: { title?: string; message?: string }[];
+  // Set instead of access_token when the user has two-factor
+  // authentication on. The client must then POST grant_type "mfa" with
+  // the mfa_token and the code the user enters (see verifyMfa).
+  mfa_required?: boolean;
+  mfa_token?: string;
+  mfa_method?: string;
+  masked_destination?: string;
 };
+
+// "email" and "sms" mean the backend sent a code and can resend it;
+// anything else (in practice "totp") means an authenticator app.
+export type MfaChallenge = {
+  mfaToken: string;
+  method: string;
+  maskedDestination: string | null;
+  email: string;
+  remember: boolean;
+};
+
+export type LoginResult =
+  | { kind: "session"; data: LoginResponse }
+  | { kind: "mfa"; challenge: MfaChallenge };
+
+export type MfaCodeType = "otp" | "recovery_code";
 
 // Thrown when no session exists or the refresh token is dead. Callers
 // must treat this as "log in again", never as a retryable failure.
@@ -29,7 +52,11 @@ export class SessionExpiredError extends Error {
   }
 }
 
-export type LoginErrorCode = "invalidCredentials" | "loginFailed" | "noToken";
+export type LoginErrorCode =
+  | "invalidCredentials"
+  | "invalidCode"
+  | "loginFailed"
+  | "noToken";
 
 // Login failures carry a code so the UI can render a localized message
 // instead of whatever English string the backend produced.
@@ -52,11 +79,23 @@ async function postLogin(body: Record<string, string>): Promise<Response> {
   });
 }
 
+function finishSession(
+  data: LoginResponse,
+  email: string,
+  remember: boolean,
+): LoginResponse {
+  saveSession(
+    { ...data, user_name: data.user_name ?? email },
+    { persist: remember },
+  );
+  return data;
+}
+
 export async function login(
   email: string,
   password: string,
   remember = true,
-): Promise<LoginResponse> {
+): Promise<LoginResult> {
   clearSession();
 
   const res = await postLogin({
@@ -73,6 +112,18 @@ export async function login(
   }
 
   const data = (await res.json()) as LoginResponse;
+  if (data.mfa_required && data.mfa_token) {
+    return {
+      kind: "mfa",
+      challenge: {
+        mfaToken: data.mfa_token,
+        method: data.mfa_method ?? "totp",
+        maskedDestination: data.masked_destination ?? null,
+        email,
+        remember,
+      },
+    };
+  }
   if (!data.access_token) {
     if (data.errors?.length) {
       throw new LoginError("invalidCredentials", res.status);
@@ -80,11 +131,54 @@ export async function login(
     throw new LoginError("noToken");
   }
 
-  saveSession(
-    { ...data, user_name: data.user_name ?? email },
-    { persist: remember },
-  );
-  return data;
+  return { kind: "session", data: finishSession(data, email, remember) };
+}
+
+// Second login step for users with two-factor authentication. A wrong or
+// expired code comes back either as a 4xx or as a 200 errors envelope.
+export async function verifyMfa(
+  challenge: MfaChallenge,
+  code: string,
+  codeType: MfaCodeType,
+): Promise<LoginResponse> {
+  const res = await postLogin({
+    grant_type: "mfa",
+    mfa_token: challenge.mfaToken,
+    code,
+    code_type: codeType,
+  });
+
+  if (!res.ok) {
+    if (res.status >= 400 && res.status < 500) {
+      throw new LoginError("invalidCode", res.status);
+    }
+    throw new LoginError("loginFailed", res.status);
+  }
+
+  const data = (await res.json()) as LoginResponse;
+  if (!data.access_token) {
+    if (data.errors?.length) throw new LoginError("invalidCode", res.status);
+    throw new LoginError("noToken");
+  }
+
+  return finishSession(data, challenge.email, challenge.remember);
+}
+
+// Asks the backend to send a new email/SMS code. Returns the masked
+// destination it went to, when the backend reports one.
+export async function resendMfaCode(mfaToken: string): Promise<string | null> {
+  const res = await fetch("/auth-api/Authentication/mfa/resend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mfa_token: mfaToken }),
+  });
+  if (!res.ok) throw new LoginError("loginFailed", res.status);
+  const body = (await res.json()) as {
+    data?: { maskedDestination?: string } | null;
+    errors?: { message?: string }[] | null;
+  };
+  if (body.errors?.length) throw new LoginError("loginFailed", res.status);
+  return body.data?.maskedDestination ?? null;
 }
 
 let refreshInFlight: Promise<string | null> | null = null;

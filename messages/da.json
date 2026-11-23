@@ -58,7 +58,25 @@
       "invalidCredentials": "Forkert e-mail eller adgangskode.",
       "loginFailed": "Login mislykkedes ({status}). Prøv igen om lidt.",
       "noToken": "Login mislykkedes — der blev ikke modtaget en session. Prøv igen.",
-      "generic": "Login mislykkedes. Tjek din forbindelse og prøv igen."
+      "generic": "Login mislykkedes. Tjek din forbindelse og prøv igen.",
+      "invalidCode": "Koden er ikke gyldig eller er udløbet."
+    },
+    "mfa": {
+      "heading": "Totrinsbekræftelse",
+      "instructionApp": "Indtast den 6-cifrede kode fra din godkendelsesapp.",
+      "instructionEmail": "Vi har sendt en 6-cifret kode til {destination}.",
+      "instructionSms": "Vi har sendt en 6-cifret kode på SMS til {destination}.",
+      "instructionRecovery": "Indtast en af de gendannelseskoder, du gemte, da du slog totrinsbekræftelse til.",
+      "codePlaceholder": "6-cifret kode",
+      "recoveryPlaceholder": "Gendannelseskode",
+      "codeFormat": "Indtast den 6-cifrede kode.",
+      "submit": "Bekræft",
+      "resend": "Send en ny kode",
+      "resendIn": "Send en ny kode ({seconds} s)",
+      "resendFailed": "Vi kunne ikke sende en ny kode. Prøv igen om lidt.",
+      "useRecoveryCode": "Brug en gendannelseskode i stedet",
+      "useCode": "Brug en 6-cifret kode i stedet",
+      "back": "Tilbage til log ind"
     }
   },
   "forgotPassword": {

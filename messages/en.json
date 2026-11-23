@@ -58,7 +58,25 @@
       "invalidCredentials": "Invalid email or password.",
       "loginFailed": "Login failed ({status}). Try again in a moment.",
       "noToken": "Login failed — no session was received. Try again.",
-      "generic": "Login failed. Check your connection and try again."
+      "generic": "Login failed. Check your connection and try again.",
+      "invalidCode": "That code is not valid or has expired."
+    },
+    "mfa": {
+      "heading": "Two-factor authentication",
+      "instructionApp": "Enter the 6-digit code from your authenticator app.",
+      "instructionEmail": "We sent a 6-digit code to {destination}.",
+      "instructionSms": "We sent a 6-digit code by SMS to {destination}.",
+      "instructionRecovery": "Enter one of the recovery codes you saved when you set up two-factor authentication.",
+      "codePlaceholder": "6-digit code",
+      "recoveryPlaceholder": "Recovery code",
+      "codeFormat": "Enter the 6-digit code.",
+      "submit": "Verify",
+      "resend": "Send a new code",
+      "resendIn": "Send a new code ({seconds} s)",
+      "resendFailed": "We could not send a new code. Try again in a moment.",
+      "useRecoveryCode": "Use a recovery code instead",
+      "useCode": "Use a 6-digit code instead",
+      "back": "Back to log in"
     }
   },
   "forgotPassword": {

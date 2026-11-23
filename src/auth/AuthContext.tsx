@@ -11,7 +11,15 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
-import { LoginError, SessionExpiredError, login as apiLogin } from "./authApi";
+import {
+  LoginError,
+  SessionExpiredError,
+  login as apiLogin,
+  resendMfaCode as apiResendMfaCode,
+  verifyMfa as apiVerifyMfa,
+  type LoginResponse,
+  type MfaChallenge,
+} from "./authApi";
 import { clearQrSession } from "./qrStorage";
 import { fetchConsentStatus, postConsent } from "./consentApi";
 import type { ConsentStatus } from "@/lib/consent";
@@ -143,6 +151,13 @@ export type AuthContextValue = {
   reloadConsent: () => Promise<void>;
   acceptConsent: (acceptAnalytics: boolean) => Promise<void>;
   login: (email: string, password: string, remember?: boolean) => Promise<void>;
+  // Set after a password login when the user has two-factor
+  // authentication on; the login screen then asks for the code.
+  mfaChallenge: MfaChallenge | null;
+  verifyMfa: (code: string, useRecoveryCode: boolean) => Promise<void>;
+  // Resolves false when the backend could not send a new code.
+  resendMfaCode: () => Promise<boolean>;
+  cancelMfa: () => void;
   logout: () => void;
   selectAccount: (accountId: string) => void;
   clearSelectedAccount: () => void;
@@ -198,6 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
   const [isLoadingMachines, setIsLoadingMachines] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [machinesError, setMachinesError] = useState<string | null>(null);
   const [accountsForbidden, setAccountsForbidden] = useState(false);
@@ -227,6 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccountsForbidden(false);
     setMachinesForbidden(false);
     setLoginError(null);
+    setMfaChallenge(null);
     setAccountsError(null);
     setMachinesError(null);
     setConsentStatus(null);
@@ -480,47 +497,110 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsInitializing(false);
   }, [reloadAccounts, refreshRole, refreshConsent]);
 
+  // Shared tail of every successful login, with or without 2FA.
+  const completeLogin = useCallback(
+    async (res: LoginResponse, email: string) => {
+      setMfaChallenge(null);
+      // A leftover QR session from an earlier scan in this tab must not
+      // outrank the fresh login — it would silently degrade every call
+      // to QR scope.
+      clearQrSession();
+      const resolvedEmail = res.user_name ?? email;
+      setUser({
+        email: resolvedEmail,
+        name: null,
+        roleName: null,
+        permissionName: null,
+        accountId: null,
+      });
+      // Apply the user's stored language preference before the rest of
+      // the app re-renders. Best-effort: if the lookup fails we leave
+      // the existing cookie alone.
+      void applyStoredLocale(resolvedEmail);
+      // Role first — see the hydrate effect above.
+      await refreshRole();
+      await Promise.all([reloadAccounts(), refreshConsent()]);
+    },
+    [reloadAccounts, refreshRole, refreshConsent],
+  );
+
+  const reportLoginError = useCallback(
+    (err: unknown) => {
+      if (err instanceof LoginError) {
+        setLoginError(
+          t(`login.errors.${err.code}`, { status: err.status ?? 0 }),
+        );
+      } else {
+        console.error("Login failed", err);
+        setLoginError(t("login.errors.generic"));
+      }
+    },
+    [t],
+  );
+
   const login = useCallback(
     async (email: string, password: string, remember = true) => {
       setIsLoggingIn(true);
       setLoginError(null);
+      setMfaChallenge(null);
       try {
-        const res = await apiLogin(email, password, remember);
-        // A leftover QR session from an earlier scan in this tab must not
-        // outrank the fresh login — it would silently degrade every call
-        // to QR scope.
-        clearQrSession();
-        const resolvedEmail = res.user_name ?? email;
-        setUser({
-          email: resolvedEmail,
-          name: null,
-          roleName: null,
-          permissionName: null,
-          accountId: null,
-        });
-        // Apply the user's stored language preference before the rest of
-        // the app re-renders. Best-effort: if the lookup fails we leave
-        // the existing cookie alone.
-        void applyStoredLocale(resolvedEmail);
-        // Role first — see the hydrate effect above.
-        await refreshRole();
-        await Promise.all([reloadAccounts(), refreshConsent()]);
-      } catch (err) {
-        if (err instanceof LoginError) {
-          setLoginError(
-            t(`login.errors.${err.code}`, { status: err.status ?? 0 }),
-          );
-        } else {
-          console.error("Login failed", err);
-          setLoginError(t("login.errors.generic"));
+        const result = await apiLogin(email, password, remember);
+        if (result.kind === "mfa") {
+          setMfaChallenge(result.challenge);
+          return;
         }
+        await completeLogin(result.data, email);
+      } catch (err) {
+        reportLoginError(err);
         throw err;
       } finally {
         setIsLoggingIn(false);
       }
     },
-    [reloadAccounts, refreshRole, refreshConsent, t],
+    [completeLogin, reportLoginError],
   );
+
+  const verifyMfa = useCallback(
+    async (code: string, useRecoveryCode: boolean) => {
+      if (!mfaChallenge) return;
+      setIsLoggingIn(true);
+      setLoginError(null);
+      try {
+        const res = await apiVerifyMfa(
+          mfaChallenge,
+          code,
+          useRecoveryCode ? "recovery_code" : "otp",
+        );
+        await completeLogin(res, mfaChallenge.email);
+      } catch (err) {
+        reportLoginError(err);
+        throw err;
+      } finally {
+        setIsLoggingIn(false);
+      }
+    },
+    [mfaChallenge, completeLogin, reportLoginError],
+  );
+
+  const resendMfaCode = useCallback(async () => {
+    if (!mfaChallenge) return false;
+    setLoginError(null);
+    try {
+      const masked = await apiResendMfaCode(mfaChallenge.mfaToken);
+      if (masked) {
+        setMfaChallenge((c) => (c ? { ...c, maskedDestination: masked } : c));
+      }
+      return true;
+    } catch {
+      setLoginError(t("login.mfa.resendFailed"));
+      return false;
+    }
+  }, [mfaChallenge, t]);
+
+  const cancelMfa = useCallback(() => {
+    setMfaChallenge(null);
+    setLoginError(null);
+  }, []);
 
   const selectAccount = useCallback(
     (accountId: string) => {
@@ -599,6 +679,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       reloadConsent: refreshConsent,
       acceptConsent,
       login,
+      mfaChallenge,
+      verifyMfa,
+      resendMfaCode,
+      cancelMfa,
       logout,
       selectAccount,
       clearSelectedAccount,
@@ -630,6 +714,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshConsent,
       acceptConsent,
       login,
+      mfaChallenge,
+      verifyMfa,
+      resendMfaCode,
+      cancelMfa,
       logout,
       selectAccount,
       clearSelectedAccount,
