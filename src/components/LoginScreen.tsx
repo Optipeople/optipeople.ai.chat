@@ -8,6 +8,7 @@ import { OptipeopleLogo } from "@/components/logo";
 import { useAuth } from "@/auth/AuthContext";
 import type { MfaChallenge } from "@/auth/authApi";
 import { Button } from "@/components/ui/button";
+import { TextField } from "@/components/ui/text-field";
 import { cn } from "@/lib/utils";
 
 const MIDNIGHT_GREEN = "#134343";
@@ -22,7 +23,7 @@ const INPUT_CLASSES = cn(
 
 // Same look as the "forgotten my password" link, for in-form actions.
 const LINK_CLASSES =
-  "text-[#134343] underline decoration-solid hover:opacity-70 disabled:opacity-60 disabled:no-underline";
+  "text-[#134343] underline decoration-solid hover:opacity-70 disabled:cursor-default disabled:text-[var(--ds-grey-medium-04)] disabled:no-underline disabled:hover:opacity-100";
 
 // Matches the OptiCloud portal: a new email/SMS code can be asked for
 // once a minute.
@@ -256,13 +257,14 @@ function MfaForm({
 
       <h1 className={HEADING_CLASSES}>{t("heading")}</h1>
 
-      <p className="pb-3 text-[14px] leading-[21px] text-black/90">
+      <p className="pb-4 text-[14px] leading-[21px] text-black/90">
         {instruction}
       </p>
 
-      <div className="flex flex-col gap-2 pb-2">
-        <input
+      <div className="pb-2">
+        <TextField
           id="mfa-code"
+          validation="required"
           type="text"
           autoComplete="one-time-code"
           inputMode={useRecoveryCode ? "text" : "numeric"}
@@ -277,7 +279,6 @@ function MfaForm({
           aria-label={
             useRecoveryCode ? t("recoveryPlaceholder") : t("codePlaceholder")
           }
-          className={INPUT_CLASSES}
         />
       </div>
 
@@ -293,7 +294,7 @@ function MfaForm({
         </Button>
       </div>
 
-      <div className="flex flex-col items-start gap-1 pt-6 pb-3 text-[14px] leading-[21px]">
+      <div className="flex flex-col items-start gap-2 pt-6 pb-3 text-[14px] leading-[21px]">
         {resendable && (
           <button
             type="button"

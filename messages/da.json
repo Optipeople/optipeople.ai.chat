@@ -71,11 +71,11 @@
       "recoveryPlaceholder": "Gendannelseskode",
       "codeFormat": "Indtast den 6-cifrede kode.",
       "submit": "Bekræft",
-      "resend": "Send en ny kode",
-      "resendIn": "Send en ny kode ({seconds} s)",
+      "resend": "Send koden igen",
+      "resendIn": "Send koden igen om {seconds}s",
       "resendFailed": "Vi kunne ikke sende en ny kode. Prøv igen om lidt.",
       "useRecoveryCode": "Brug en gendannelseskode i stedet",
-      "useCode": "Brug en 6-cifret kode i stedet",
+      "useCode": "Brug en bekræftelseskode i stedet",
       "back": "Tilbage til log ind"
     }
   },
