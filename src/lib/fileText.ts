@@ -17,6 +17,7 @@
 //
 // Server-only — pulled in by fileIngestion.ts.
 
+import { createHash } from "node:crypto";
 import { unzipSync } from "fflate";
 
 export type FileTextSource = "text" | "archive" | "none";
@@ -316,6 +317,7 @@ function extractArchive(buffer: Buffer): string {
 
   for (const [name, data] of Object.entries(entries)) {
     if (data.length === 0) continue; // directory / empty entry
+    if (OFFICE_MEDIA.test(name)) continue; // pictures: extractArchiveImages
     const buf = Buffer.from(data);
     const { ok, text: raw } = sniffText(buf);
     if (!ok) continue; // nested binary (images, sqlite, nested zips) — skip
@@ -349,4 +351,88 @@ export function extractFileText(buffer: Buffer): FileTextResult {
 
   const { ok, text } = sniffText(buffer);
   return ok ? { text, source: "text" } : { text: "", source: "none" };
+}
+
+// ---------------------------------------------------------------------------
+// Embedded images in Office documents (.docx / .pptx / .xlsx)
+// ---------------------------------------------------------------------------
+//
+// Office files keep their pictures as plain files under word/media/,
+// ppt/media/ or xl/media/. The text pass above skips them as binary, so a
+// manual written in Word lost every screenshot and diagram. These are
+// handed to the caller, which captions them with Claude vision like the
+// figures of a PDF.
+
+export type ArchiveImage = {
+  // Member path inside the archive, e.g. "word/media/image3.png".
+  name: string;
+  mime: "image/png" | "image/jpeg" | "image/webp";
+  data: Buffer;
+};
+
+const OFFICE_MEDIA = /^(word|ppt|xl)\/media\/[^/]+$/i;
+// Bullets, logos in headers and decorative lines are a few KB at most and
+// are not worth a vision call.
+const MIN_IMAGE_BYTES = 4 * 1024;
+// The Anthropic API rejects images over 5 MB once base64 encoded.
+const MAX_IMAGE_BYTES = 3_700_000;
+// Upper bound on vision calls for one document.
+export const MAX_ARCHIVE_IMAGES = 30;
+
+function sniffImageMime(buf: Buffer): ArchiveImage["mime"] | null {
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buf.length >= 12 &&
+    buf.subarray(0, 4).toString("latin1") === "RIFF" &&
+    buf.subarray(8, 12).toString("latin1") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  // EMF/WMF/GIF/TIFF and others: Claude vision can't take them as-is.
+  return null;
+}
+
+// Embedded pictures of an Office document, in document order as far as
+// the file names tell it (image1, image2, … image10). Never throws: a
+// corrupt archive yields no images.
+export function extractArchiveImages(buffer: Buffer): ArchiveImage[] {
+  if (!isZip(buffer)) return [];
+  let entries: ZipEntries;
+  try {
+    entries = unzipSync(new Uint8Array(buffer), {
+      filter: (f) => OFFICE_MEDIA.test(f.name),
+    });
+  } catch {
+    return [];
+  }
+  const names = Object.keys(entries).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+  const seen = new Set<string>();
+  const out: ArchiveImage[] = [];
+  for (const name of names) {
+    const data = Buffer.from(entries[name]);
+    if (data.length < MIN_IMAGE_BYTES || data.length > MAX_IMAGE_BYTES) continue;
+    const mime = sniffImageMime(data);
+    if (!mime) continue;
+    // The same picture pasted twice is stored once per paste in some
+    // producers; caption it once.
+    const key = createHash("sha1").update(data).digest("hex");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, mime, data });
+    if (out.length >= MAX_ARCHIVE_IMAGES) break;
+  }
+  return out;
 }

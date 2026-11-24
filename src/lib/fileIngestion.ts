@@ -16,15 +16,21 @@
 //      that yields anything we chunk + embed it so the file participates
 //      in chat retrieval, exactly like a PDF. Files we can't turn into
 //      text land 'ready' with zero chunks — store-only.
+//   3. Office documents (.docx/.pptx/.xlsx) also carry their pictures as
+//      files inside the ZIP. Those are captioned with Claude vision and
+//      added as image assets with caption chunks (attachArchiveImages),
+//      so a screenshot in a Word manual is searchable like a PDF figure.
 //
 // Server-only: uses the service-role Supabase client.
 
-import { extractFileText } from "./fileText";
+import { extractArchiveImages, extractFileText } from "./fileText";
+import { attachArchiveImages, wipeArchiveImages } from "./imageIngestion";
 import {
   chunkText,
   ensureFolderPath,
   ensureMachineKb,
   insertChunkRows,
+  INGEST_SOFT_BUDGET_MS,
   markFailedOnError,
   normalizeFolderPath,
   phaseLabel,
@@ -53,13 +59,16 @@ export type IngestFileInput = {
 
 export type IngestFileResult = {
   documentId: string;
-  // Number of embedded text chunks. 0 means the file was stored but its
-  // bytes weren't recognised as text (store-only / not searchable).
+  // Number of embedded chunks: text chunks plus one caption chunk per
+  // embedded picture. 0 means the file was stored but nothing in it was
+  // recognised as text or images (store-only / not searchable).
   chunkCount: number;
   byteSize: number;
   storagePath: string;
-  // Whether the bytes were treated as embeddable text.
+  // Whether anything in the file was made searchable.
   textIngested: boolean;
+  // Embedded pictures captioned and attached as image assets.
+  imageCount: number;
 };
 
 // Storage-based entry point: the bytes are already in the bucket, so we
@@ -220,6 +229,7 @@ async function retryFile(
     const fileBuffer = Buffer.from(await blob.arrayBuffer());
     // Start clean: a failed earlier attempt may have left partial rows.
     await supabase.from("kb_chunks").delete().eq("document_id", row.id);
+    await wipeArchiveImages(row.id);
     return runFilePipeline(
       {
         machineId: row.machine_id,
@@ -229,8 +239,10 @@ async function retryFile(
         fileName: row.title,
         summary: row.summary,
         folderPath: row.folder_path,
+        requestStartedAt: startedAt,
       },
       fileBuffer,
+      { deadlineAt: hardDeadlineAt - 30_000 },
     );
   })();
   await markFailedOnError(
@@ -242,18 +254,28 @@ async function retryFile(
   );
 }
 
+// Time kept back after the picture pass for its embedding call, the
+// inserts and the final status flip.
+const IMAGE_PASS_RESERVE_MS = 40_000;
+
 async function runFilePipeline(
   input: IngestFileInput,
   fileBuffer: Buffer,
+  opts: { deadlineAt?: number } = {},
 ): Promise<IngestFileResult> {
   const supabase = getSupabaseServerClient();
   const { documentId, storagePath } = input;
   const byteSize = fileBuffer.byteLength;
+  const deadlineAt =
+    opts.deadlineAt ??
+    (input.requestStartedAt ?? Date.now()) + INGEST_SOFT_BUDGET_MS;
 
   try {
     const { text, source } = extractFileText(fileBuffer);
+    const images = extractArchiveImages(fileBuffer);
+    const hasText = source !== "none" && !!text;
 
-    if (source === "none" || !text) {
+    if (!hasText && images.length === 0) {
       // Store-only: a binary blob we can't turn into text. Land it
       // 'ready' so the operator sees it in the tree as a downloadable
       // attachment.
@@ -273,45 +295,69 @@ async function runFilePipeline(
         byteSize,
         storagePath,
         textIngested: false,
+        imageCount: 0,
       };
     }
 
-    const chunks = chunkText(text);
-    await supabase
-      .from("kb_documents")
-      .update({
-        progress: 40,
-        progress_label: phaseLabel("embedding", {
-          done: 0,
-          total: chunks.length,
-        }),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
-    const embeddings = await embedDocuments(
-      chunks.map((c) => c.text),
-      { usage: { accountId: input.accountId, machineId: input.machineId } },
-    );
-    if (embeddings.length !== chunks.length) {
-      throw new Error(
-        `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
+    const chunks = hasText ? chunkText(text) : [];
+    if (chunks.length > 0) {
+      await supabase
+        .from("kb_documents")
+        .update({
+          progress: 40,
+          progress_label: phaseLabel("embedding", {
+            done: 0,
+            total: chunks.length,
+          }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      const embeddings = await embedDocuments(
+        chunks.map((c) => c.text),
+        { usage: { accountId: input.accountId, machineId: input.machineId } },
       );
+      if (embeddings.length !== chunks.length) {
+        throw new Error(
+          `embedding count mismatch (${embeddings.length} vs ${chunks.length})`,
+        );
+      }
+
+      // Page provenance stays null for these: the extractors here return a
+      // flat text stream with no page structure to carry sentinels.
+      const rows = chunks.map((chunk, i) => ({
+        document_id: documentId,
+        machine_id: input.machineId,
+        ordinal: i,
+        page_from: chunk.pageFrom,
+        page_to: chunk.pageTo,
+        text: chunk.text,
+        embedding: embeddings[i],
+        embedding_model: VOYAGE_MODEL,
+      }));
+
+      await insertChunkRows(rows, 0);
     }
 
-    // Page provenance stays null for these: the extractors here return a
-    // flat text stream with no page structure to carry sentinels.
-    const rows = chunks.map((chunk, i) => ({
-      document_id: documentId,
-      machine_id: input.machineId,
-      ordinal: i,
-      page_from: chunk.pageFrom,
-      page_to: chunk.pageTo,
-      text: chunk.text,
-      embedding: embeddings[i],
-      embedding_model: VOYAGE_MODEL,
-    }));
-
-    await insertChunkRows(rows, 0);
+    let imageCount = 0;
+    if (images.length > 0) {
+      await supabase
+        .from("kb_documents")
+        .update({
+          progress: 70,
+          progress_label: phaseLabel("figures"),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      imageCount = await attachArchiveImages({
+        documentId,
+        machineId: input.machineId,
+        accountId: input.accountId,
+        documentTitle:
+          input.fileName.replace(/\.[^.]+$/, "").trim() || input.fileName,
+        images,
+        deadlineAt: deadlineAt - IMAGE_PASS_RESERVE_MS,
+      });
+    }
 
     await supabase
       .from("kb_documents")
@@ -325,18 +371,21 @@ async function runFilePipeline(
 
     await regenerateSuggestedQuestionsSafe(input.machineId);
 
+    const chunkCount = chunks.length + imageCount;
     return {
       documentId,
-      chunkCount: chunks.length,
+      chunkCount,
       byteSize,
       storagePath,
-      textIngested: true,
+      textIngested: chunkCount > 0,
+      imageCount,
     };
   } catch (err) {
     // Clean up any partial chunks and flag the row so the queue surfaces
     // the failure instead of a stuck 'embedding' badge. The Storage
     // object stays behind for forensics.
     await supabase.from("kb_chunks").delete().eq("document_id", documentId);
+    await wipeArchiveImages(documentId);
     await supabase
       .from("kb_documents")
       .update({

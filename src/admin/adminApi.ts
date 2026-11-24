@@ -816,6 +816,8 @@ export type FileUploadResult = {
   byteSize: number;
   storagePath: string;
   textIngested: boolean;
+  // Pictures embedded in an Office document, captioned and searchable.
+  imageCount?: number;
 };
 
 // Generic upload for anything that isn't a PDF or image. Stores the raw

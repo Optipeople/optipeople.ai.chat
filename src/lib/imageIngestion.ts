@@ -11,6 +11,11 @@
 //                         caption chunks. Skipped silently on failure —
 //                         text retrieval must keep working even if the
 //                         figure pass blows up.
+//
+//   attachArchiveImages() — called from the generic file pipeline for
+//                         Office documents. Each embedded picture is
+//                         stored in kb-images and captioned, with an
+//                         asset + caption chunk on the parent document.
 
 import { randomUUID } from "node:crypto";
 import {
@@ -21,6 +26,7 @@ import {
   type ImageMime,
   type PdfFigure,
 } from "./imageCaption";
+import type { ArchiveImage } from "./fileText";
 import {
   ensureFolderPath,
   ensureMachineKb,
@@ -400,4 +406,199 @@ export async function wipePdfFigures(documentId: string): Promise<void> {
   if (error) {
     console.warn("wipePdfFigures failed:", error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pictures embedded in Office documents (.docx / .pptx / .xlsx)
+// ---------------------------------------------------------------------------
+
+// How many captions run at once. Each is one Sonnet vision call.
+const ARCHIVE_CAPTION_CONCURRENCY = 4;
+
+// Storage path of the n-th embedded picture of a generic file document.
+// Kept flat under <machineId>/ so deleting a machine (which lists that
+// folder non-recursively) also sweeps them.
+function archiveImagePath(
+  machineId: string,
+  documentId: string,
+  index: number,
+  mime: ImageMime,
+): string {
+  return `${machineId}/${documentId}-media-${index}.${extensionForMime(mime)}`;
+}
+
+// Best-effort, like attachPdfFigures: uploads each embedded picture to
+// kb-images, captions it with Claude vision and adds a kb_assets row plus
+// a caption chunk on the parent document. A picture that fails is
+// skipped; the text of the document never depends on this pass. Stops
+// starting new captions once `deadlineAt` (ms epoch) has passed so the
+// pipeline stays inside its time budget.
+export async function attachArchiveImages(args: {
+  documentId: string;
+  machineId: string;
+  accountId?: string;
+  documentTitle: string;
+  images: ArchiveImage[];
+  deadlineAt?: number;
+}): Promise<number> {
+  if (args.images.length === 0) return 0;
+  const supabase = getSupabaseServerClient();
+  const usage = { accountId: args.accountId || undefined, machineId: args.machineId };
+
+  type Done = {
+    index: number;
+    storagePath: string;
+    mime: ImageMime;
+    byteSize: number;
+    caption: string;
+    altText: string;
+  };
+  const done: (Done | null)[] = new Array(args.images.length).fill(null);
+
+  let next = 0;
+  const worker = async () => {
+    while (next < args.images.length) {
+      if (args.deadlineAt && Date.now() >= args.deadlineAt) return;
+      const index = next++;
+      const img = args.images[index];
+      try {
+        const storagePath = archiveImagePath(
+          args.machineId,
+          args.documentId,
+          index,
+          img.mime,
+        );
+        const { error: upErr } = await supabase.storage
+          .from("kb-images")
+          .upload(storagePath, img.data, { contentType: img.mime, upsert: true });
+        if (upErr) throw new Error(`storage upload failed: ${upErr.message}`);
+        const { caption, altText } = await captionImage(img.data, img.mime, usage);
+        done[index] = {
+          index,
+          storagePath,
+          mime: img.mime,
+          byteSize: img.data.byteLength,
+          // The document title helps retrieval tie a screenshot to the
+          // manual it came from.
+          caption: `${args.documentTitle}: ${caption}`,
+          altText,
+        };
+      } catch (err) {
+        console.warn(
+          `attachArchiveImages: ${img.name} of ${args.documentId} skipped:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(ARCHIVE_CAPTION_CONCURRENCY, args.images.length) },
+      worker,
+    ),
+  );
+
+  const captioned = done.filter((d): d is Done => d !== null);
+  if (captioned.length === 0) return 0;
+
+  let embeddings: number[][];
+  try {
+    embeddings = await embedDocuments(
+      captioned.map((d) => d.caption),
+      { usage },
+    );
+  } catch (err) {
+    console.warn("attachArchiveImages: embedDocuments failed:", err);
+    return 0;
+  }
+  if (embeddings.length !== captioned.length) {
+    console.warn(
+      `attachArchiveImages: embedding count mismatch (${embeddings.length} vs ${captioned.length})`,
+    );
+    return 0;
+  }
+
+  const assetRows = captioned.map((d) => ({
+    id: randomUUID(),
+    document_id: args.documentId,
+    machine_id: args.machineId,
+    storage_path: d.storagePath,
+    storage_bucket: "kb-images" as const,
+    mime_type: d.mime,
+    byte_size: d.byteSize,
+    page_from: null,
+    ordinal: d.index,
+    caption: d.caption,
+    alt_text: d.altText,
+  }));
+  const { error: assetErr } = await supabase.from("kb_assets").insert(assetRows);
+  if (assetErr) {
+    console.warn("attachArchiveImages: kb_assets insert failed:", assetErr);
+    return 0;
+  }
+
+  // After the text chunks in ordinal order, as with PDF figures.
+  const ORD_OFFSET = 1_000_000;
+  const chunkRows = captioned.map((d, i) => ({
+    document_id: args.documentId,
+    machine_id: args.machineId,
+    asset_id: assetRows[i].id,
+    ordinal: ORD_OFFSET + d.index,
+    page_from: null,
+    page_to: null,
+    text: d.caption,
+    embedding: embeddings[i],
+    embedding_model: VOYAGE_MODEL,
+  }));
+  const { error: chunkErr } = await supabase.from("kb_chunks").insert(chunkRows);
+  if (chunkErr) {
+    console.warn("attachArchiveImages: kb_chunks insert failed:", chunkErr);
+    // Assets without caption chunks are invisible to retrieval; drop them.
+    await supabase
+      .from("kb_assets")
+      .delete()
+      .in("id", assetRows.map((a) => a.id));
+    return 0;
+  }
+  return captioned.length;
+}
+
+// Storage paths of the kb-images objects that belong to a document's
+// assets but are not the document's own original (that one is removed
+// with the document). Today these are the embedded pictures of Office
+// files.
+export async function listExtraImageObjects(
+  documentIds: string[],
+): Promise<string[]> {
+  if (documentIds.length === 0) return [];
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kb_assets")
+    .select("storage_path")
+    .eq("storage_bucket", "kb-images")
+    .in("document_id", documentIds)
+    .like("storage_path", "%-media-%");
+  if (error) {
+    console.warn("listExtraImageObjects failed:", error);
+    return [];
+  }
+  return ((data ?? []) as { storage_path: string }[]).map((r) => r.storage_path);
+}
+
+// Removes a file document's embedded-picture assets, their caption chunks
+// (cascade) and their Storage objects. Used before a retry re-runs the
+// pipeline and when the document is deleted.
+export async function wipeArchiveImages(documentId: string): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  const paths = await listExtraImageObjects([documentId]);
+  if (paths.length > 0) {
+    const { error } = await supabase.storage.from("kb-images").remove(paths);
+    if (error) console.warn("wipeArchiveImages storage remove failed:", error);
+  }
+  const { error } = await supabase
+    .from("kb_assets")
+    .delete()
+    .eq("document_id", documentId)
+    .eq("storage_bucket", "kb-images");
+  if (error) console.warn("wipeArchiveImages failed:", error);
 }

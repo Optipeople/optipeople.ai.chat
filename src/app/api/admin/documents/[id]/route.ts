@@ -14,6 +14,7 @@ import {
   IngestRequestError,
   normalizeFolderPath,
 } from "@/lib/ingestion";
+import { wipeArchiveImages } from "@/lib/imageIngestion";
 import { regenerateSuggestedQuestionsSafe } from "@/lib/suggestions";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
@@ -156,6 +157,11 @@ export async function DELETE(
     machine_id: string;
     source_type: "pdf" | "url" | "manual_note" | "feedback" | "image" | "file";
   };
+  if (sourceType === "file") {
+    // Pictures pulled out of an Office document live in kb-images as
+    // their own objects; the row cascade would orphan them.
+    await wipeArchiveImages(id);
+  }
   if (storagePath) {
     // Standalone images live in kb-images; everything else in kb-documents.
     const bucket = sourceType === "image" ? "kb-images" : "kb-documents";

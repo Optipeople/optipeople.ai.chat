@@ -20,7 +20,11 @@
 import { randomUUID } from "node:crypto";
 import { chunkText } from "./chunking";
 import { extractDocumentMeta, isOpaqueFileTitle } from "./docMeta";
-import { attachPdfFigures, wipePdfFigures } from "./imageIngestion";
+import {
+  attachPdfFigures,
+  listExtraImageObjects,
+  wipePdfFigures,
+} from "./imageIngestion";
 import {
   extractPdfText,
   type OcrCheckpoint,
@@ -1760,6 +1764,13 @@ export async function resetMachineKb(machineId: string): Promise<number> {
   if (pdfPaths.length > 0) {
     await supabase.storage.from("kb-documents").remove(pdfPaths);
   }
+  // Pictures extracted from Office documents are separate kb-images
+  // objects referenced only by kb_assets rows.
+  imagePaths.push(
+    ...(await listExtraImageObjects(
+      (oldDocs as { id: string }[]).map((d) => d.id),
+    )),
+  );
   if (imagePaths.length > 0) {
     await supabase.storage.from("kb-images").remove(imagePaths);
   }
