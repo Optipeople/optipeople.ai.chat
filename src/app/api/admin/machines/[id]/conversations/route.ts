@@ -16,6 +16,12 @@ import {
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
+import {
+  EMPTY_CONVERSATION_USAGE_TOTALS,
+  fetchConversationUsage,
+  type ConversationUsage,
+  type ConversationUsageTotals,
+} from "@/lib/conversationUsage";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -31,6 +37,9 @@ export type AdminConversationListItem = {
   resolution: string | null;
   messageCount: number;
   lastMessageAt: string | null;
+  // AI usage the conversation caused (chat, voice, distill, ...), priced.
+  // Null when the usage lookup failed — unknown, not free.
+  usage: ConversationUsageTotals | null;
 };
 
 const DEFAULT_PER_PAGE = 25;
@@ -183,6 +192,13 @@ export async function GET(
 
   // Bulk-fetch message counts + last-message timestamps for the slice.
   const ids = slice.map((r) => r.id);
+  // Usage runs beside the message stats. Best effort: a failed lookup
+  // leaves the cost column blank rather than hiding the list.
+  const usagePromise: Promise<Map<string, ConversationUsage> | null> =
+    fetchConversationUsage(ids).catch((err: unknown) => {
+      console.error("admin conversations usage failed:", err);
+      return null;
+    });
   const stats = new Map<string, { count: number; lastAt: string | null }>();
   if (ids.length > 0) {
     const { data: msgs, error: msgErr } = await supabase
@@ -205,6 +221,7 @@ export async function GET(
     }
   }
 
+  const usage = await usagePromise;
   const items: AdminConversationListItem[] = slice.map((r) => {
     const s = stats.get(r.id) ?? { count: 0, lastAt: null };
     return {
@@ -217,6 +234,9 @@ export async function GET(
       resolution: r.resolution,
       messageCount: s.count,
       lastMessageAt: s.lastAt,
+      usage: usage
+        ? (usage.get(r.id)?.totals ?? EMPTY_CONVERSATION_USAGE_TOTALS)
+        : null,
     };
   });
 

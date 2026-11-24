@@ -25,6 +25,10 @@ import {
   type AdminConversationResolutionFilter,
   type AdminConversationSort,
 } from "@/admin/adminApi";
+import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
+import { formatUsd } from "@/lib/pricing";
+import { creditsForUsd, formatCreditsFine } from "@/lib/credits";
+import { usageTokensIn } from "@/lib/conversationUsageTotals";
 
 // What the list shows: one machine's conversations, or an account's
 // fleet ("all machines") conversations — same columns, filters, and
@@ -73,6 +77,12 @@ function isQrConversation(c: {
   );
 }
 
+// Every token the conversation caused, prompt cache included — the
+// same in + out the detail page shows. Null when the lookup failed.
+function usageTokens(c: AdminConversationListItem): number | null {
+  return c.usage ? usageTokensIn(c.usage) + c.usage.outputTokens : null;
+}
+
 // `embedded` skips the page-level heading + description for use inside
 // a section panel (the section header provides the title).
 export function ConversationsList({
@@ -95,6 +105,22 @@ export function ConversationsList({
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [sort, setSort] = useState<AdminConversationSort>("problems");
+  const { user } = useAuth();
+  // Dollars for super admins (our cost basis), credits for everyone else
+  // — the same rule as the account usage panel.
+  const showCurrency = isSuperAdmin(user);
+  const costLabel = (c: AdminConversationListItem) => {
+    if (!c.usage) return "—";
+    // Nothing priceable: unknown, not free.
+    if (c.usage.costUsd === 0 && c.usage.unpricedRows > 0) return "—";
+    return showCurrency
+      ? formatUsd(c.usage.costUsd)
+      : formatCreditsFine(creditsForUsd(c.usage.costUsd));
+  };
+  const tokensLabel = (c: AdminConversationListItem) => {
+    const n = usageTokens(c);
+    return n === null ? "—" : n.toLocaleString("en-US");
+  };
 
   const sourceKey =
     source.kind === "machine" ? source.machineId : source.accountId;
@@ -260,6 +286,8 @@ export function ConversationsList({
                     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-muted-foreground)]">
                       <span className="tabular-nums">{DA_DT.format(new Date(c.startedAt))}</span>
                       <span>{t("colMessages")}: <span className="tabular-nums text-[var(--color-foreground)]">{c.messageCount}</span></span>
+                      <span>{t("colTokens")}: <span className="tabular-nums text-[var(--color-foreground)]">{tokensLabel(c)}</span></span>
+                      <span>{showCurrency ? t("colCost") : t("colCredits")}: <span className="tabular-nums text-[var(--color-foreground)]">{costLabel(c)}</span></span>
                     </div>
                   </div>
                   <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
@@ -274,6 +302,10 @@ export function ConversationsList({
                 <DataTableHeader>{t("colStarted")}</DataTableHeader>
                 <DataTableHeader>{t("colOperator")}</DataTableHeader>
                 <DataTableHeader align="right">{t("colMessages")}</DataTableHeader>
+                <DataTableHeader align="right">{t("colTokens")}</DataTableHeader>
+                <DataTableHeader align="right">
+                  {showCurrency ? t("colCost") : t("colCredits")}
+                </DataTableHeader>
                 <DataTableHeader>{t("colLastActivity")}</DataTableHeader>
                 <DataTableHeader>{t("colStatus")}</DataTableHeader>
                 <DataTableHeader className="w-10" />
@@ -299,6 +331,12 @@ export function ConversationsList({
                       </DataTableCell>
                       <DataTableCell align="right" className="tabular-nums">
                         {c.messageCount}
+                      </DataTableCell>
+                      <DataTableCell align="right" className="tabular-nums">
+                        {tokensLabel(c)}
+                      </DataTableCell>
+                      <DataTableCell align="right" className="tabular-nums">
+                        {costLabel(c)}
                       </DataTableCell>
                       <DataTableCell className="tabular-nums text-[var(--ds-grey-medium-05)]">
                         {c.lastMessageAt

@@ -167,3 +167,18 @@ export function formatCredits(credits: number): string {
   if (!Number.isFinite(credits)) return "—";
   return Math.round(credits).toLocaleString("en-US");
 }
+
+/**
+ * Credits for a single conversation. A conversation is usually a
+ * fraction of a credit, which formatCredits would round to 0 — so one
+ * decimal here, and a non-zero amount never reads as zero.
+ */
+export function formatCreditsFine(credits: number): string {
+  if (!Number.isFinite(credits)) return "—";
+  if (credits <= 0) return "0";
+  if (credits < 0.1) return "<0.1";
+  return credits.toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}

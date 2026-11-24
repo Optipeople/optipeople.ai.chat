@@ -14,6 +14,12 @@ import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/ui/markdown";
 import { Spinner } from "@/components/ui/spinner";
+import { HelpHint } from "@/components/ui/help-hint";
+import { UsageBreakdownTable } from "@/components/admin/UsageBreakdownTable";
+import { isSuperAdmin, useAuth } from "@/auth/AuthContext";
+import { formatUsd } from "@/lib/pricing";
+import { creditsForUsd, formatCreditsFine } from "@/lib/credits";
+import { usageTokensIn } from "@/lib/conversationUsageTotals";
 import {
   adminErrorMessage,
   getAdminConversation,
@@ -55,6 +61,11 @@ export function ConversationDetail({
   const tErr = useTranslations("admin.apiErrors");
   const tn = useTranslations("admin.nav.crumbs");
   const tSections = useTranslations("admin.nav.sections");
+  const { user } = useAuth();
+  // Dollars are our cost basis and stay with super admins; an account
+  // admin sees the same spend in credits, the unit they are billed in
+  // (same rule as AccountUsageSection).
+  const showCurrency = isSuperAdmin(user);
   const [data, setData] = useState<AdminConversationDetail | null>(null);
   const [machineName, setMachineName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -149,8 +160,19 @@ export function ConversationDetail({
     );
   }
 
-  const totalIn = data.messages.reduce((s, m) => s + (m.tokensIn ?? 0), 0);
-  const totalOut = data.messages.reduce((s, m) => s + (m.tokensOut ?? 0), 0);
+  // Usage events cover every AI call the conversation caused, prompt
+  // cache included, and match the list's Tokens column. The per-message
+  // counts are only the fallback for when that lookup failed.
+  const usage = data.usage;
+  const totalIn = usage
+    ? usageTokensIn(usage.totals)
+    : data.messages.reduce((s, m) => s + (m.tokensIn ?? 0), 0);
+  const totalOut = usage
+    ? usage.totals.outputTokens
+    : data.messages.reduce((s, m) => s + (m.tokensOut ?? 0), 0);
+  const costIncomplete = (usage?.totals.unpricedRows ?? 0) > 0;
+  // Nothing priceable at all: unknown, not free.
+  const costUnknown = costIncomplete && usage?.totals.costUsd === 0;
   const cacheHits = data.messages.filter((m) => m.cacheHit).length;
 
   // QR-sticker sessions carry a pseudo identity (user_name "QR operator" /
@@ -189,8 +211,11 @@ export function ConversationDetail({
               {data.messages.length}
             </dd>
           </div>
-          <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-            <dt className="text-[var(--color-muted-foreground)]">{t("tokens")}</dt>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+              {t("tokens")}
+              {usage && <HelpHint size={16} content={t("tokensHelp")} />}
+            </dt>
             <dd className="text-[var(--color-foreground)]">
               {t("tokensValue", { tokensIn: totalIn.toLocaleString(), tokensOut: totalOut.toLocaleString() })}
               {cacheHits > 0 && (
@@ -200,7 +225,41 @@ export function ConversationDetail({
               )}
             </dd>
           </div>
+          {usage && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <dt className="flex items-center gap-1 text-[var(--color-muted-foreground)]">
+                {showCurrency ? t("cost") : t("credits")}
+                <HelpHint
+                  size={16}
+                  content={
+                    showCurrency
+                      ? t(costIncomplete ? "costHelpIncomplete" : "costHelp")
+                      : t(costIncomplete ? "creditsHelpIncomplete" : "creditsHelp")
+                  }
+                />
+              </dt>
+              <dd className="tabular-nums text-[var(--color-foreground)]">
+                {costUnknown
+                  ? "—"
+                  : showCurrency
+                    ? formatUsd(usage.totals.costUsd)
+                    : formatCreditsFine(creditsForUsd(usage.totals.costUsd))}
+              </dd>
+            </div>
+          )}
         </dl>
+
+        {usage && usage.rows.length > 0 && (
+          <div className="mt-5 flex flex-col gap-2">
+            <h2 className="text-[15px] font-medium text-[var(--color-foreground)]">
+              {t("usageHeading")}
+            </h2>
+            <UsageBreakdownTable
+              rows={usage.rows}
+              showCurrency={showCurrency}
+            />
+          </div>
+        )}
 
         {data.escalation && (
           <div className="mt-5 flex items-start gap-3 rounded-[4px] border border-amber-200 bg-amber-50 p-3 text-[14px] sm:p-4">

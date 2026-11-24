@@ -661,7 +661,10 @@
       "sortProblems": "Problems first",
       "totalLabel": "{count} conversations",
       "emptyFiltered": "No conversations match the filter.",
-      "qrOperator": "QR operator"
+      "qrOperator": "QR operator",
+      "colTokens": "Tokens",
+      "colCost": "Est. cost",
+      "colCredits": "Credits"
     },
     "conversationDetail": {
       "fetchFailed": "The conversation could not be loaded",
@@ -697,7 +700,15 @@
       "chunkLabel": "chunk #{n}",
       "pageRange": "p. {from}–{to}",
       "pageSingle": "p. {n}",
-      "qrOperator": "QR operator"
+      "qrOperator": "QR operator",
+      "cost": "Estimated cost",
+      "credits": "Credits used",
+      "costHelp": "Estimated USD at current list prices, from the AI calls this conversation caused: chat, voice and learning from the conversation afterwards. Reading answers aloud is not yet attributed to a conversation.",
+      "costHelpIncomplete": "Estimated USD at current list prices. Some of this conversation ran on models with no price on file and is excluded, so the real figure is higher.",
+      "creditsHelp": "Credits this conversation used from the account pool: chat, voice and learning from the conversation afterwards. Reading answers aloud is not yet attributed to a conversation.",
+      "usageHeading": "AI usage",
+      "creditsHelpIncomplete": "Credits this conversation used from the account pool. Part of its usage could not be priced and is excluded, so the real figure is higher.",
+      "tokensHelp": "Every token the AI processed for this conversation: prompt tokens (including the prompt cache) in, generated tokens out."
     },
     "escalations": {
       "heading": "Escalations",

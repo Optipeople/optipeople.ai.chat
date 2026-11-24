@@ -15,6 +15,11 @@ import {
   signAttachments,
   type StoredChatAttachment,
 } from "@/lib/chatAttachments";
+import {
+  EMPTY_CONVERSATION_USAGE_TOTALS,
+  fetchConversationUsage,
+  type ConversationUsage,
+} from "@/lib/conversationUsage";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -91,6 +96,9 @@ export type AdminConversationDetail = {
   // Legacy photos that could not be tied to a message. They were sent
   // after the last message, so the UI shows them at the end.
   unplacedPhotos: AdminMessagePhoto[];
+  // Every AI call the conversation caused, grouped by operation + model
+  // and priced. Null when the lookup failed — unknown, not free.
+  usage: ConversationUsage | null;
 };
 
 export async function GET(
@@ -127,6 +135,22 @@ export async function GET(
       console.error("admin conversation photos failed:", err);
       return new Map<string, AdminMessagePhoto[]>();
     });
+
+  // Best effort, like the photos: a failed lookup hides the cost, not
+  // the transcript.
+  const usagePromise: Promise<ConversationUsage | null> =
+    fetchConversationUsage([id])
+      .then(
+        (m) =>
+          m.get(id) ?? {
+            totals: EMPTY_CONVERSATION_USAGE_TOTALS,
+            rows: [],
+          },
+      )
+      .catch((err: unknown) => {
+        console.error("admin conversation usage failed:", err);
+        return null;
+      });
 
   const [
     { data: conv, error: cErr },
@@ -331,6 +355,7 @@ export async function GET(
       createdAt: m.created_at,
     })),
     unplacedPhotos: photosByMessage.get("") ?? [],
+    usage: await usagePromise,
   };
 
   return Response.json(result);

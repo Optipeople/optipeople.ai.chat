@@ -661,7 +661,10 @@
       "sortProblems": "Problemer først",
       "totalLabel": "{count} samtaler",
       "emptyFiltered": "Ingen samtaler matcher filteret.",
-      "qrOperator": "QR-operatør"
+      "qrOperator": "QR-operatør",
+      "colTokens": "Tokens",
+      "colCost": "Anslået pris",
+      "colCredits": "Credits"
     },
     "conversationDetail": {
       "fetchFailed": "Samtalen kunne ikke hentes",
@@ -697,7 +700,15 @@
       "chunkLabel": "chunk #{n}",
       "pageRange": "s. {from}–{to}",
       "pageSingle": "s. {n}",
-      "qrOperator": "QR-operatør"
+      "qrOperator": "QR-operatør",
+      "cost": "Anslået pris",
+      "credits": "Brugte credits",
+      "costHelp": "Anslået i USD efter gældende listepriser, ud fra de AI-kald samtalen udløste: chat, stemme og læring fra samtalen bagefter. Oplæsning af svar knyttes endnu ikke til en samtale.",
+      "costHelpIncomplete": "Anslået i USD efter gældende listepriser. Noget af samtalen kørte på modeller uden registreret pris og er udeladt, så det reelle beløb er højere.",
+      "creditsHelp": "Credits samtalen har brugt af kontoens pulje: chat, stemme og læring fra samtalen bagefter. Oplæsning af svar knyttes endnu ikke til en samtale.",
+      "usageHeading": "AI-forbrug",
+      "creditsHelpIncomplete": "Credits samtalen har brugt af kontoens pulje. En del af forbruget kunne ikke prissættes og er udeladt, så det reelle tal er højere.",
+      "tokensHelp": "Alle tokens AI’en har behandlet for samtalen: prompt-tokens (inkl. prompt-cache) ind, genererede tokens ud."
     },
     "escalations": {
       "heading": "Eskaleringer",
