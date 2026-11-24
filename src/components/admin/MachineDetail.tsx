@@ -45,6 +45,7 @@ import {
   revokeAdminMachineQr,
   updateAdminDocumentFolder,
   updateAdminDocumentOperatorVisible,
+  renameAdminDocument,
   updateAdminDocumentSummary,
   updateAdminMachineName,
   type AdminDocument,
@@ -1612,6 +1613,9 @@ function DocumentRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(document.summary);
   const [saving, setSaving] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(document.title);
+  const [savingTitle, setSavingTitle] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [opening, setOpening] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -1716,6 +1720,30 @@ function DocumentRow({
     }
   }
 
+  function cancelRename() {
+    setTitleDraft(document.title);
+    setRenaming(false);
+  }
+
+  async function saveTitle() {
+    const next = titleDraft.trim();
+    if (!next || next === document.title) {
+      cancelRename();
+      return;
+    }
+    setSavingTitle(true);
+    setErr(null);
+    try {
+      await renameAdminDocument(document.id, next);
+      await onChanged();
+      setRenaming(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("genericError"));
+    } finally {
+      setSavingTitle(false);
+    }
+  }
+
   async function remove() {
     if (processing) return;
     const ok = await confirm({
@@ -1740,7 +1768,7 @@ function DocumentRow({
 
   return (
     <div
-      draggable={!editing}
+      draggable={!editing && !renaming}
       onDragStart={(e) => {
         e.dataTransfer.setData(DOC_DRAG_MIME, document.id);
         e.dataTransfer.effectAllowed = "move";
@@ -1773,7 +1801,59 @@ function DocumentRow({
           className="h-4 w-4 shrink-0 cursor-grab text-[var(--color-muted-foreground)]/40 hover:text-[var(--color-muted-foreground)]"
           aria-label={t("dragToMoveAria")}
         />
-        <span className="min-w-0 [overflow-wrap:anywhere]" title={document.title}>{document.title}</span>
+        {renaming ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveTitle();
+                if (e.key === "Escape") cancelRename();
+              }}
+              autoFocus
+              disabled={savingTitle}
+              aria-label={t("renameDocAria", { title: document.title })}
+              className={cn(
+                "h-8 min-w-0 flex-1 rounded-[4px] border border-[var(--color-hairline)]",
+                "bg-[var(--color-background)] px-2 text-[14px] font-normal",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
+              )}
+            />
+            <button
+              onClick={() => void saveTitle()}
+              disabled={savingTitle}
+              className="rounded p-1 text-[var(--ds-green)] hover:bg-[var(--ds-tag-green-light)]"
+              aria-label={t("saveAria")}
+            >
+              {savingTitle ? (
+                <Spinner className="h-3.5 w-3.5" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              onClick={cancelRename}
+              disabled={savingTitle}
+              className="rounded p-1 text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
+              aria-label={t("cancelAria")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              setTitleDraft(document.title);
+              setRenaming(true);
+            }}
+            title={t("renameDocTitle")}
+            aria-label={t("renameDocAria", { title: document.title })}
+            className="group flex min-w-0 items-center gap-2 text-left"
+          >
+            <span className="min-w-0 [overflow-wrap:anywhere]">{document.title}</span>
+            <Pencil className="h-3 w-3 shrink-0 text-[var(--color-muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100" />
+          </button>
+        )}
         {document.sourceType === "image" && (
           <span title={t("imageTitle")}>
             <ImageIcon

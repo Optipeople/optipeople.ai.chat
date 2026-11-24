@@ -240,6 +240,22 @@ export async function deleteAdminMachine(id: string): Promise<void> {
   }
 }
 
+export async function renameAdminDocument(
+  id: string,
+  title: string,
+): Promise<void> {
+  const res = await fetchWithAuth(`/api/admin/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) {
+    throw apiError("renameDocumentFailed", `Kunne ikke omdøbe filen (${res.status})`, {
+      status: res.status,
+    });
+  }
+}
+
 export async function updateAdminDocumentSummary(
   id: string,
   summary: string,
