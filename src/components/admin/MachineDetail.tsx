@@ -1773,7 +1773,7 @@ function DocumentRow({
           className="h-4 w-4 shrink-0 cursor-grab text-[var(--color-muted-foreground)]/40 hover:text-[var(--color-muted-foreground)]"
           aria-label={t("dragToMoveAria")}
         />
-        <span className="truncate">{document.title}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]" title={document.title}>{document.title}</span>
         {document.sourceType === "image" && (
           <span title={t("imageTitle")}>
             <ImageIcon

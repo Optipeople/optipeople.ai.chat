@@ -509,7 +509,7 @@ function DocumentTree({ docs }: { docs: OperatorDocument[] }) {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <Folder className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{g.folder}</span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{g.folder}</span>
                 </span>
                 <ChevronRight
                   className={cn(
@@ -581,11 +581,11 @@ function DocumentLink({ doc }: { doc: OperatorDocument }) {
         <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[16px] font-medium text-white">
+        <span className="block text-[16px] font-medium leading-snug text-white [overflow-wrap:anywhere]">
           {doc.title}
         </span>
         {doc.summary && (
-          <span className="block truncate text-[13px] text-white/70">
+          <span className="mt-0.5 line-clamp-2 block text-[13px] text-white/70">
             {doc.summary}
           </span>
         )}
