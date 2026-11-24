@@ -19,11 +19,31 @@
 //
 // Fleet conversations are skipped for now: they span a whole account and
 // the KB is per machine, so there is no safe place to file the result.
+//
+// Operator photos are part of the transcript: each one sits at the
+// message it was sent with as its caption ("Photo N"), and the most
+// recent ones are also shown to the model as images. The photos the
+// learning relies on are kept on the insight (attachment_ids) and, when
+// published, become image assets on the KB document, so search_kb can
+// surface the photo itself.
 
+import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import type { ImageBlockParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import {
+  attachmentAsText,
+  captionChatAttachments,
+  CHAT_ATTACHMENT_BUCKET,
+  getAttachmentsByIds,
+  groupByMessage,
+  listConversationAttachments,
+  signAttachments,
+  type StoredChatAttachment,
+} from "./chatAttachments";
 import { publishExperienceDoc } from "./feedback";
 import { getSupabaseServerClient } from "./supabase";
-import { fromAnthropicUsage, recordUsage } from "./usage";
+import { fromAnthropicUsage, recordUsage, type UsageAttribution } from "./usage";
+import { embedDocuments, VOYAGE_MODEL } from "./voyage";
 
 const MODEL = "claude-sonnet-5-5";
 const EFFORT = "low" as const;
@@ -46,6 +66,15 @@ const MAX_ATTEMPTS = 3;
 const TITLE_MAX = 80;
 const SUMMARY_MAX = 200;
 
+// Photos shown to the model as images: the most recent ones. Older ones
+// are still in the transcript as their caption.
+const MAX_DISTILL_IMAGES = 8;
+// The model fetches the image itself; it only needs the URL for the call.
+const DISTILL_IMAGE_URL_TTL = 600;
+// Photo caption chunks sort after the document's text chunks
+// (kb_chunks is unique on document_id + ordinal), as PDF figures do.
+const PHOTO_CHUNK_ORDINAL_OFFSET = 1_000_000;
+
 export type InsightStatus = "pending" | "published" | "rejected" | "nothing";
 
 export type Distillation = {
@@ -56,6 +85,9 @@ export type Distillation = {
   solution: string;
   facts: string[];
   openQuestions: string[];
+  // "Photo N" numbers the learning relies on, as the model returned
+  // them. null when the output held no usable list.
+  photoNumbers: number[] | null;
 };
 
 type ConversationRow = {
@@ -70,6 +102,7 @@ type ConversationRow = {
 };
 
 type MessageRow = {
+  id: string;
   role: string;
   content: string;
   tool_name: string | null;
@@ -89,6 +122,7 @@ Rules:
 - Set "worth_keeping" to false when the chat holds nothing beyond what the manual already says (a simple lookup, a greeting, a test message, an abandoned first question). Open questions alone still make a chat worth keeping.
 - Write in the language the operator used. Keep alarm codes, part names and button labels exactly as written.
 - "title": the problem in at most 10 words, as the next operator would phrase it.
+- Photos the operator attached appear in the transcript as "[Photo N attached by the operator: description]", and the most recent ones are shown to you as images labelled "Photo N". Treat what they show as something the operator reported. "photo_numbers": the N of every photo that shows something the learning relies on (the fault, the alarm screen, the part, the setting). Leave out photos that add nothing (blurry, accidental, unrelated). Empty when there are no photos.
 - Be concise. Each field a few sentences at most.`;
 
 const OUTPUT_SCHEMA = {
@@ -101,6 +135,7 @@ const OUTPUT_SCHEMA = {
     solution: { type: "string" },
     facts: { type: "array", items: { type: "string" } },
     open_questions: { type: "array", items: { type: "string" } },
+    photo_numbers: { type: "array", items: { type: "integer" } },
   },
   required: [
     "worth_keeping",
@@ -110,6 +145,7 @@ const OUTPUT_SCHEMA = {
     "solution",
     "facts",
     "open_questions",
+    "photo_numbers",
   ],
   additionalProperties: false,
 } as const;
@@ -119,11 +155,22 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1).trimEnd() + "…";
 }
 
-function buildTranscript(rows: MessageRow[]): string {
+// Photos ride on the user message they were sent with, as their caption,
+// so a photo-only turn still shows up. `photoIndex` maps attachment id to
+// its 0-based position in the whole conversation ("Photo N" = index + 1).
+function buildTranscript(
+  rows: MessageRow[],
+  photosByMessage: Map<string, StoredChatAttachment[]> = new Map(),
+  photoIndex: Map<string, number> = new Map(),
+): string {
+  const photoText = (list: StoredChatAttachment[] | undefined) =>
+    (list ?? []).map((a) => attachmentAsText(a, photoIndex.get(a.id)));
   const lines: string[] = [];
   for (const m of rows) {
     if (m.role === "user") {
-      if (m.content.trim()) lines.push(`OPERATOR: ${m.content.trim()}`);
+      const parts = [...photoText(photosByMessage.get(m.id))];
+      if (m.content.trim()) parts.push(m.content.trim());
+      if (parts.length > 0) lines.push(`OPERATOR: ${parts.join("\n")}`);
     } else if (m.role === "assistant") {
       if (m.content.trim()) lines.push(`ASSISTANT: ${m.content.trim()}`);
     } else if (m.role === "tool" && m.tool_name) {
@@ -132,6 +179,10 @@ function buildTranscript(rows: MessageRow[]): string {
       lines.push(`[assistant searched the knowledge base: ${m.tool_name}]`);
     }
   }
+  // Legacy photos the backfill could not tie to a message: no user
+  // message followed the upload, so they came last.
+  const unplaced = photoText(photosByMessage.get(""));
+  if (unplaced.length > 0) lines.push(`OPERATOR: ${unplaced.join("\n")}`);
   const text = lines.join("\n\n");
   return text.length > MAX_TRANSCRIPT_CHARS
     ? `…[earlier turns cut]\n\n${text.slice(text.length - MAX_TRANSCRIPT_CHARS)}`
@@ -161,6 +212,11 @@ function parseDistillation(text: string): Distillation | null {
       solution: str(p.solution),
       facts: strings(p.facts),
       openQuestions: strings(p.open_questions),
+      photoNumbers: Array.isArray(p.photo_numbers)
+        ? p.photo_numbers.filter(
+            (n): n is number => typeof n === "number" && Number.isInteger(n),
+          )
+        : null,
     };
   } catch {
     return null;
@@ -169,12 +225,15 @@ function parseDistillation(text: string): Distillation | null {
 
 // The KB chunk text. Problem first, because the next operator's query
 // resembles the problem, not the answer (same reasoning as feedback.ts).
-// Open questions stay out: they are gaps, not knowledge.
+// Open questions stay out: they are gaps, not knowledge. Photo captions
+// go in too, so the learning's text carries what the photos showed even
+// where the image itself is not looked at.
 export function insightChunkContent(d: {
   problem: string;
   cause: string;
   solution: string;
   facts: string[];
+  photoCaptions?: string[];
 }): string {
   const parts: string[] = [];
   if (d.problem) parts.push(`Problem:\n${d.problem}`);
@@ -183,12 +242,111 @@ export function insightChunkContent(d: {
   if (d.facts.length > 0) {
     parts.push(`Fakta om maskinen:\n${d.facts.map((f) => `- ${f}`).join("\n")}`);
   }
+  const captions = (d.photoCaptions ?? []).filter((c) => c.trim());
+  if (captions.length > 0) {
+    parts.push(
+      `Billeder fra operatøren:\n${captions.map((c) => `- ${c.trim()}`).join("\n")}`,
+    );
+  }
   return parts.join("\n\n");
+}
+
+// The insight's photos, captioned. Captions are normally written when the
+// message is saved or by the distiller; an approve can still meet one
+// that failed then, so missing ones get another try here. Photos from
+// another machine are dropped: the KB document is per machine.
+async function loadInsightPhotos(
+  attachmentIds: string[],
+  machineId: string,
+  usage: UsageAttribution,
+): Promise<StoredChatAttachment[]> {
+  if (attachmentIds.length === 0) return [];
+  let photos = await getAttachmentsByIds(attachmentIds);
+  if (photos.some((a) => !a.caption)) {
+    await captionChatAttachments(
+      photos.filter((a) => !a.caption).map((a) => a.id),
+      usage,
+    );
+    photos = await getAttachmentsByIds(attachmentIds);
+  }
+  return photos.filter((a) => a.machineId === machineId);
+}
+
+// One kb_assets row + one caption kb_chunks row per photo on the
+// published document, the same shape image ingestion writes, so
+// search_kb returns them as image hits. The asset points at the original
+// chat-attachments object; nothing is copied, and deleting the document
+// (cascade) leaves the conversation's photo alone. Best effort: a failure
+// removes what it wrote and leaves the text document in place.
+async function attachInsightPhotos(
+  documentId: string,
+  machineId: string,
+  photos: StoredChatAttachment[],
+): Promise<void> {
+  const captioned = photos.filter(
+    (a): a is StoredChatAttachment & { caption: string } => !!a.caption?.trim(),
+  );
+  if (captioned.length === 0) return;
+  const supabase = getSupabaseServerClient();
+  const assetRows = captioned.map((a, i) => ({
+    id: randomUUID(),
+    document_id: documentId,
+    machine_id: machineId,
+    storage_path: a.storagePath,
+    storage_bucket: CHAT_ATTACHMENT_BUCKET,
+    mime_type: a.mimeType,
+    byte_size: a.byteSize,
+    page_from: null,
+    ordinal: i,
+    caption: a.caption,
+    alt_text: a.altText,
+  }));
+  try {
+    const { error: assetErr } = await supabase.from("kb_assets").insert(assetRows);
+    if (assetErr) throw new Error(`kb_assets insert failed: ${assetErr.message}`);
+
+    const embeddings = await embedDocuments(
+      captioned.map((a) => a.caption),
+      { usage: { machineId } },
+    );
+    if (embeddings.length !== captioned.length) {
+      throw new Error(
+        `embedding count mismatch (${embeddings.length} vs ${captioned.length})`,
+      );
+    }
+    const { error: chunkErr } = await supabase.from("kb_chunks").insert(
+      captioned.map((a, i) => ({
+        document_id: documentId,
+        machine_id: machineId,
+        asset_id: assetRows[i].id,
+        ordinal: PHOTO_CHUNK_ORDINAL_OFFSET + i,
+        page_from: null,
+        page_to: null,
+        text: a.caption,
+        embedding: embeddings[i],
+        embedding_model: VOYAGE_MODEL,
+      })),
+    );
+    if (chunkErr) throw new Error(`kb_chunks insert failed: ${chunkErr.message}`);
+  } catch (err) {
+    console.warn(
+      `publishInsight: photo assets failed for ${documentId}:`,
+      err instanceof Error ? err.message : err,
+    );
+    // Caption chunks go with their assets (cascade).
+    await supabase
+      .from("kb_assets")
+      .delete()
+      .eq("document_id", documentId)
+      .eq("storage_bucket", CHAT_ATTACHMENT_BUCKET);
+  }
 }
 
 // Publish an insight's content as an Experience document and link it.
 // Replaces whatever the insight (and the conversation's feedback row)
 // pointed at before, so the KB holds one document per conversation.
+// The insight's photos (kb_insights.attachment_ids) are attached to the
+// new document; the old document's photo assets go with it.
 export async function publishInsight(args: {
   insightId: string;
   conversationId: string;
@@ -201,7 +359,36 @@ export async function publishInsight(args: {
   createdBy: string;
 }): Promise<string> {
   const supabase = getSupabaseServerClient();
-  const content = insightChunkContent(args);
+
+  const { data: prior } = await supabase
+    .from("kb_insights")
+    .select("promoted_doc_id, attachment_ids, account_id")
+    .eq("id", args.insightId)
+    .maybeSingle<{
+      promoted_doc_id: string | null;
+      attachment_ids: string[] | null;
+      account_id: string | null;
+    }>();
+
+  let photos: StoredChatAttachment[] = [];
+  try {
+    photos = await loadInsightPhotos(prior?.attachment_ids ?? [], args.machineId, {
+      accountId: prior?.account_id ?? null,
+      machineId: args.machineId,
+      conversationId: args.conversationId,
+    });
+  } catch (err) {
+    // The learning's text is still worth publishing without its photos.
+    console.warn(
+      `publishInsight: photo lookup failed for ${args.insightId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  const content = insightChunkContent({
+    ...args,
+    photoCaptions: photos.map((a) => a.caption ?? ""),
+  });
   const documentId = await publishExperienceDoc({
     machineId: args.machineId,
     title: `Operatørerfaring: ${truncate(args.title.replace(/\s+/g, " "), TITLE_MAX)}`,
@@ -212,21 +399,15 @@ export async function publishInsight(args: {
     content,
     createdBy: args.createdBy,
   });
+  await attachInsightPhotos(documentId, args.machineId, photos);
 
-  const [{ data: prior }, { data: fb }] = await Promise.all([
-    supabase
-      .from("kb_insights")
-      .select("promoted_doc_id")
-      .eq("id", args.insightId)
-      .maybeSingle<{ promoted_doc_id: string | null }>(),
-    supabase
-      .from("feedback")
-      .select("id, promoted_doc_id")
-      .eq("conversation_id", args.conversationId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string; promoted_doc_id: string | null }>(),
-  ]);
+  const { data: fb } = await supabase
+    .from("feedback")
+    .select("id, promoted_doc_id")
+    .eq("conversation_id", args.conversationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; promoted_doc_id: string | null }>();
 
   // The distilled document supersedes the bare solution text that
   // feedback promotion wrote: it carries the same operator words plus the
@@ -257,6 +438,63 @@ export async function publishInsight(args: {
   if (linkErr) console.warn("publishInsight: insight link failed:", linkErr);
 
   return documentId;
+}
+
+// The conversation's photos, oldest first, each with a caption where one
+// can be had. The chat route captions on save, best effort; whatever it
+// missed is captioned here, since the sweep can wait for it.
+async function loadConversationPhotos(
+  conversationId: string,
+  usage: UsageAttribution,
+): Promise<StoredChatAttachment[]> {
+  const photos = await listConversationAttachments(conversationId);
+  const uncaptioned = photos.filter((a) => !a.caption).map((a) => a.id);
+  if (uncaptioned.length === 0) return photos;
+  await captionChatAttachments(uncaptioned, usage);
+  return listConversationAttachments(conversationId);
+}
+
+// The most recent photos as image blocks, each preceded by its "Photo N"
+// label so the model can tie it to the transcript. Signed-URL source, as
+// in captionChatAttachments: full-size phone photos exceed the base64
+// limit. A photo that fails to sign is left to its caption.
+async function distillImageBlocks(
+  photos: StoredChatAttachment[],
+): Promise<Array<TextBlockParam | ImageBlockParam>> {
+  const shown = photos
+    .map((a, i) => ({ a, n: i + 1 }))
+    .slice(-MAX_DISTILL_IMAGES);
+  if (shown.length === 0) return [];
+  const urls = await signAttachments(
+    shown.map((s) => s.a),
+    DISTILL_IMAGE_URL_TTL,
+  );
+  const blocks: Array<TextBlockParam | ImageBlockParam> = [];
+  for (const { a, n } of shown) {
+    const url = urls.get(a.id);
+    if (!url) continue;
+    blocks.push({ type: "text", text: `Photo ${n}:` });
+    blocks.push({ type: "image", source: { type: "url", url } });
+  }
+  return blocks;
+}
+
+// Attachment ids for the photos the model said the learning relies on.
+// An explicit empty list is respected (the photos added nothing); a
+// missing list, or one with no valid number, falls back to every photo,
+// since losing a relevant photo costs more than keeping an extra one.
+function relevantPhotoIds(
+  photos: StoredChatAttachment[],
+  photoNumbers: number[] | null,
+): string[] {
+  if (photos.length === 0) return [];
+  if (photoNumbers === null) return photos.map((a) => a.id);
+  if (photoNumbers.length === 0) return [];
+  const picked = [...new Set(photoNumbers)]
+    .filter((n) => n >= 1 && n <= photos.length)
+    .sort((a, b) => a - b)
+    .map((n) => photos[n - 1].id);
+  return picked.length > 0 ? picked : photos.map((a) => a.id);
 }
 
 // Only stamps when no message arrived since the sweep read the row: the
@@ -305,7 +543,7 @@ export async function distillConversation(
   const [{ data: msgs, error: msgErr }, { data: fb }] = await Promise.all([
     supabase
       .from("messages")
-      .select("role, content, tool_name")
+      .select("id, role, content, tool_name")
       .eq("conversation_id", conv.id)
       .order("created_at", { ascending: true }),
     supabase
@@ -321,7 +559,25 @@ export async function distillConversation(
     return "failed";
   }
   const rows = (msgs ?? []) as MessageRow[];
-  const hasUser = rows.some((m) => m.role === "user" && m.content.trim());
+
+  let photos: StoredChatAttachment[];
+  try {
+    photos = await loadConversationPhotos(conv.id, {
+      accountId: conv.account_id,
+      machineId,
+      conversationId: conv.id,
+    });
+  } catch (err) {
+    console.warn(
+      `distill: photo lookup failed for ${conv.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+    return "failed";
+  }
+
+  // A photo with no text is still the operator saying something.
+  const hasUser =
+    photos.length > 0 || rows.some((m) => m.role === "user" && m.content.trim());
   const hasAnswer = rows.some((m) => m.role === "assistant" && m.content.trim());
   if (!hasUser || !hasAnswer) {
     await markDistilled(conv);
@@ -340,9 +596,15 @@ export async function distillConversation(
     ? `\n\nThe operator wrote this about what worked (treat as confirmed):\n${fb.solution_text.trim()}`
     : "";
 
-  let distillation: Distillation | null = null;
-  try {
-    const anthropic = new Anthropic();
+  const photoIndex = new Map(photos.map((a, i) => [a.id, i]));
+  const transcript = buildTranscript(rows, groupByMessage(photos), photoIndex);
+  const imageBlocks = await distillImageBlocks(photos);
+
+  const anthropic = new Anthropic();
+  const prompt = `${verdict}${operatorNote}\n\nTranscript:\n\n${transcript}`;
+  const callModel = async (
+    images: Array<TextBlockParam | ImageBlockParam>,
+  ): Promise<Distillation | null> => {
     const final = await anthropic.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
@@ -353,10 +615,7 @@ export async function distillConversation(
       },
       system: SYSTEM_PROMPT,
       messages: [
-        {
-          role: "user",
-          content: `${verdict}${operatorNote}\n\nTranscript:\n\n${buildTranscript(rows)}`,
-        },
+        { role: "user", content: [...images, { type: "text", text: prompt }] },
       ],
     });
     await recordUsage({
@@ -368,9 +627,25 @@ export async function distillConversation(
       operation: "conversation_distill",
       ...fromAnthropicUsage(final.usage),
     });
-    distillation = parseDistillation(
+    return parseDistillation(
       final.content.map((b) => (b.type === "text" ? b.text : "")).join(""),
     );
+  };
+
+  let distillation: Distillation | null = null;
+  try {
+    try {
+      distillation = await callModel(imageBlocks);
+    } catch (err) {
+      // An image the API cannot fetch fails the whole call. The captions
+      // are in the transcript, so a text-only pass still sees the photos.
+      if (imageBlocks.length === 0) throw err;
+      console.warn(
+        `distill: call with images failed for ${conv.id}, retrying without:`,
+        err instanceof Error ? err.message : err,
+      );
+      distillation = await callModel([]);
+    }
   } catch (err) {
     console.warn(
       `distill: model call failed for ${conv.id}:`,
@@ -427,6 +702,9 @@ export async function distillConversation(
         solution: distillation.solution,
         facts: distillation.facts,
         open_questions: distillation.openQuestions,
+        attachment_ids: distillation.worthKeeping
+          ? relevantPhotoIds(photos, distillation.photoNumbers)
+          : [],
         model: MODEL,
         ...(autoPublish ? {} : { promoted_doc_id: null }),
         updated_at: new Date().toISOString(),

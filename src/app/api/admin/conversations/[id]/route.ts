@@ -1,17 +1,34 @@
 // GET /api/admin/conversations/[id] — full conversation drilldown.
 // Returns the conversation + every message in order, with chunk
 // metadata expanded for tool messages (so the audit can show which
-// manual snippets the AI saw).
+// manual snippets the AI saw). Operator photos ride on the message they
+// were sent with, as short-lived signed URLs.
 
 import {
   assertConversationAccess,
   AuthError,
   requireAdmin,
 } from "@/lib/auth";
+import {
+  groupByMessage,
+  listConversationAttachments,
+  signAttachments,
+  type StoredChatAttachment,
+} from "@/lib/chatAttachments";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Signed URLs for the photo thumbnails. An hour covers a review session.
+const PHOTO_URL_TTL = 60 * 60;
+
+export type AdminMessagePhoto = {
+  id: string;
+  url: string;
+  caption: string | null;
+  altText: string | null;
+};
 
 export type AdminChunkRef = {
   id: string;
@@ -30,6 +47,8 @@ export type AdminConversationMessage = {
   toolName: string | null;
   toolInput: unknown;
   chunks: AdminChunkRef[] | null;
+  // Photos the operator sent with this message (user messages only).
+  photos: AdminMessagePhoto[];
   tokensIn: number | null;
   tokensOut: number | null;
   cacheHit: boolean | null;
@@ -69,6 +88,9 @@ export type AdminConversationDetail = {
   feedback: AdminFeedback | null;
   escalation: AdminEscalation | null;
   messages: AdminConversationMessage[];
+  // Legacy photos that could not be tied to a message. They were sent
+  // after the last message, so the UI shows them at the end.
+  unplacedPhotos: AdminMessagePhoto[];
 };
 
 export async function GET(
@@ -84,6 +106,27 @@ export async function GET(
     throw err;
   }
   const supabase = getSupabaseServerClient();
+
+  // Best effort: photos failing to load must not hide the transcript.
+  const photosPromise = listConversationAttachments(id)
+    .then(async (atts) => {
+      const urls = await signAttachments(atts, PHOTO_URL_TTL);
+      const toPhoto = (a: StoredChatAttachment): AdminMessagePhoto[] => {
+        const url = urls.get(a.id);
+        return url
+          ? [{ id: a.id, url, caption: a.caption, altText: a.altText }]
+          : [];
+      };
+      const byMessage = new Map<string, AdminMessagePhoto[]>();
+      for (const [key, list] of groupByMessage(atts)) {
+        byMessage.set(key, list.flatMap(toPhoto));
+      }
+      return byMessage;
+    })
+    .catch((err: unknown) => {
+      console.error("admin conversation photos failed:", err);
+      return new Map<string, AdminMessagePhoto[]>();
+    });
 
   const [
     { data: conv, error: cErr },
@@ -226,6 +269,8 @@ export async function GET(
       }
     | null;
 
+  const photosByMessage = await photosPromise;
+
   const result: AdminConversationDetail = {
     id: conversation.id,
     machineId: conversation.machine_id,
@@ -279,11 +324,13 @@ export async function GET(
             .map((cid) => chunkMap.get(cid))
             .filter((c): c is AdminChunkRef => !!c)
         : null,
+      photos: photosByMessage.get(m.id) ?? [],
       tokensIn: m.tokens_in,
       tokensOut: m.tokens_out,
       cacheHit: m.cache_hit,
       createdAt: m.created_at,
     })),
+    unplacedPhotos: photosByMessage.get("") ?? [],
   };
 
   return Response.json(result);

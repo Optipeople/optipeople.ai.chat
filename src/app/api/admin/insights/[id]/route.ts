@@ -29,13 +29,16 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import {
   INSIGHT_SELECT_COLS,
   toAdminInsight,
+  withInsightPhotos,
   type AdminInsight,
   type AdminInsightRow,
 } from "@/app/api/admin/insights/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Approving embeds the document (one Voyage call), well inside this.
+// Approving embeds the document and its photo captions (one Voyage call
+// each, plus a vision caption for a photo that has none), well inside
+// this.
 export const maxDuration = 60;
 
 export type AdminInsightAction = "approve" | "reject" | "save";
@@ -216,8 +219,9 @@ export async function PATCH(
     return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
-  const result: AdminInsightPatchResponse = {
-    insight: toAdminInsight(updated as unknown as AdminInsightRow),
-  };
+  const [insight] = await withInsightPhotos([
+    toAdminInsight(updated as unknown as AdminInsightRow),
+  ]);
+  const result: AdminInsightPatchResponse = { insight };
   return Response.json(result);
 }

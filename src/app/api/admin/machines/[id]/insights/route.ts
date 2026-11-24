@@ -18,10 +18,15 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import {
   INSIGHT_SELECT_COLS,
   toAdminInsight,
+  withInsightPhotos,
   type AdminInsightRow,
 } from "@/app/api/admin/insights/shared";
 
-export type { AdminInsight, AdminInsightStatus } from "@/app/api/admin/insights/shared";
+export type {
+  AdminInsight,
+  AdminInsightPhoto,
+  AdminInsightStatus,
+} from "@/app/api/admin/insights/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,7 +81,9 @@ export async function GET(
     return Response.json({ error: t("dbError") }, { status: 500 });
   }
 
-  const items = ((data ?? []) as unknown as AdminInsightRow[]).map(toAdminInsight);
+  const items = await withInsightPhotos(
+    ((data ?? []) as unknown as AdminInsightRow[]).map(toAdminInsight),
+  );
   const total = count ?? items.length;
 
   return Response.json({

@@ -411,6 +411,33 @@ export function InsightsList({
 
                   {editing ? renderEdit(draft) : renderView(i)}
 
+                  {i.photos.length > 0 && (
+                    <div>
+                      <p className="text-[12px] font-medium text-[var(--color-muted-foreground)]">
+                        {t("photos")}
+                      </p>
+                      {/* Same thumbnail markup as the operator's photos in the chat. */}
+                      <div className="mt-1.5 flex flex-wrap gap-2">
+                        {i.photos.map((p) => (
+                          <a
+                            key={p.id}
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block h-24 w-24 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)] sm:h-28 sm:w-28"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={p.url}
+                              alt={p.altText ?? t("photoAlt")}
+                              className="h-full w-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {i.openQuestions.length > 0 && (
                     <div className="flex items-start gap-3 rounded-[4px] border border-amber-200 bg-amber-50 p-3 text-[14px] sm:p-4">
                       <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />

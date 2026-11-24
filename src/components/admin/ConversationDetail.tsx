@@ -22,6 +22,8 @@ import {
   type AdminConversationDetail,
   type AdminConversationMessage,
 } from "@/admin/adminApi";
+
+type AdminMessagePhoto = AdminConversationMessage["photos"][number];
 import { Breadcrumbs, type Crumb } from "@/components/admin/Breadcrumbs";
 
 const DA_DT = new Intl.DateTimeFormat("da-DK", {
@@ -295,6 +297,11 @@ export function ConversationDetail({
         {data.messages.map((m) => (
           <MessageRow key={m.id} message={m} />
         ))}
+        {data.unplacedPhotos.length > 0 && (
+          <OperatorRow time={null} photos={data.unplacedPhotos}>
+            {""}
+          </OperatorRow>
+        )}
       </section>
     </div>
   );
@@ -306,22 +313,9 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="flex max-w-[92%] flex-col items-end gap-1 sm:max-w-[78%]">
-          <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
-            {t("operatorRole")} · {time}
-          </span>
-          <div
-            className="rounded-[4px] px-3 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap shadow-[var(--shadow-sm)] sm:px-4 sm:py-3"
-            style={{
-              backgroundColor: "var(--color-accent)",
-              color: "var(--color-primary-foreground)",
-            }}
-          >
-            {message.content}
-          </div>
-        </div>
-      </div>
+      <OperatorRow time={time} photos={message.photos}>
+        {message.content}
+      </OperatorRow>
     );
   }
 
@@ -351,6 +345,62 @@ function MessageRow({ message }: { message: AdminConversationMessage }) {
           {t("toolCallsOnly")}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// An operator turn: photos above the text bubble, the same markup the
+// chat itself uses for a message with attachments. Either part may be
+// missing (a photo-only turn, or legacy photos with no message).
+function OperatorRow({
+  time,
+  photos,
+  children,
+}: {
+  time: string | null;
+  photos: AdminMessagePhoto[];
+  children: string;
+}) {
+  const t = useTranslations("admin.conversationDetail");
+  return (
+    <div className="flex justify-end">
+      <div className="flex max-w-[92%] flex-col items-end gap-1 sm:max-w-[78%]">
+        <span className="text-[11px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+          {t("operatorRole")}
+          {time && ` · ${time}`}
+        </span>
+        {photos.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {photos.map((p) => (
+              <a
+                key={p.id}
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block h-24 w-24 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)] sm:h-28 sm:w-28"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.url}
+                  alt={p.altText ?? t("photoAlt")}
+                  className="h-full w-full object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        )}
+        {children && (
+          <div
+            className="rounded-[4px] px-3 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap shadow-[var(--shadow-sm)] sm:px-4 sm:py-3"
+            style={{
+              backgroundColor: "var(--color-accent)",
+              color: "var(--color-primary-foreground)",
+            }}
+          >
+            {children}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

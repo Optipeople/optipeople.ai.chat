@@ -75,7 +75,8 @@ export async function GET(
   }
   const row = asset as {
     storage_path: string;
-    storage_bucket: "kb-images" | "kb-documents";
+    // chat-attachments: operator photos on a published learning.
+    storage_bucket: "kb-images" | "kb-documents" | "chat-attachments";
     mime_type: string;
     page_from: number | null;
     alt_text: string | null;
