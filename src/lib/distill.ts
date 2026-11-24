@@ -560,7 +560,11 @@ export async function distillConversation(
   }
   const rows = (msgs ?? []) as MessageRow[];
 
-  let photos: StoredChatAttachment[];
+  // Photos are an enrichment, not a prerequisite: a failed lookup must not
+  // burn one of the conversation's MAX_ATTEMPTS, so we log it and distill
+  // from the text alone.
+  let photos: StoredChatAttachment[] = [];
+  let photoLookupFailed = false;
   try {
     photos = await loadConversationPhotos(conv.id, {
       accountId: conv.account_id,
@@ -568,17 +572,21 @@ export async function distillConversation(
       conversationId: conv.id,
     });
   } catch (err) {
+    photoLookupFailed = true;
     console.warn(
-      `distill: photo lookup failed for ${conv.id}:`,
+      `distill: photo lookup failed for ${conv.id}, distilling text-only:`,
       err instanceof Error ? err.message : err,
     );
-    return "failed";
   }
 
   // A photo with no text is still the operator saying something.
-  const hasUser =
-    photos.length > 0 || rows.some((m) => m.role === "user" && m.content.trim());
+  const hasUserText = rows.some((m) => m.role === "user" && m.content.trim());
+  const hasUser = photos.length > 0 || hasUserText;
   const hasAnswer = rows.some((m) => m.role === "assistant" && m.content.trim());
+  // If the operator only sent photos and we couldn't load them, "nothing to
+  // distill" is not a safe conclusion — marking it distilled would lose the
+  // conversation for good. Retry instead.
+  if (photoLookupFailed && !hasUserText && hasAnswer) return "failed";
   if (!hasUser || !hasAnswer) {
     await markDistilled(conv);
     return "skipped";

@@ -26,6 +26,7 @@ import {
 } from "@/lib/auth";
 import {
   attachmentAsText,
+  CHAT_ATTACHMENT_BUCKET,
   captionChatAttachments,
   getAttachmentsByIds,
   linkAttachmentsToMessage,
@@ -174,7 +175,7 @@ Your job: help operators get fast, reliable answers from their machine manuals s
 Tool & formatting rules:
 - Use the **search_kb** tool to find information in the machine's manuals BEFORE answering technical questions. Make the search short and specific, e.g. "alarm 731 reset" or "tool change procedure". Phrase it in the manual's own words and language, not the user's (a Danish "vælg testprogram" in an English manual is "Run select type"). If the best similarity is below 0.45, search again with the manual's terms before saying the manual does not cover it.
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the operator should check or who they should contact.
-- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit with no \`page_from\` (an uploaded reference screenshot or photo), call it with just the \`document_id\` to see the image itself; its search text is only a short caption.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit (\`is_image: true\`: an uploaded reference screenshot, a photo, or a photo on a learning), call it with that hit's \`document_id\` AND its \`asset_id\` to see that exact image; its search text is only a short caption.
 - Use the **list_documents** tool when the operator asks what manuals are available, asks for a link / the PDF / the file itself, asks "where do I find the manual", or wants to browse the knowledge base. The tool returns every operator-visible document for this machine; each one is then rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the operator you cannot share links — you can, by calling this tool.
 - Be brief and to the point. Operators are at the machine — they want the solution, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result.
@@ -260,7 +261,7 @@ Scope rules:
 Tool & formatting rules:
 - Use the **search_kb** tool to find information in the manuals BEFORE answering technical questions. It searches every machine by default; pass \`machine_id\` (from the fleet list) to focus on one machine. Make the search short and specific, e.g. "alarm 731 reset" or "tool change procedure". Phrase it in the manual's own words and language, not the user's (a Danish "vælg testprogram" in an English manual is "Run select type"). If the best similarity is below 0.45, search again with the manual's terms before saying the manual does not cover it.
 - Ground every answer in the search_kb results. If nothing relevant is found, say so plainly and suggest what the user should check or who they should contact.
-- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit with no \`page_from\` (an uploaded reference screenshot or photo), call it with just the \`document_id\` to see the image itself; its search text is only a short caption.
+- Use the **get_page_image** tool to look at a manual page as printed. Search results are extracted text, and extraction can scramble the layout of a table; the page itself cannot lie to you. Pass the \`page_from\` value from the search result. For an image hit (\`is_image: true\`: an uploaded reference screenshot, a photo, or a photo on a learning), call it with that hit's \`document_id\` AND its \`asset_id\` to see that exact image; its search text is only a short caption.
 - Use the **list_documents** tool when the user asks what manuals are available, asks for a link / the PDF / the file itself, or wants to browse the knowledge base — pass \`machine_id\` for one machine or omit it for all. Each returned document is rendered automatically as a clickable chip under your reply that opens the original PDF in a new tab. NEVER tell the user you cannot share links — you can, by calling this tool.
 - Be brief and to the point. They want the answer, not a lecture.
 - When you cite a source, refer to the document title as it appears in the search result, and name the machine it belongs to.
@@ -372,7 +373,7 @@ const LIST_DOCUMENTS_TOOL: Tool = {
 const GET_PAGE_IMAGE_TOOL: Tool = {
   name: "get_page_image",
   description:
-    "Look at a document exactly as stored. For a PDF it returns the requested pages themselves, not extracted text, so you can read a table's real column layout and check a value against the page. For an image document (a search_kb hit with is_image: true and no page_from, e.g. an uploaded reference screenshot or photo) it returns the actual image, so you can compare it with a photo or screenshot the user sent; pages is ignored then. Use it before stating a specific setting value that came from a table (switch or DIP pin positions, parameter values, torques), ALWAYS when someone says a value you gave is wrong, and before naming a fault by comparing the user's image with reference images. Page numbers come from the page_from field of a search_kb result.",
+    "Look at a document exactly as stored. For a PDF it returns the requested pages themselves, not extracted text, so you can read a table's real column layout and check a value against the page. For an image hit (a search_kb hit with is_image: true, e.g. an uploaded reference screenshot, a photo, or a photo attached to a learning) pass its asset_id together with its document_id: it returns that exact image, so you can compare it with a photo or screenshot the user sent; pages is ignored then. Use it before stating a specific setting value that came from a table (switch or DIP pin positions, parameter values, torques), ALWAYS when someone says a value you gave is wrong, and before naming a fault by comparing the user's image with reference images. Page numbers come from the page_from field of a search_kb result.",
   input_schema: {
     type: "object",
     properties: {
@@ -380,6 +381,11 @@ const GET_PAGE_IMAGE_TOOL: Tool = {
         type: "string",
         description:
           "The document_id from a search_kb or list_documents result. Never invent one.",
+      },
+      asset_id: {
+        type: "string",
+        description:
+          "The asset_id of a search_kb image hit (is_image: true), copied from that same hit, together with its document_id. A document can hold several images; without asset_id you get only its first one. Never invent one.",
       },
       pages: {
         type: "array",
@@ -608,13 +614,17 @@ function trimHistory(messages: ChatMessage[]): ChatMessage[] {
 // text instead (attachmentAsText), or a generic placeholder while no
 // caption exists yet. Both depend only on the row, so the cached prefix
 // holds; it shifts once at most, when a caption lands. Bad/missing/
-// cross-machine refs are skipped silently so a stale id in the client
-// doesn't blow up the whole turn.
+// cross-machine/cross-conversation refs are skipped silently so a stale
+// id in the client doesn't blow up the whole turn.
 async function buildConversation(
   messages: ChatMessage[],
   // Machines whose attachments this conversation may reference — one id
   // in machine scope, the account's machine set in fleet scope.
   allowedMachineIds: string[],
+  // The conversation this turn belongs to. A photo must be linked to it,
+  // so a client can't replay another conversation's attachment ids (same
+  // machine, different chat) into history and read its caption.
+  conversationId: string,
 ): Promise<MessageParam[]> {
   const out: MessageParam[] = [];
 
@@ -628,7 +638,20 @@ async function buildConversation(
 
   // One lookup for every referenced photo in the window — captions for
   // older turns, storage paths for the latest. Same machine_id scope as
-  // the linking step.
+  // the linking step, plus conversation ownership: a row must be linked
+  // to this conversation, or — only for the latest turn — still be
+  // unlinked. The latter covers a link step that failed on this request
+  // (the photo was just uploaded and belongs to no one else yet); older
+  // turns were linked when they were the latest, so an unlinked or
+  // foreign row there is not ours.
+  const latestRefs = new Set(
+    lastUserIdx >= 0
+      ? (messages[lastUserIdx].attachmentIds ?? []).slice(
+          0,
+          MAX_ATTACHMENTS_PER_MESSAGE,
+        )
+      : [],
+  );
   const ids = Array.from(
     new Set(
       messages.flatMap((m) =>
@@ -642,7 +665,11 @@ async function buildConversation(
   if (ids.length > 0) {
     try {
       for (const r of await getAttachmentsByIds(ids)) {
-        if (allowedMachineIds.includes(r.machineId)) rowsById.set(r.id, r);
+        if (!allowedMachineIds.includes(r.machineId)) continue;
+        const ours =
+          r.conversationId === conversationId ||
+          (r.conversationId === null && latestRefs.has(r.id));
+        if (ours) rowsById.set(r.id, r);
       }
     } catch (err) {
       console.error("attachment lookup failed:", err);
@@ -804,7 +831,9 @@ const MAX_PAGE_LOOKUP_BYTES = 6 * 1024 * 1024;
 // input tokens by the API's own downscaling, so 4 stays cheaper than one
 // PDF lookup of 3 pages. The API's 5 MB limit applies to the base64
 // string, which is 4/3 of the raw bytes, so raw bytes are capped at 3/4
-// of it; anything larger would fail the whole request, not just the tool.
+// of it; anything larger goes to the model as a signed-URL image source
+// instead (see executeGetStoredImage), since base64 would fail the whole
+// request, not just the tool.
 const MAX_IMAGE_LOOKUPS_PER_TURN = 4;
 const MAX_IMAGE_LOOKUP_BYTES = Math.floor((5 * 1024 * 1024 * 3) / 4);
 
@@ -1490,12 +1519,20 @@ function toolError(message: string): ToolExecResult {
 // serverless function.
 async function executeGetPageImage(
   scope: ToolScope,
-  input: { document_id?: unknown; pages?: unknown },
+  input: { document_id?: unknown; asset_id?: unknown; pages?: unknown },
   budget: ToolBudget,
 ): Promise<ToolExecResult> {
   if (typeof input.document_id !== "string" || !input.document_id.trim()) {
     return toolError("document_id must be a non-empty string");
   }
+  if (
+    input.asset_id != null &&
+    (typeof input.asset_id !== "string" || !input.asset_id.trim())
+  ) {
+    return toolError("asset_id, when given, must be a non-empty string");
+  }
+  const assetId =
+    typeof input.asset_id === "string" ? input.asset_id.trim() : null;
   const rawPages = Array.isArray(input.pages) ? input.pages : [];
   const pages = [
     ...new Set(
@@ -1537,8 +1574,17 @@ async function executeGetPageImage(
   if (!allowed.includes(doc.machine_id)) {
     return toolError(`Unknown document_id "${input.document_id}".`);
   }
-  if (doc.source_type === "image") {
-    return executeGetStoredImage(scope, doc, budget);
+  // Published learnings (feedback docs) can carry the operator photos
+  // they were distilled from as kb_assets in the chat-attachments bucket.
+  // A learning without photos just reports "no stored image".
+  // An explicit asset_id names one image hit, so it wins over pages even
+  // on a PDF (a figure hit): the model asked for that image, not a page.
+  if (
+    assetId ||
+    doc.source_type === "image" ||
+    doc.source_type === "feedback"
+  ) {
+    return executeGetStoredImage(scope, doc, budget, assetId);
   }
   if (doc.source_type !== "pdf" || !doc.storage_path) {
     return toolError(
@@ -1634,13 +1680,19 @@ async function executeGetPageImage(
 // an operator's test screenshot against a reference screenshot; on
 // account Dali that comparison went wrong about half the time.
 //
-// The image lives in the kb-images bucket under the path recorded on its
-// kb_assets row (imageIngestion.ts runImagePipeline). The asset row is
-// the source of truth for the mime type too, since the API needs it.
+// The image lives in the bucket and path recorded on its kb_assets row
+// (kb-images for imageIngestion.ts runImagePipeline, chat-attachments for
+// learning photos). The asset row is the source of truth for the mime
+// type too, since the API needs it.
+//
+// assetId picks one image when the document has several (a learning
+// with multiple photos, a PDF figure). Without it we keep the old
+// behaviour: the first asset by ordinal.
 async function executeGetStoredImage(
   scope: ToolScope,
   doc: { id: string; machine_id: string; title: string },
   budget: ToolBudget,
+  assetId: string | null = null,
 ): Promise<ToolExecResult> {
   if (budget.imageLookups >= MAX_IMAGE_LOOKUPS_PER_TURN) {
     return toolError(
@@ -1650,47 +1702,92 @@ async function executeGetStoredImage(
   }
 
   const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("kb_assets")
-    .select("storage_path, storage_bucket, mime_type, byte_size")
-    .eq("document_id", doc.id)
-    .order("ordinal", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const columns =
+    "document_id, storage_path, storage_bucket, mime_type, byte_size";
+  const { data, error } = assetId
+    ? await supabase
+        .from("kb_assets")
+        .select(columns)
+        .eq("id", assetId)
+        .maybeSingle()
+    : await supabase
+        .from("kb_assets")
+        .select(columns)
+        .eq("document_id", doc.id)
+        .order("ordinal", { ascending: true })
+        .limit(1)
+        .maybeSingle();
   if (error) {
     console.error("get_page_image image asset lookup failed:", error);
     return toolError(error.message);
   }
   const asset = data as {
+    document_id: string;
     storage_path: string;
     storage_bucket: string;
     mime_type: string;
     byte_size: number | null;
   } | null;
+  // The asset must belong to the document the scope check ran on; that
+  // check is what authorises it, so an asset_id from another machine's
+  // document is answered exactly like an unknown one.
+  if (assetId && (!asset || asset.document_id !== doc.id)) {
+    return toolError(`Unknown asset_id "${assetId}" for "${doc.title}".`);
+  }
   if (!asset || !isSupportedImageMime(asset.mime_type)) {
     return toolError(`"${doc.title}" has no stored image to show.`);
-  }
-  if (asset.byte_size !== null && asset.byte_size > MAX_IMAGE_LOOKUP_BYTES) {
-    return toolError(
-      `The image "${doc.title}" is too large to show. Use its search_kb description instead.`,
-    );
   }
 
   budget.imageLookups++;
 
-  const { data: blob, error: dlErr } = await supabase.storage
-    .from(asset.storage_bucket)
-    .download(asset.storage_path);
-  if (dlErr || !blob) {
-    console.error("get_page_image image download failed:", dlErr);
-    return toolError(`Could not read the stored image for "${doc.title}".`);
+  // Operator photos (chat-attachments) are typically 4-10 MB phone
+  // pictures, past what fits base64 in the request, and any other
+  // oversized asset has the same problem. For those the API fetches the
+  // image itself from a short-lived signed URL, as buildConversation
+  // does for the latest turn's photos; the URL only has to outlive this
+  // request's agentic loop.
+  const signedImageBlock = async (): Promise<ImageBlockParam | null> => {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(asset.storage_bucket)
+      .createSignedUrl(asset.storage_path, ATTACHMENT_SIGNED_URL_TTL);
+    if (signErr || !signed?.signedUrl) {
+      console.error("get_page_image image signing failed:", signErr);
+      return null;
+    }
+    return { type: "image", source: { type: "url", url: signed.signedUrl } };
+  };
+
+  let imageBlock: ImageBlockParam | null;
+  if (
+    asset.storage_bucket === CHAT_ATTACHMENT_BUCKET ||
+    (asset.byte_size !== null && asset.byte_size > MAX_IMAGE_LOOKUP_BYTES)
+  ) {
+    imageBlock = await signedImageBlock();
+  } else {
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from(asset.storage_bucket)
+      .download(asset.storage_path);
+    if (dlErr || !blob) {
+      console.error("get_page_image image download failed:", dlErr);
+      return toolError(`Could not read the stored image for "${doc.title}".`);
+    }
+    const buf = Buffer.from(await blob.arrayBuffer());
+    // byte_size can be null on old rows, so check the real size as well
+    // and switch to a URL source rather than failing the request.
+    imageBlock =
+      buf.byteLength > MAX_IMAGE_LOOKUP_BYTES
+        ? await signedImageBlock()
+        : {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: asset.mime_type,
+              data: buf.toString("base64"),
+            },
+          };
   }
-  const buf = Buffer.from(await blob.arrayBuffer());
-  // byte_size can be null on old rows, so check the real size as well.
-  if (buf.byteLength > MAX_IMAGE_LOOKUP_BYTES) {
-    return toolError(
-      `The image "${doc.title}" is too large to show. Use its search_kb description instead.`,
-    );
+  if (!imageBlock) {
+    return toolError(`Could not read the stored image for "${doc.title}".`);
   }
 
   const payload = {
@@ -1705,14 +1802,7 @@ async function executeGetStoredImage(
     modelPayload: payload,
     modelBlocks: [
       { type: "text", text: JSON.stringify(payload) },
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: asset.mime_type,
-          data: buf.toString("base64"),
-        },
-      },
+      imageBlock,
     ],
     chunkIds: [],
     documents: [
@@ -2070,30 +2160,40 @@ export async function POST(req: Request) {
         // touches unplaced rows on an allowed machine, so a replayed or
         // cross-machine id is a no-op. If the message insert failed we
         // still pin the photos to the conversation (as before) so they
-        // aren't orphaned.
+        // aren't orphaned — and the same fallback covers a failed
+        // message-level link, since a photo pinned to its conversation
+        // (message_id null) is still replayed and distilled, while an
+        // unlinked one is lost.
         let linkedAttachmentIds: string[] = [];
         if (latestAttachmentIds.length > 0) {
-          await safe("linkAttachments", async () => {
-            if (latestMessageId) {
+          let linkedToMessage = false;
+          if (latestMessageId) {
+            const messageId: string = latestMessageId;
+            await safe("linkAttachments", async () => {
               linkedAttachmentIds = await linkAttachmentsToMessage({
                 attachmentIds: latestAttachmentIds,
                 conversationId: conversationId!,
-                messageId: latestMessageId,
+                messageId,
                 allowedMachineIds,
               });
-              return;
-            }
-            const { data } = await getSupabaseServerClient()
-              .from("conversation_attachments")
-              .update({ conversation_id: conversationId })
-              .in("id", latestAttachmentIds)
-              .is("conversation_id", null)
-              .in("machine_id", allowedMachineIds)
-              .select("id");
-            linkedAttachmentIds = ((data ?? []) as { id: string }[]).map(
-              (r) => r.id,
-            );
-          });
+              linkedToMessage = true;
+            });
+          }
+          if (!linkedToMessage) {
+            await safe("linkAttachmentsToConversation", async () => {
+              const { data, error } = await getSupabaseServerClient()
+                .from("conversation_attachments")
+                .update({ conversation_id: conversationId })
+                .in("id", latestAttachmentIds)
+                .is("conversation_id", null)
+                .in("machine_id", allowedMachineIds)
+                .select("id");
+              if (error) throw new Error(error.message);
+              linkedAttachmentIds = ((data ?? []) as { id: string }[]).map(
+                (r) => r.id,
+              );
+            });
+          }
         }
         // Older turns' photos were linked when they were the latest turn.
         // Ids replayed from history are deliberately NOT re-linked here:
@@ -2128,6 +2228,7 @@ export async function POST(req: Request) {
         let conversation: MessageParam[] = await buildConversation(
           trimHistory(historyMessages),
           allowedMachineIds,
+          conversationId,
         );
         const totalUsage = { input_tokens: 0, output_tokens: 0 };
         let lastStopReason: string | null = null;
