@@ -338,6 +338,7 @@
     "conversationsEmpty": "Ingen tidligere samtaler endnu. De samtaler, du har her, vises i denne liste.",
     "conversationsLoadFailed": "Kunne ikke hente din samtalehistorik. Tjek din forbindelse, og prøv igen.",
     "conversationUntitled": "Samtale uden spørgsmål",
+    "conversationPhotoOnly": "Foto uden spørgsmål",
     "showMore": "Vis ældre",
     "questionCount": "{count, plural, one {# spørgsmål} other {# spørgsmål}}"
   },
@@ -662,6 +663,7 @@
     },
     "conversationDetail": {
       "fetchFailed": "Samtalen kunne ikke hentes",
+      "photoAlt": "Foto vedhæftet af operatøren",
       "backAll": "Alle samtaler",
       "heading": "Samtale fra {date}",
       "operator": "Operatør",
@@ -737,6 +739,8 @@
       "solution": "Løsning",
       "facts": "Fakta om maskinen",
       "factsHelp": "Én fakta pr. linje.",
+      "photos": "Fotos fra samtalen",
+      "photoAlt": "Foto vedhæftet af operatøren",
       "openQuestions": "Dokumentationshuller",
       "openQuestionsHelp": "Spørgsmål assistenten ikke kunne besvare ud fra vidensbasen. Upload dokumentation, der dækker dem.",
       "approve": "Godkend",

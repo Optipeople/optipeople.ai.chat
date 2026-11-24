@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { after } from "next/server";
 import { getTranslations } from "next-intl/server";
 import type {
   BetaContentBlockParam as ContentBlockParam,
@@ -23,6 +24,14 @@ import {
   resolveMachineAccountId,
   type CurrentUserDetails,
 } from "@/lib/auth";
+import {
+  attachmentAsText,
+  captionChatAttachments,
+  getAttachmentsByIds,
+  linkAttachmentsToMessage,
+  signAttachments,
+  type StoredChatAttachment,
+} from "@/lib/chatAttachments";
 import { containsTable } from "@/lib/chunking";
 import { missingReferencedManuals, readDocumentMeta } from "@/lib/docMeta";
 import {
@@ -595,16 +604,18 @@ function trimHistory(messages: ChatMessage[]): ChatMessage[] {
 // an image block in an older turn would invalidate the prompt-cache
 // prefix from that point onward — and would keep re-billing ~1.6k image
 // tokens per photo per turn for pictures that rarely matter after the
-// turn they were sent in. Older turns get a stable text placeholder
-// instead. Bad/missing/cross-machine refs are skipped silently so a
-// stale id in the client doesn't blow up the whole turn.
+// turn they were sent in. Older turns get each photo's stored caption as
+// text instead (attachmentAsText), or a generic placeholder while no
+// caption exists yet. Both depend only on the row, so the cached prefix
+// holds; it shifts once at most, when a caption lands. Bad/missing/
+// cross-machine refs are skipped silently so a stale id in the client
+// doesn't blow up the whole turn.
 async function buildConversation(
   messages: ChatMessage[],
   // Machines whose attachments this conversation may reference — one id
   // in machine scope, the account's machine set in fleet scope.
   allowedMachineIds: string[],
 ): Promise<MessageParam[]> {
-  const supabase = getSupabaseServerClient();
   const out: MessageParam[] = [];
 
   let lastUserIdx = -1;
@@ -614,38 +625,40 @@ async function buildConversation(
       break;
     }
   }
-  const latest = lastUserIdx >= 0 ? messages[lastUserIdx] : null;
 
-  // One-shot lookup of the latest turn's attachments — older turns are
-  // rendered as placeholders and need no signing. Same machine_id scope
-  // as the linking step.
+  // One lookup for every referenced photo in the window — captions for
+  // older turns, storage paths for the latest. Same machine_id scope as
+  // the linking step.
   const ids = Array.from(
     new Set(
-      latest && latest.role === "user" && Array.isArray(latest.attachmentIds)
-        ? latest.attachmentIds.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
-        : [],
+      messages.flatMap((m) =>
+        m.role === "user"
+          ? (m.attachmentIds ?? []).slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+          : [],
+      ),
     ),
   );
-  type AttRow = {
-    id: string;
-    storage_path: string;
-    mime_type: string;
-    machine_id: string;
-  };
-  const rowsById = new Map<string, AttRow>();
+  const rowsById = new Map<string, StoredChatAttachment>();
   if (ids.length > 0) {
-    const { data, error } = await supabase
-      .from("conversation_attachments")
-      .select("id, storage_path, mime_type, machine_id")
-      .in("id", ids);
-    if (error) {
-      console.error("attachment lookup failed:", error);
-    } else {
-      for (const r of (data ?? []) as AttRow[]) {
-        if (allowedMachineIds.includes(r.machine_id)) rowsById.set(r.id, r);
+    try {
+      for (const r of await getAttachmentsByIds(ids)) {
+        if (allowedMachineIds.includes(r.machineId)) rowsById.set(r.id, r);
       }
+    } catch (err) {
+      console.error("attachment lookup failed:", err);
     }
   }
+  const latestRows =
+    lastUserIdx >= 0
+      ? (messages[lastUserIdx].attachmentIds ?? [])
+          .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+          .map((id) => rowsById.get(id))
+          .filter((r): r is StoredChatAttachment => !!r)
+      : [];
+  const latestUrls = await signAttachments(
+    latestRows,
+    ATTACHMENT_SIGNED_URL_TTL,
+  );
 
   for (const [i, m] of messages.entries()) {
     if (m.role !== "user") {
@@ -663,9 +676,14 @@ async function buildConversation(
       continue;
     }
     if (i !== lastUserIdx) {
-      // Photos from earlier turns: stable text placeholder (see note
-      // on the function). Deterministic so the cached prefix holds.
-      const note = `[${refs.length} photo(s) were attached to this message — omitted from history]`;
+      // Photos from earlier turns: their captions as text (see note on
+      // the function). Deterministic per row so the cached prefix holds.
+      const rows = refs
+        .map((id) => rowsById.get(id))
+        .filter((r): r is StoredChatAttachment => !!r);
+      const note = rows.some((r) => r.caption)
+        ? rows.map((r, k) => attachmentAsText(r, k)).join("\n")
+        : `[${refs.length} photo(s) were attached to this message — omitted from history]`;
       out.push({
         role: "user",
         content: m.content.trim() ? `${m.content}\n\n${note}` : note,
@@ -677,18 +695,11 @@ async function buildConversation(
       blocks.push({ type: "text", text: m.content });
     }
     for (const id of refs) {
-      const row = rowsById.get(id);
-      if (!row) continue;
-      const { data: signed, error: signErr } = await supabase.storage
-        .from("chat-attachments")
-        .createSignedUrl(row.storage_path, ATTACHMENT_SIGNED_URL_TTL);
-      if (signErr || !signed) {
-        console.error("attachment signed url failed:", signErr);
-        continue;
-      }
+      const url = latestUrls.get(id);
+      if (!url) continue;
       const block: ImageBlockParam = {
         type: "image",
-        source: { type: "url", url: signed.signedUrl },
+        source: { type: "url", url },
       };
       blocks.push(block);
     }
@@ -2032,36 +2043,80 @@ export async function POST(req: Request) {
         // Persist the latest user turn (the rest of `userMessages` is
         // history we already wrote on previous requests).
         const latestUser = userMessages[userMessages.length - 1];
+        const latestAttachmentIds =
+          latestUser?.role === "user"
+            ? Array.from(
+                new Set(
+                  (latestUser.attachmentIds ?? []).slice(
+                    0,
+                    MAX_ATTACHMENTS_PER_MESSAGE,
+                  ),
+                ),
+              )
+            : [];
+        let latestMessageId: string | null = null;
         if (latestUser?.role === "user") {
           const text = latestUser.content ?? "";
-          if (text.trim() || (latestUser.attachmentIds?.length ?? 0) > 0) {
-            await safe("appendUserMessage", () =>
-              appendUserMessage(conversationId!, text),
-            );
+          if (text.trim() || latestAttachmentIds.length > 0) {
+            await safe("appendUserMessage", async () => {
+              latestMessageId = await appendUserMessage(conversationId!, text);
+            });
           }
         }
 
-        // Link any attachments referenced by user turns to this
-        // conversation. Idempotent — already-linked rows are filtered out
-        // by the conversation_id IS NULL clause. Cross-machine refs are
-        // rejected to keep QR sessions strictly scoped.
-        const allAttachmentIds = Array.from(
-          new Set(
-            userMessages
-              .filter((m) => m.role === "user" && Array.isArray(m.attachmentIds))
-              .flatMap((m) => m.attachmentIds!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)),
-          ),
-        );
-        if (allAttachmentIds.length > 0) {
+        // Tie the latest turn's photos to the message they rode on, so a
+        // reopened conversation, the model's later turns and the
+        // distiller all see them in place. linkAttachmentsToMessage only
+        // touches unplaced rows on an allowed machine, so a replayed or
+        // cross-machine id is a no-op. If the message insert failed we
+        // still pin the photos to the conversation (as before) so they
+        // aren't orphaned.
+        let linkedAttachmentIds: string[] = [];
+        if (latestAttachmentIds.length > 0) {
           await safe("linkAttachments", async () => {
-            const supabase = getSupabaseServerClient();
-            await supabase
+            if (latestMessageId) {
+              linkedAttachmentIds = await linkAttachmentsToMessage({
+                attachmentIds: latestAttachmentIds,
+                conversationId: conversationId!,
+                messageId: latestMessageId,
+                allowedMachineIds,
+              });
+              return;
+            }
+            const { data } = await getSupabaseServerClient()
               .from("conversation_attachments")
               .update({ conversation_id: conversationId })
-              .in("id", allAttachmentIds)
+              .in("id", latestAttachmentIds)
               .is("conversation_id", null)
-              .in("machine_id", allowedMachineIds);
+              .in("machine_id", allowedMachineIds)
+              .select("id");
+            linkedAttachmentIds = ((data ?? []) as { id: string }[]).map(
+              (r) => r.id,
+            );
           });
+        }
+        // Older turns' photos were linked when they were the latest turn.
+        // Ids replayed from history are deliberately NOT re-linked here:
+        // after a rollover they belong to the closed conversation.
+
+        // Caption the new photos once (Claude vision) so later turns,
+        // reopened chats and the distiller have a text description. Runs
+        // alongside the reply; after() keeps the function alive until it
+        // settles without holding the stream open. Only ids that passed
+        // the link checks above are captioned.
+        if (linkedAttachmentIds.length > 0) {
+          const captionJob = captionChatAttachments(linkedAttachmentIds, {
+            accountId: resolvedAccountId,
+            machineId: resolvedMachineId ?? null,
+            conversationId,
+            userId: user.userId,
+          }).catch((err) => console.error("chat: caption job failed:", err));
+          try {
+            after(() => captionJob);
+          } catch {
+            // Outside a request scope after() throws; the promise is
+            // already running, so it just finishes best-effort.
+          }
         }
 
         // Convert each ChatMessage into a MessageParam the SDK expects,

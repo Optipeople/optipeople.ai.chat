@@ -158,14 +158,16 @@ type ImageSourceRef = {
   mimeType: string;
 };
 // User-uploaded image attached to a message. The id refers to a
-// conversation_attachments row; previewUrl is an object URL we hold for
-// instant rendering after upload. Once the message is fully sent we
-// could swap to a signed URL via /api/chat/attachments/[id]/url, but
-// the object URL stays valid for the session so we just keep using it.
+// conversation_attachments row and is re-sent as attachmentIds on every
+// turn, so the server can replay the photo's caption to the model.
+// previewUrl is an object URL for a photo sent in this tab, or a signed
+// URL for one restored from history / the refresh stash; "" while the
+// signed URL is still being fetched (resolveAttachmentUrls).
 type ChatAttachment = {
   id: string;
   previewUrl: string;
   mimeType: string;
+  altText?: string | null;
 };
 
 // One tool invocation in the current assistant turn. We keep the
@@ -587,8 +589,9 @@ type EscalateState =
 
 // The live conversation is stashed in sessionStorage (per identity and
 // machine) so a refresh, tab discard under memory pressure, or a detour
-// to the camera app doesn't wipe the chat. Attachments and tool steps
-// are stripped — object URLs don't survive a reload anyway. Errored/
+// to the camera app doesn't wipe the chat. Tool steps are stripped;
+// attachments keep only their ids (object URLs don't survive a reload)
+// and are re-signed on restore. Errored/
 // empty assistant bubbles are dropped so a stale outage card doesn't
 // resurrect. Keys carry who was chatting so a logout → login as someone
 // else on the same tablet can never show the previous person's chat;
@@ -636,11 +639,24 @@ function loadChatStash(
       messages?: unknown;
     };
     if (!Array.isArray(parsed.messages)) return null;
-    const messages = (parsed.messages as Message[]).filter(
-      (m) =>
-        (m.role === "user" || m.role === "assistant") &&
-        typeof m.content === "string",
-    );
+    const messages = (parsed.messages as Message[])
+      .filter(
+        (m) =>
+          (m.role === "user" || m.role === "assistant") &&
+          typeof m.content === "string",
+      )
+      .map((m) => {
+        if (!Array.isArray(m.attachments)) return { ...m, attachments: undefined };
+        const attachments = m.attachments
+          .filter((a) => a && typeof a.id === "string")
+          .map((a) => ({
+            id: a.id,
+            mimeType: typeof a.mimeType === "string" ? a.mimeType : "",
+            altText: typeof a.altText === "string" ? a.altText : null,
+            previewUrl: "",
+          }));
+        return { ...m, attachments: attachments.length > 0 ? attachments : undefined };
+      });
     return {
       conversationId:
         typeof parsed.conversationId === "string" ? parsed.conversationId : null,
@@ -660,12 +676,17 @@ function saveChatStash(
     const trimmed = messages
       .filter((m) => !(m.role === "assistant" && (m.error || !m.content)))
       .slice(-CHAT_STASH_MAX_MESSAGES)
-      .map(({ role, content, createdAt, sources, images }) => ({
+      .map(({ role, content, createdAt, sources, images, attachments }) => ({
         role,
         content,
         createdAt,
         sources,
         images,
+        attachments: attachments?.map(({ id, mimeType, altText }) => ({
+          id,
+          mimeType,
+          altText,
+        })),
       }));
     if (trimmed.length === 0) {
       window.sessionStorage.removeItem(key);
@@ -678,6 +699,60 @@ function saveChatStash(
   } catch {
     // Quota exceeded or storage unavailable — persistence is best-effort.
   }
+}
+
+// Signs any restored attachment that has no displayable URL yet (stash
+// restore, or a history row the server couldn't sign). Goes through
+// /api/chat/attachments/[id]/url with the operator's own credentials
+// (bearer or QR header). Failures leave the thumbnail frame empty —
+// the id still rides along to the model either way.
+async function resolveAttachmentUrls(
+  messages: Message[],
+): Promise<Map<string, string>> {
+  const ids = Array.from(
+    new Set(
+      messages.flatMap((m) =>
+        (m.attachments ?? []).filter((a) => !a.previewUrl).map((a) => a.id),
+      ),
+    ),
+  );
+  const out = new Map<string, string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const res = await fetchWithAuth(
+          `/api/chat/attachments/${encodeURIComponent(id)}/url`,
+        );
+        if (!res.ok) return;
+        const body = (await res.json()) as { url?: unknown };
+        if (typeof body.url === "string") out.set(id, body.url);
+      } catch {
+        // best-effort
+      }
+    }),
+  );
+  return out;
+}
+
+// Fills resolved URLs into whatever thread is current, matching by
+// attachment id, so a thread swapped in meanwhile is left untouched.
+function withAttachmentUrls(
+  messages: Message[],
+  urls: Map<string, string>,
+): Message[] {
+  if (urls.size === 0) return messages;
+  return messages.map((m) =>
+    m.attachments?.some((a) => !a.previewUrl && urls.has(a.id))
+      ? {
+          ...m,
+          attachments: m.attachments.map((a) =>
+            !a.previewUrl && urls.has(a.id)
+              ? { ...a, previewUrl: urls.get(a.id)! }
+              : a,
+          ),
+        }
+      : m,
+  );
 }
 
 function clearChatStash(key: string): void {
@@ -942,6 +1017,11 @@ function ChatApp({
         error: { kind: "error", title: tChatRef.current("unansweredTitle") },
         errorMessage: tChatRef.current("unansweredBody"),
       });
+    }
+    if (restored.some((m) => m.attachments?.length)) {
+      void resolveAttachmentUrls(restored).then((urls) =>
+        setMessages((prev) => withAttachmentUrls(prev, urls)),
+      );
     }
     /* eslint-disable react-hooks/set-state-in-effect */
     setStreaming(false);
@@ -1263,9 +1343,10 @@ function ChatApp({
   // starting a new one — the server re-checks ownership and scope on
   // every turn, so a stale id just falls back to a fresh conversation.
   //
-  // Photos aren't replayed: attachments are stored per conversation,
-  // not per message, so there's no way to put each one back on the turn
-  // it belonged to. Photo-only turns come back as a text placeholder.
+  // Photos come back on the turn they were sent with (signed URLs from
+  // the server), and their ids flow to /api/chat again so the model
+  // keeps their captions. A photo-only turn whose photos are gone falls
+  // back to a text placeholder.
   async function openConversation(id: string) {
     if (id === conversationId) return;
     const seq = ++openSeqRef.current;
@@ -1287,13 +1368,30 @@ function ChatApp({
       // flight — its result would clobber what the operator is now
       // looking at. Drop it.
       if (openSeqRef.current !== seq) return;
-      const restored: Message[] = body.messages.map((m) => ({
-        role: m.role,
-        content: m.photoOnly ? tChat("restoredPhoto") : m.content,
-        createdAt: new Date(m.createdAt).getTime(),
-        ...(m.sources ? { sources: m.sources } : {}),
-        ...(m.images ? { images: m.images } : {}),
-      }));
+      const restored: Message[] = body.messages.map((m) => {
+        const attachments = m.attachments?.map((a) => ({
+          id: a.id,
+          previewUrl: a.url ?? "",
+          mimeType: a.mimeType,
+          altText: a.altText,
+        }));
+        return {
+          role: m.role,
+          content:
+            m.photoOnly && !attachments?.length
+              ? tChat("restoredPhoto")
+              : m.content,
+          createdAt: new Date(m.createdAt).getTime(),
+          ...(m.sources ? { sources: m.sources } : {}),
+          ...(m.images ? { images: m.images } : {}),
+          ...(attachments?.length ? { attachments } : {}),
+        };
+      });
+      if (restored.some((m) => m.attachments?.some((a) => !a.previewUrl))) {
+        void resolveAttachmentUrls(restored).then((urls) =>
+          setMessages((prev) => withAttachmentUrls(prev, urls)),
+        );
+      }
       setStreaming(false);
       setMessages(restored);
       setConversationId(body.id);
@@ -2625,17 +2723,20 @@ function MessageRow({
             {message.attachments!.map((a) => (
               <a
                 key={a.id}
-                href={a.previewUrl}
+                href={a.previewUrl || undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block h-24 w-24 overflow-hidden rounded-[6px] border border-[var(--color-hairline)] bg-[var(--color-muted)] shadow-[var(--shadow-sm)] sm:h-28 sm:w-28"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={a.previewUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
+                {/* Restored photos have no URL until it is signed. */}
+                {a.previewUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={a.previewUrl}
+                    alt={a.altText ?? ""}
+                    className="h-full w-full object-cover"
+                  />
+                )}
               </a>
             ))}
           </div>

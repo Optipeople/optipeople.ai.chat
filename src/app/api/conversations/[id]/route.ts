@@ -15,6 +15,12 @@
 // chunks back into the source chips that hung under the reply live.
 
 import { AuthError } from "@/lib/auth";
+import {
+  groupByMessage,
+  listConversationAttachments,
+  signAttachments,
+  type StoredChatAttachment,
+} from "@/lib/chatAttachments";
 import { resolveOperator } from "@/lib/operatorAuth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import type { SourceRef } from "@/components/SourceChips";
@@ -31,15 +37,27 @@ export type OperatorTranscriptImage = {
   mimeType: string;
 };
 
+// A photo the operator sent with a user turn. url is a signed URL valid
+// for ATTACHMENT_URL_TTL; the client re-signs through
+// /api/chat/attachments/[id]/url when it needs a fresh one (stash
+// restore). The id goes back to /api/chat as attachmentIds so the model
+// keeps seeing the photo's caption on later turns.
+export type OperatorTranscriptAttachment = {
+  id: string;
+  mimeType: string;
+  altText: string | null;
+  url: string | null;
+};
+
 export type OperatorTranscriptMessage = {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
-  // Photo-only user turn: the operator sent an image with no text. The
-  // attachment itself isn't replayed (attachments are stored per
-  // conversation, not per message), so the client substitutes a
-  // localized placeholder for both display and the resumed prompt.
+  // Photo-only user turn: the operator sent an image with no text. When
+  // the photo itself can't be shown (attachments missing), the client
+  // substitutes a localized placeholder.
   photoOnly?: boolean;
+  attachments?: OperatorTranscriptAttachment[];
   sources?: SourceRef[];
   images?: OperatorTranscriptImage[];
 };
@@ -55,8 +73,14 @@ export type OperatorConversationResponse = {
 
 // Matches the live path, which caps figures at 4 per reply.
 const MAX_IMAGES_PER_TURN = 4;
+// Same cap as the composer / chat route.
+const MAX_ATTACHMENTS_PER_TURN = 4;
+// Long enough to read a reopened thread in one sitting; an image that
+// already rendered stays on screen after its URL expires.
+const ATTACHMENT_URL_TTL = 60 * 60;
 
 type MessageRow = {
+  id: string;
   role: "user" | "assistant" | "tool";
   content: string;
   tool_chunks: string[] | null;
@@ -67,9 +91,13 @@ type MessageRow = {
 // the turn this bubble closes.
 type Bubble = {
   role: "user" | "assistant";
+  // messages.id of the user row (user bubbles only) — the key photos
+  // are grouped by.
+  messageId?: string;
   content: string;
   createdAt: string;
   photoOnly?: boolean;
+  attachments?: OperatorTranscriptAttachment[];
   chunkIds: string[];
   sources?: SourceRef[];
   images?: OperatorTranscriptImage[];
@@ -117,7 +145,7 @@ export async function GET(
 
   const { data: msgs, error: msgErr } = await supabase
     .from("messages")
-    .select("role, content, tool_chunks, created_at")
+    .select("id, role, content, tool_chunks, created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
   if (msgErr) {
@@ -127,7 +155,7 @@ export async function GET(
 
   const bubbles = toBubbles((msgs ?? []) as MessageRow[]);
   const isFleet = conversation.scope === "fleet";
-  await attachSources(bubbles, isFleet);
+  await Promise.all([attachSources(bubbles, isFleet), attachPhotos(bubbles, id)]);
 
   const body: OperatorConversationResponse = {
     id: conversation.id,
@@ -140,6 +168,9 @@ export async function GET(
       content: b.content,
       createdAt: b.createdAt,
       ...(b.photoOnly ? { photoOnly: true } : {}),
+      ...(b.attachments && b.attachments.length > 0
+        ? { attachments: b.attachments }
+        : {}),
       ...(b.sources && b.sources.length > 0 ? { sources: b.sources } : {}),
       ...(b.images && b.images.length > 0 ? { images: b.images } : {}),
     })),
@@ -179,6 +210,7 @@ function toBubbles(rows: MessageRow[]): Bubble[] {
       const text = m.content.trim();
       out.push({
         role: "user",
+        messageId: m.id,
         content: text,
         createdAt: m.created_at,
         ...(text ? {} : { photoOnly: true }),
@@ -205,6 +237,58 @@ function toBubbles(rows: MessageRow[]): Bubble[] {
   }
   closeTurn();
   return out;
+}
+
+// Put each operator photo back on the user turn it was sent with.
+// Legacy rows the message_id backfill couldn't place go to the first
+// user turn at or after the upload — the photo is always uploaded just
+// before its message is sent — and are dropped when there is none (the
+// turn never got saved). Photos are garnish here too: a failure leaves
+// the transcript without them.
+async function attachPhotos(
+  bubbles: Bubble[],
+  conversationId: string,
+): Promise<void> {
+  let all: StoredChatAttachment[];
+  try {
+    all = await listConversationAttachments(conversationId);
+  } catch (err) {
+    console.error("operator conversation attachments failed:", err);
+    return;
+  }
+  if (all.length === 0) return;
+
+  const users = bubbles.filter((b) => b.role === "user" && b.messageId);
+  const byMessage = groupByMessage(all);
+  const placed = new Map<Bubble, StoredChatAttachment[]>();
+  for (const b of users) {
+    const list = byMessage.get(b.messageId!);
+    if (list) placed.set(b, [...list]);
+  }
+  for (const a of byMessage.get("") ?? []) {
+    const uploadedAt = Date.parse(a.createdAt);
+    const target = users.find((b) => Date.parse(b.createdAt) >= uploadedAt);
+    if (!target) continue;
+    const list = placed.get(target) ?? [];
+    list.push(a);
+    placed.set(target, list);
+  }
+  for (const [b, list] of placed) {
+    placed.set(b, list.slice(0, MAX_ATTACHMENTS_PER_TURN));
+  }
+
+  const urls = await signAttachments(
+    Array.from(placed.values()).flat(),
+    ATTACHMENT_URL_TTL,
+  );
+  for (const [b, list] of placed) {
+    b.attachments = list.map((a) => ({
+      id: a.id,
+      mimeType: a.mimeType,
+      altText: a.altText,
+      url: urls.get(a.id) ?? null,
+    }));
+  }
 }
 
 // Resolve every bubble's chunk ids into the document chips and figure

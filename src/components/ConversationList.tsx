@@ -226,7 +226,8 @@ function ConversationRow({
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[16px] font-medium text-white">
-          {item.title ?? t("conversationUntitled")}
+          {item.title ??
+            t(item.photoOnly ? "conversationPhotoOnly" : "conversationUntitled")}
         </span>
         <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-white/70">
           <time dateTime={date.toISOString()}>{dateLabel}</time>

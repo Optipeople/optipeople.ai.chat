@@ -72,17 +72,26 @@ export async function validateConversation(
   return !error && !!data;
 }
 
+// Returns the new row's id so the chat route can tie the turn's photos
+// to it (conversation_attachments.message_id).
 export async function appendUserMessage(
   conversationId: string,
   content: string,
-): Promise<void> {
+): Promise<string> {
   const supabase = getSupabaseServerClient();
-  const { error } = await supabase.from("messages").insert({
-    conversation_id: conversationId,
-    role: "user",
-    content,
-  });
-  if (error) throw new Error(`appendUserMessage failed: ${error.message}`);
+  const { data, error } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      role: "user",
+      content,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(`appendUserMessage failed: ${error?.message ?? "no row"}`);
+  }
+  return (data as { id: string }).id;
 }
 
 // One row per assistant turn from the agentic loop. content is the

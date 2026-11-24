@@ -25,8 +25,12 @@ export type OperatorConversationListItem = {
   startedAt: string;
   lastMessageAt: string | null;
   // First thing the operator typed, trimmed to a headline length.
-  // Null when the opening turn carried only a photo.
+  // Null when no turn carried text.
   title: string | null;
+  // Set when title is null because the operator only sent photos — an
+  // empty user turn is only ever saved when it carried attachments. Lets
+  // the list say "photo" instead of "no question".
+  photoOnly?: boolean;
   // How many questions the operator asked. Counting user turns keeps
   // this exactly what the reopened transcript shows — assistant rows
   // are per agentic-loop step and several collapse into one bubble.
@@ -189,6 +193,7 @@ export async function GET(req: Request) {
             : title
           : null,
         questionCount: s.questions,
+        ...(!title && s.questions > 0 ? { photoOnly: true } : {}),
         resolution: r.resolution,
       };
     });

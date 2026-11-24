@@ -338,6 +338,7 @@
     "conversationsEmpty": "No earlier chats yet. The conversations you have here will show up in this list.",
     "conversationsLoadFailed": "Could not load your chat history. Check your connection and try again.",
     "conversationUntitled": "Chat without a question",
+    "conversationPhotoOnly": "Photo without a question",
     "showMore": "Show older",
     "questionCount": "{count, plural, one {# question} other {# questions}}"
   },
@@ -662,6 +663,7 @@
     },
     "conversationDetail": {
       "fetchFailed": "The conversation could not be loaded",
+      "photoAlt": "Photo attached by the operator",
       "backAll": "All conversations",
       "heading": "Conversation from {date}",
       "operator": "Operator",
@@ -737,6 +739,8 @@
       "solution": "Solution",
       "facts": "Facts about the machine",
       "factsHelp": "One fact per line.",
+      "photos": "Photos from the conversation",
+      "photoAlt": "Photo attached by the operator",
       "openQuestions": "Documentation gaps",
       "openQuestionsHelp": "Questions the assistant could not answer from the knowledge base. Upload documentation that covers them.",
       "approve": "Approve",
